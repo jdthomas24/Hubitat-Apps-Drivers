@@ -1,8 +1,8 @@
 definition(
-    name: "Battery Monitor 2.8.3",
-    namespace: "custom",
+    name: "Battery Monitor 2.8.4",
+    namespace: "jdthomas24",
     author: "Jdthomas24",
-    description: "Advanced Hubitat battery monitoring with analytics, trends and replacement tracking.",
+    description: "Advanced Hubitat battery monitoring with analytics and battery tracking (Auto Discovery Only).",
     category: "Convenience",
     iconUrl: "https://s3.amazonaws.com/smartapp-icons/Convenience/Cat-Convenience.png",
     iconX2Url: "https://s3.amazonaws.com/smartapp-icons/Convenience/Cat-Convenience@2x.png",
@@ -14,61 +14,34 @@ preferences {
     page(name:"summaryPage")
     page(name:"trendsPage")
     page(name:"historyPage")
+    page(name:"manualReplacementPage")
+    page(name:"manualReplacementConfirmPage")
 }
 
 def mainPage(){
-    dynamicPage(name:"mainPage",title:"Battery Monitor 2.8.3",install:true,uninstall:true){
-
-        section("Battery Devices"){
-            input "autoDiscover","bool",
-                title:"Auto discover battery devices",
-                defaultValue:true
-
-            input "devices","capability.battery",
-                title:"Manual device selection",
-                multiple:true,
-                required:false
+    dynamicPage(name:"mainPage",title:"Battery Monitor 2.8.4",install:true,uninstall:true){
+        section("Auto-Discover Battery Devices"){
+            paragraph "🔍 Auto discovery will list **all devices capable of reporting battery levels**. " +
+            "⚠️ You must select which devices you want to monitor from this list."
+            input "autoDiscover","bool", title:"Enable auto discovery", defaultValue:true
+            input "autoDevices","capability.battery", title:"Select battery devices to monitor", multiple:true, required:true
         }
-
         section("Daily Summary"){
             input "summaryTime","time",title:"Daily report time"
         }
-
-        section("Diagnostics"){
-            input "rapidDrainThreshold","number",
-                title:"Rapid drain threshold (% per day)",
-                defaultValue:2
-
-            input "staleDays","number",
-                title:"Device stale threshold (days)",
-                defaultValue:7
-        }
-
         section("Scan Interval"){
-            input "scanInterval","enum",
-                title:"Battery scan frequency",
-                options:["1":"Hourly","3":"Every 3 Hours","6":"Every 6 Hours"],
-                defaultValue:"3"
+            input "scanInterval","enum", title:"Battery scan frequency",
+            options:["1":"Hourly","3":"Every 3 Hours","6":"Every 6 Hours"],
+            defaultValue:"3"
         }
-
         section("Notifications"){
-            input "enablePush","bool",
-                title:"Enable summary notifications",
-                defaultValue:true
-
-            input "notifyDevices","capability.notification",
-                title:"Notification devices",
-                multiple:true,
-                required:false
+            input "enablePush","bool", title:"Enable summary notifications", defaultValue:true
+            input "notifyDevices","capability.notification", title:"Notification devices", multiple:true, required:false
         }
-
         section("Tools"){
+            href "summaryPage", title:"Run Battery Summary"
             href "trendsPage", title:"Battery Trends"
             href "historyPage", title:"Battery Replacement History"
-        }
-
-        section("Manual Actions"){
-            href "summaryPage", title:"Run Summary Now"
         }
     }
 }
@@ -77,14 +50,25 @@ def installed(){ initialize() }
 def updated(){ unsubscribe(); unschedule(); initialize() }
 
 def initialize(){
-
     if(state.history == null) state.history = [:]
     if(state.trend == null) state.trend = [:]
     if(state.replacements == null) state.replacements = []
 
     subscribe(getBatteryDevices(),"battery",batteryHandler)
-
     scheduleScan()
+
+    def initialDrain = 0.2 // realistic default drain for first-time devices
+    getBatteryDevices()?.each { device ->
+        if(!state.history[device.id]) {
+            def level = device.currentValue("battery")?.toInteger() ?: 100
+            state.history[device.id] = [
+                lastLevel: level,
+                lastDate: now(),
+                drain: initialDrain
+            ]
+            state.trend[device.id] = "Stable"
+        }
+    }
 
     if(summaryTime){
         schedule(summaryTime,scheduledSummary)
@@ -92,83 +76,50 @@ def initialize(){
 }
 
 def scheduleScan(){
-
     switch(scanInterval){
-        case "1":
-            runEvery1Hour(scanBatteries)
-            break
-
-        case "3":
-            runEvery3Hours(scanBatteries)
-            break
-
-        case "6":
-            schedule("0 0 */6 ? * *",scanBatteries)
-            break
+        case "1": runEvery1Hour(scanBatteries); break
+        case "3": runEvery3Hours(scanBatteries); break
+        case "6": schedule("0 0 */6 ? * *",scanBatteries); break
     }
 }
 
 def getBatteryDevices(){
-
-    def devs = []
-
-    if(autoDiscover){
-        def auto = location.devices?.findAll{
-            it.hasCapability("Battery")
-        } ?: []
-        devs.addAll(auto)
-    }
-
-    if(devices) devs.addAll(devices)
-
-    return devs.unique{ it.id }
+    return autoDevices?.unique{ it.id } ?: []
 }
 
 def batteryHandler(evt){
-
     def level = evt.value?.toInteger()
-
     if(level == null) return
-
     updateBattery(evt.device, level)
 }
 
 def scanBatteries(){
-
     getBatteryDevices()?.each{ device ->
-
         def level = device.currentValue("battery")?.toInteger()
-
-        if(level != null){
-            updateBattery(device, level)
-        }
+        if(level != null){ updateBattery(device, level) }
     }
 }
 
 def updateBattery(device, level){
-
     if(!state.history[device.id]){
         state.history[device.id] = [
-                lastLevel: level,
-                lastDate: now(),
-                drain: 0.05
+            lastLevel: level,
+            lastDate: now(),
+            drain: 0.2
         ]
+        state.trend[device.id] = "Stable"
         return
     }
 
     def data = state.history[device.id]
-
     detectReplacement(device, level, data.lastLevel)
 
     def days = (now() - data.lastDate) / (1000*60*60*24)
-
     if(days > 0){
-
         def drain = (data.lastLevel - level) / days
-
-        if(drain >= 0){
-            data.drain = Math.max(drain,0.05)
-            updateTrend(device,data.drain)
+        if(drain > 0){
+            data.drain = drain
+            updateTrend(device,drain)
         }
     }
 
@@ -177,236 +128,173 @@ def updateBattery(device, level){
 }
 
 def detectReplacement(device,newLevel,oldLevel){
-
     if(oldLevel == null) return
-
     if(newLevel >= 95 && oldLevel <= 40){
-
         state.replacements << [
             device: device.displayName,
             date: new Date().format("yyyy-MM-dd HH:mm",location.timeZone)
         ]
-
-        state.history[device.id].drain = 0.05
+        state.history[device.id].drain = 0.2
+        state.trend[device.id] = "Stable"
     }
 }
 
 def updateTrend(device,drain){
-
-    if(drain < 0.2)
-        state.trend[device.id] = "Stable"
-
-    else if(drain < 0.6)
-        state.trend[device.id] = "Moderate"
-
-    else
-        state.trend[device.id] = "Heavy Drain"
+    if(drain < 0.2) state.trend[device.id] = "Stable"
+    else if(drain < 0.6) state.trend[device.id] = "Moderate"
+    else state.trend[device.id] = "Heavy Drain"
 }
 
-def getDrain(device){
-    return state.history?.get(device.id)?.drain ?: 0.05
+def getDrain(device){ return state.history?.get(device.id)?.drain }
+def displayDrain(device){ 
+    def drain = getDrain(device) ?: 0.2
+    return String.format("%.2f", drain)
 }
-
-def getEstimatedDays(device){
-
-    def level = device.currentValue("battery")?.toInteger()
-    def drain = getDrain(device)
-
-    if(!level || drain <= 0) return "-"
-
+def displayEstDays(device){
+    def level = device.currentValue("battery")?.toInteger() ?: 100
+    def drain = getDrain(device) ?: 0.2
     return Math.round(level / drain)
 }
-
-def getHealth(device){
-
-    def drain = getDrain(device)
-
-    if(drain < 0.2) return "Excellent"
-    if(drain < 0.5) return "Good"
-    if(drain < 1) return "Fair"
-
-    return "Poor"
+def displayHealth(device){
+    def drain = getDrain(device) ?: 0.2
+    if(drain < 0.2) return "🟢 Excellent"
+    if(drain < 0.5) return "🟡 Good"
+    if(drain < 1) return "🟠 Fair"
+    return "🔴 Poor"
 }
-
 def getBatteryLevelDisplay(level){
-
     if(level == null) return "N/A"
-
-    if(level <= 25)
-        return "🔴 ${level}%"
-
-    if(level <= 70)
-        return "🟠 ${level}%"
-
-    if(level < 100)
-        return "🟢 ${level}%"
-
+    if(level <= 25) return "🔴 ${level}%"
+    if(level <= 70) return "🟠 ${level}%"
+    if(level < 100) return "🟢 ${level}%"
     return "💯 ${level}%"
 }
 
-def getLastReport(device){
-
-    def last = state.history?.get(device.id)?.lastDate
-
-    if(!last) return "Never"
-
-    def diff = now() - last
-
-    def mins = (diff / 60000).toInteger()
-    def hrs = (mins / 60).toInteger()
-    def days = (hrs / 24).toInteger()
-
-    if(days > 0) return "${days}d ago"
-    if(hrs > 0) return "${hrs}h ago"
-    if(mins > 0) return "${mins}m ago"
-
-    return "Just now"
-}
-
 def summaryPage(){
-
     dynamicPage(name:"summaryPage",title:"Battery Summary",install:false){
-
         section("Battery Summary (Worst to Best)"){
-
             def devs = getBatteryDevices()
-
-            devs = devs.findAll{
-                it.currentValue("battery") != null
-            }.sort{
-                a,b -> a.currentValue("battery") <=> b.currentValue("battery")
-            }
+            devs = devs.findAll{ it.currentValue("battery") != null }.sort{ a,b -> a.currentValue("battery") <=> b.currentValue("battery") }
 
             if(!devs){
                 paragraph "No battery devices found."
                 return
             }
 
-            def table = "<table style='width:100%; border-collapse: collapse;'>"
-
-            table += "<tr style='font-weight:bold;'>"
-            table += "<td>Device</td>"
-            table += "<td>Battery</td>"
-            table += "<td>Drain</td>"
-            table += "<td>Est Days</td>"
-            table += "<td>Health</td>"
-            table += "<td>Last Report</td>"
-            table += "</tr>"
+            def table = "<table style='width:100%; border-collapse: collapse; font-size:13px;'>"
+            table += "<tr style='font-weight:bold;'><td style='padding:4px;'>Device</td><td style='padding:4px;'>Battery</td><td style='padding:4px;'>Drain</td><td style='padding:4px;'>Est Days</td><td style='padding:4px;'>Health</td></tr>"
 
             devs.each{ device ->
-
                 def level = device.currentValue("battery")?.toInteger()
-
                 def battery = getBatteryLevelDisplay(level)
-                def drain = getDrain(device)
-                def est = getEstimatedDays(device)
-                def health = getHealth(device)
-                def last = getLastReport(device)
-
-                def flag = level <= 25 ? "⚠️ " : ""
-
-                table += "<tr>"
-                table += "<td>${flag}${device.displayName}</td>"
-                table += "<td>${battery}</td>"
-                table += "<td>${drain}</td>"
-                table += "<td>${est}</td>"
-                table += "<td>${health}</td>"
-                table += "<td>${last}</td>"
-                table += "</tr>"
+                def drain = displayDrain(device)
+                def est = displayEstDays(device)
+                def health = displayHealth(device)
+                table += "<tr><td style='padding:4px;'>${device.displayName}</td><td style='padding:4px;'>${battery}</td><td style='padding:4px;'>${drain}</td><td style='padding:4px;'>${est}</td><td style='padding:4px;'>${health}</td></tr>"
             }
-
             table += "</table>"
-
             paragraph table
         }
     }
 }
 
 def trendsPage(){
-
     dynamicPage(name:"trendsPage",title:"Battery Trends",install:false){
-
         section("Battery Trend Analysis"){
-
             def devs = getBatteryDevices()
-
-            if(!devs){
-                paragraph "No battery devices."
-                return
-            }
-
-            def table = "<table style='width:100%; border-collapse: collapse;'>"
-
-            table += "<tr style='font-weight:bold;'>"
-            table += "<td>Device</td>"
-            table += "<td>Battery</td>"
-            table += "<td>Drain/day</td>"
-            table += "<td>Trend</td>"
-            table += "</tr>"
+            def table = "<table style='width:100%; border-collapse: collapse; font-size:13px;'>"
+            table += "<tr style='font-weight:bold;'><td style='padding:4px;'>Device</td><td style='padding:4px;'>Battery</td><td style='padding:4px;'>Drain/day</td><td style='padding:4px;'>Trend</td></tr>"
 
             devs.each{ device ->
-
                 def level = device.currentValue("battery")?.toInteger()
                 def battery = getBatteryLevelDisplay(level)
-                def drain = getDrain(device)
+                def drain = displayDrain(device)
                 def trend = state.trend?.get(device.id) ?: "Stable"
-
-                table += "<tr>"
-                table += "<td>${device.displayName}</td>"
-                table += "<td>${battery}</td>"
-                table += "<td>${drain}</td>"
-                table += "<td>${trend}</td>"
-                table += "</tr>"
+                table += "<tr><td style='padding:4px;'>${device.displayName}</td><td style='padding:4px;'>${battery}</td><td style='padding:4px;'>${drain}</td><td style='padding:4px;'>${trend}</td></tr>"
             }
-
             table += "</table>"
-
             paragraph table
         }
     }
 }
 
 def historyPage(){
-
     dynamicPage(name:"historyPage",title:"Battery Replacement History",install:false){
-
         section("Replacement Log"){
+            paragraph "ℹ️ Battery replacements are automatically detected when a device goes from low (≤40%) → high (≥95%). " +
+            "Use the link below to manually mark a battery as replaced if needed."
 
             def replacements = state.replacements ?: []
-
             if(replacements.size() == 0){
                 paragraph "No battery replacements detected."
-            }
-            else{
-
+            } else {
                 def logText = "Battery Replacement History\n\n"
-
-                replacements.each{
-                    logText += "${it.device} - ${it.date}\n"
-                }
-
+                replacements.each{ logText += "${it.device} - ${it.date}\n" }
                 paragraph logText
+            }
+
+            href(name:"manualReplacement", title:"Mark Battery Replaced", page:"manualReplacementPage")
+        }
+    }
+}
+
+// Manual Replacement Page
+def manualReplacementPage(){
+    dynamicPage(name:"manualReplacementPage", title:"Manual Battery Replacement", install:false){
+        section("Select device(s) to mark as replaced (optional)"){
+            input "manualDevice", "enum",
+                title:"Select device(s)",
+                required:false,   // <-- optional now
+                multiple:true,
+                options: getManualReplacementOptions()
+        }
+
+        section("Actions"){
+            href(name:"confirmReplacement", title:"✅ Confirm Replacement", page:"manualReplacementConfirmPage")
+        }
+    }
+}
+
+// Dynamic dropdown options
+def getManualReplacementOptions() {
+    def devs = getBatteryDevices()
+    return devs ? devs.collect{ it.displayName } : []
+}
+
+// Confirmation page
+def manualReplacementConfirmPage(){
+    dynamicPage(name:"manualReplacementConfirmPage", title:"Confirm Replacement", install:false){
+        section("Replacement Confirmation"){
+            if(manualDevice){
+                manualDevice.each { devName ->
+                    def device = getBatteryDevices()?.find{ it.displayName == devName }
+                    if(device){
+                        state.replacements << [
+                            device: device.displayName,
+                            date: new Date().format("yyyy-MM-dd HH:mm", location.timeZone)
+                        ]
+                        state.history[device.id].drain = 0.2
+                        state.trend[device.id] = "Stable"
+                    }
+                }
+                paragraph "✅ Selected devices have been marked as replaced!"
+            } else {
+                paragraph "No devices were selected. Nothing was changed. You can click Done to return."
             }
         }
     }
 }
 
 def scheduledSummary(){
-
     def report = "Battery Monitor Daily Report\n\n"
-
     getBatteryDevices().each{ device ->
-
         def level = device.currentValue("battery")?.toInteger()
-
-        if(level != null){
-            report += "${device.displayName} : ${level}%\n"
-        }
+        if(level != null){ report += "${device.displayName} : ${level}%\n" }
     }
 
-    if(enablePush){
-        notifyDevices?.each{
-            it.deviceNotification(report)
-        }
+    def notifyList = notifyDevices?.unique{ it.id }
+    if(enablePush && notifyList){
+        notifyList.each{ it.deviceNotification(report) }
     }
 }
+
