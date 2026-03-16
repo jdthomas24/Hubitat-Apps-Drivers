@@ -1,7 +1,6 @@
-
 /*
 SmartThings Motion Sensor Enhanced
-Version: 1.5.0
+Version: 1.6.0
 Author: jdthomas24
 Namespace: jdthomas24
 
@@ -13,8 +12,9 @@ Supported Models:
 
 Enhancements:
 - Adaptive presence detection
+- Ability to disable presence detection (enablePresence)
 - Motion auto reset
-- Optional temperature reporting
+- Optional temperature reporting (enableTemp)
 - Battery curve calibration & smoothing
 - Zigbee mesh & route health monitoring
 - Temperature cluster disable optimization (battery saving)
@@ -25,7 +25,7 @@ Enhancements:
 import hubitat.zigbee.clusters.iaszone.ZoneStatus
 import hubitat.zigbee.zcl.DataType
 
-def driverVersion() { return "1.5.0" }
+def driverVersion() { return "1.6.0" }
 
 metadata {
     definition(
@@ -63,6 +63,7 @@ metadata {
     preferences {
         input name:"motionReset", type:"number", title:"Motion Reset Time (seconds)", defaultValue:60
         input name:"enableTemp", type:"bool", title:"Enable Temperature Reporting", defaultValue:true
+        input name:"enablePresence", type:"bool", title:"Enable Presence Detection", defaultValue:true
         input name:"tempAdj", type:"decimal", title:"Temperature Offset", defaultValue:0
         input name:"batteryReportMinutes", type:"enum",
             title:"Battery Reporting Interval",
@@ -158,6 +159,8 @@ def processMotion(ZoneStatus status){
 def motionInactive(){ sendEvent(name:"motion",value:"inactive",isStateChange:true) }
 
 def updatePresence(){
+    if(!enablePresence) return // Skip if presence detection disabled
+
     def nowTime=now()
     if(!state.lastCheckin){ state.lastCheckin=nowTime; return }
 
@@ -179,6 +182,8 @@ def updatePresence(){
 }
 
 def presenceTimeoutCheck(){
+    if(!enablePresence) return // Skip if presence detection disabled
+
     def last=state.lastCheckin ?: now()
     def elapsed=(now()-last)/1000
     def timeout=state.avgCheckin ? (state.avgCheckin*3) : 7200
@@ -237,3 +242,6 @@ void sendZigbeeCommands(cmds){
 Copy and paste into the metadata section:
 fingerprint inClusters:"0000,0001,0003,000F,0020,0402,0500", model:"<MODEL_STRING>", manufacturer:"<MANUFACTURER_STRING>"
 */
+
+
+    
