@@ -273,11 +273,21 @@ def historyPage(){
     }
 }
 
+// =====================
+// UPDATED Manual Replacement Note
+// =====================
 def replacementPage(){
     dynamicPage(name:"replacementPage",title:"Battery Replacement",install:false){
         section("Manual Replacement"){
-            input "replaceDevice","enum",title:"Select Device",options:autoDevices.collectEntries{[(it.id):it.displayName]},required:false
-            input "replaceConfirm","bool",title:"Confirm Battery Replaced",required:false
+            paragraph "**Note:** Use this to log batteries replaced that did not meet the automated detection threshold (under ~40%). This updates the history and trend without affecting automated calculations."
+            
+            input "replaceDevice","enum",
+                  title:"Select Device",
+                  options:autoDevices.collectEntries{[(it.id):it.displayName]},
+                  required:false
+            input "replaceConfirm","bool",
+                  title:"Confirm Battery Replaced",
+                  required:false
         }
         section("Replacement History"){
             state.replacements.reverse().each{ paragraph "${it.date} — ${it.device}" }
@@ -333,3 +343,4 @@ def scheduledSummary(){
         }
     }
 }
+
