@@ -3,29 +3,21 @@
     "gitHubUrl": "https://github.com/jdthomas24",
     "payPalUrl": "",
     "packages": [
-        {
-            "name": "Battery Monitor 2.0",
-            "category": "Utility",
-            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps/refs/heads/main/Battery%20Monitor%202.0/packageManifest.json",
-            "description": "Advanced Hubitat battery monitoring with analytics, trends, and replacement tracking. Auto-discover devices, monitor battery health, track replacements, and receive daily reports.",
-            "descriptive": "",
-            "tags": [
-                "Energy Monitoring",
-                "Monitoring"
-            ]
-        },
-        {
-      "id": "smartthings-motion-driver",
-      "name": "SmartThings Motion Sensor Driver",
-      "category": "Drivers",
-      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/SmartThings%20Motion%20Sensor/packagemanifest.json",
-      "description": "Custom Hubitat driver for SmartThings Zigbee motion sensors with local processing and battery reporting.",
-      "tags": [
-        "zigbee",
-        "motion",
-        "sensor",
-        "smartthings"
-      ]
+    {
+        "name": "Battery Monitor 2.0",
+        "category": "Utility",
+        "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps/refs/heads/main/Battery%20Monitor%202.0/packageManifest.json",
+        "description": "Advanced Hubitat battery monitoring with analytics, trends, and replacement tracking. Auto-discover devices, monitor battery health, track replacements, and receive daily reports.",
+        "descriptive": "",
+        "tags": ["Energy Monitoring","Monitoring"]
+    },
+    }
+        "id": "smartthings-motion-driver",
+        "name": "SmartThings Motion Sensor Driver",
+        "category": "Drivers",
+        "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/SmartThings%20Motion%20Sensor/packagemanifest.json",
+        "description": "Custom Hubitat driver for SmartThings Zigbee motion sensors with local processing and battery reporting.",
+        "tags": ["zigbee","motion","sensor","smartthings"]
     }
     ]
 }
