@@ -1,10 +1,12 @@
 {
-  "packageName": "SmartThings Motion Sensor Advanced",
+  "packageName": "SmartThings Motion Sensor Driver",
   "author": "Jdthomas24",
   "version": "1.0.0",
-  "category": "Utility",
-  "description": "Adaptive presence detection Motion auto reset Optional temperature reporting ( No logs for temp reporting) Battery curve calibration Battery voltage smoothing Zigbee mesh health monitoring Zigbee route health monitor Signal tracking (LQI / RSSI) Temperature cluster disable optimization Reduced logging Adaptive presence detection with timeout Motion auto-reset Battery smoothing and reporting interval Fingerprint template for future devices",
-  "apps": [
+  "category": "Drivers",
+  "description": "Custom Hubitat driver for SmartThings Zigbee motion sensors with local processing and battery reporting.",
+  "dateReleased": "",
+  "minimumHEVersion": "",
+  "drivers": [
     {
       "name": "SmartThings Motion Sensor Advanced",
       "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/SmartThings%20Motion%20Sensor/Raw%20Code/SmartThings%20Motion.groovy",
