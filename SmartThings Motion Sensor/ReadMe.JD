@@ -12,16 +12,12 @@ Custom Hubitat driver for SmartThings Zigbee motion sensors. Provides reliable l
 
 Install via Hubitat Package Manager or manual driver import.
 
-Pair device using Zigbee discovery in Hubitat.
-
-Assign the SmartThings Motion driver if not automatically selected.
-
-Use in Rule Machine, Motion Lighting, or Dashboards for automation.
+- Pair device using Zigbee discovery in Hubitat.
+- Assign the SmartThings Motion driver if not automatically selected.
+- Use in Rule Machine, Motion Lighting, or Dashboards for automation.
 
 ## Notes
 
-Device may initially pair as a generic device — manually assign the driver if needed.
-
-Battery updates depend on device reporting intervals and may not update instantly.
-
-Zigbee mesh quality can impact motion responsiveness and reporting reliability.
+- Device may initially pair as a generic device — manually assign the driver if needed.
+- Battery updates depend on device reporting intervals and may not update instantly.
+- Zigbee mesh quality can impact motion responsiveness and reporting reliability.
