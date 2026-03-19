@@ -18,7 +18,6 @@ preferences {
     page(name:"manualReplacementPage")
     page(name:"manualReplacementConfirmPage")
     page(name:"infoPage")
-    page(name:"forceRefreshPage") // added for Force Refresh button
 }
 
 // =====================
@@ -65,11 +64,6 @@ def mainPage(){
             href "trendsPage",title:"Battery Trends"
             href "historyPage",title:"Battery Replacement History"
             href "replacementPage",title:"Manual Battery Replacement"
-        }
-
-        section("Force Refresh"){
-            paragraph "Tap the button below to immediately scan all battery devices and update trends."
-            href(name: "forceRefresh", title: "Force Battery Refresh", description: "", page: "forceRefreshPage")
         }
 
         section("Help & Info"){
@@ -477,21 +471,6 @@ def infoPage(){
                       "• Sudden spikes usually indicate a problem\n" +
                       "• Compare similar devices to identify outliers\n" +
                       "• Let the app collect data over time for best accuracy"
-        }
-    }
-}
-
-// =====================
-// NEW FORCE REFRESH PAGE
-// =====================
-def forceRefreshPage(){
-    dynamicPage(name: "forceRefreshPage", title: "Force Refresh", install: false, uninstall: false){
-        section("Refreshing Batteries"){
-            paragraph "Scanning all selected battery devices..."
-            scanBatteries()
-        }
-        section(){
-            href "mainPage", title: "Back to Main Page"
         }
     }
 }
