@@ -12,7 +12,7 @@
         "tags": ["Energy Monitoring","Monitoring"]
     },
     {
-        "id": "smartthings-motion-sesnor-enhanced",
+        "id": "smartthings-motion-sensor-enhanced",
         "name": "SmartThings Motion Sensor Driver",
         "category": "Drivers",
         "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/SmartThings%20Motion%20Sensor/packagemanifest.json",
