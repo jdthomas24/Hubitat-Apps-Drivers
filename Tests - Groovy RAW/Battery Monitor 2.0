@@ -141,8 +141,18 @@ def batteryHandler(evt){
 }
 
 def updateBattery(device,level){
-    def data=state.history[device.id]
-    if(!data) return
+    def data = state.history[device.id]
+    if(!data){
+        // Initialize history if missing
+        state.history[device.id] = [
+            lastLevel: level ?: 100,
+            lastDate: now(),
+            drain: 0.3,
+            samples: []
+        ]
+        state.trend[device.id] = "Stable"
+        data = state.history[device.id]
+    }
 
     detectReplacement(device,level,data.lastLevel)
 
@@ -167,19 +177,20 @@ def updateBattery(device,level){
 // SAFE BATTERY REPLACEMENT
 // =====================
 def detectReplacement(device, newLevel, oldLevel) {
+    // Ensure newLevel and oldLevel are never null
+    newLevel = newLevel ?: 100
+    oldLevel = oldLevel ?: state.history[device.id]?.lastLevel ?: 0
+
     // Ensure device history exists
     if(!state.history[device.id]){
         state.history[device.id] = [
-            lastLevel: oldLevel ?: newLevel,
+            lastLevel: oldLevel,
             lastDate: now(),
             drain: 0.3,
             samples: []
         ]
         state.trend[device.id] = "Stable"
     }
-
-    // Replace oldLevel null with history value if needed
-    oldLevel = oldLevel ?: state.history[device.id].lastLevel
 
     // Detect battery replacement: jump from ≤40% to ≥95%
     if(newLevel >= 95 && oldLevel <= 40){
@@ -377,6 +388,7 @@ def manualReplacementConfirmPage() {
                     def device = autoDevices.find{ it.id == deviceId }
                     if(device){
                         def level = device.currentValue("battery")?.toInteger() ?: 100
+                        level = level ?: 100   // ensure no nulls
 
                         // Ensure device history exists
                         if(!state.history[device.id]){
@@ -489,12 +501,12 @@ def infoPage(Map params = [:]){
             paragraph "• Stable = very low drain\n• Moderate = normal usage\n• Heavy Drain = higher-than-normal usage"
         }
 
-        section("<b>🔋 Battery Replacement Detection</b>"){
+          section("<b>🔋 Battery Replacement Detection</b>"){
             paragraph "The app automatically detects battery replacement when a device jumps from ≤40% to ≥95%."
             paragraph "Manual replacement can be used if a battery is changed outside this range."
         }
 
-        section("<b>⚠ Troubleshooting High Drain</b>"){
+         section("<b>⚠ Troubleshooting High Drain</b>"){
             paragraph "If a device shows high drain:\n\n" +
                       "• Check signal strength (Z-Wave/Zigbee routing)\n" +
                       "• Verify device isn't reporting too frequently\n" +
@@ -508,5 +520,6 @@ def infoPage(Map params = [:]){
                       "• Sudden spikes usually indicate a problem\n" +
                       "• Compare similar devices to identify outliers\n"
         }
-    }
-}
+    } // end dynamicPage
+} // end infoPage
+
