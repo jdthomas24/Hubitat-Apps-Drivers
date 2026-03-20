@@ -519,6 +519,12 @@ def manualReplacementConfirmPage() {
         }
     }
 }
+
+        section(){
+            href "replacementPage", title:"Back to Replacement Page"
+        }
+    }
+}
 def scheduledSummary(){
     def devices = autoDevices.collect{ d -> [device: d, level: d.currentValue("battery")?.toInteger()] }.findAll{ it.level != null }
     devices = devices.sort{ it.level }
