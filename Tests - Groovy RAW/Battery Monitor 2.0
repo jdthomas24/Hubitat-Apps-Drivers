@@ -229,6 +229,7 @@ def health(device){
 }
 
 def getBatteryLevelDisplay(level){
+    level = level ?: 100
     if(level<=25) return "🔴 ${level}%"
     if(level<=70) return "🟠 ${level}%"
     return "🟢 ${level}%"
@@ -307,7 +308,7 @@ def trendsPage(){
             def table="<table style='width:100%; border-collapse: collapse;'>"
             table+="<tr style='font-weight:bold;'><td>Device</td><td>Battery</td><td>Drain/day</td><td>Trend</td></tr>"
             devs.each{ device ->
-                def level=device.currentValue("battery")?.toInteger()
+                def level=device.currentValue("battery")?.toInteger() ?: 100
                 def color=getBatteryLevelDisplay(level)
                 table+="<tr>"
                 table+="<td>${device.displayName}</td>"
