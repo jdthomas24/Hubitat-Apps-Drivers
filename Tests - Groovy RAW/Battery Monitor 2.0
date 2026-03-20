@@ -383,47 +383,17 @@ def replacementPage(){
             href "manualReplacementPage", title:"Register Manual Battery Replacement"
         }
 
-        section("Replacement History"){
-            def reps = state.replacements ?: []
-            if(reps.size() == 0){ paragraph "No battery replacements detected."; return }
-
-            def latestReps = reps.groupBy{ it.device }.collect{ k,v -> v.max{ new Date().parse("yyyy-MM-dd HH:mm", it.date) } }
-            latestReps = latestReps.sort{ a,b -> a.device <=> b.device }
-
-            def table = "<table style='width:100%; border-collapse: collapse;'>"
-            table += "<tr><td colspan='4' style='font-weight:bold; padding-bottom:5px;'>" +
-                     "<span style='color:green;'>A</span> = Auto replacement &nbsp;&nbsp; " +
-                     "<span style='color:blue;'>M</span> = Manual replacement</td></tr>"
-            table += "<tr style='font-weight:bold; border-bottom:1px solid #000;'><td>Date</td><td>Device</td><td>Level</td><td>Type</td></tr>"
-
-            latestReps.each{ r ->
-                def deviceObj = autoDevices.find{ it.displayName == r.device }
-                def level = r.level ?: deviceObj?.currentValue("battery") ?: "N/A"
-                def typeCode = r.manual ? "<span style='color:blue;font-weight:bold;'>M</span>" : "<span style='color:green;font-weight:bold;'>A</span>"
-                def dateOnly = r.date.split(" ")[0]
-
-                table += "<tr>"
-                table += "<td>${dateOnly}</td>"
-                table += "<td>${r.device}</td>"
-                table += "<td>${level}%</td>"
-                table += "<td>${typeCode}</td>"
-                table += "</tr>"
-            }
-
-            table += "</table>"
-            paragraph table
-        }
+        // Removed Replacement History table completely
+        // You can keep the section for layout or remove it entirely
+        // section("Replacement History"){
+        //     paragraph "Battery replacement history is available in the History tab."
+        // }
     }
 }
 
 // --- Manual Replacement Page ---
 def manualReplacementPage() {
     dynamicPage(name:"manualReplacementPage", title:"Manual Battery Replacement", install:false){
-        // Note pointing to Battery Replacement tab
-        section(){
-            paragraph "<b>⚠ Note:</b> Battery replacement history is available on the <b>Battery Replacement</b> tab."
-        }
-
         // Device selection
         section("Select Devices"){
             input "replaceDevicesManual","enum",
