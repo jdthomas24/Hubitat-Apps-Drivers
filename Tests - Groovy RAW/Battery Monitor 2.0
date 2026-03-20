@@ -248,16 +248,33 @@ def summaryPage(){
 
             def table="<table style='width:100%; border-collapse: collapse;'>"
             table+="<tr style='font-weight:bold;'><td>Device</td><td>Battery</td><td>Drain</td><td>Est Days</td><td>Health</td><td>Last Report</td></tr>"
+
             devs.each{ device ->
-                def level=device.currentValue("battery")?.toInteger()
-                def color=getBatteryLevelDisplay(level)
+                // Ensure history exists for this device
+                if(!state.history[device.id]){
+                    state.history[device.id] = [
+                        lastLevel: device.currentValue("battery")?.toInteger() ?: 100,
+                        lastDate: now(),
+                        drain: 0.3,
+                        samples: []
+                    ]
+                    state.trend[device.id] = "Stable"
+                }
+
+                def level = device.currentValue("battery")?.toInteger() ?: 100
+                def drain = getDrain(device)
+                def est = estDays(device)
+                def h = health(device)
+                def last = getLastReport(device)
+                def color = getBatteryLevelDisplay(level)
+
                 table+="<tr>"
                 table+="<td>${level<=25?'⚠️ ':''}${device.displayName}</td>"
                 table+="<td>${color}</td>"
-                table+="<td>${String.format('%.2f',getDrain(device))}</td>"
-                table+="<td>${estDays(device)}</td>"
-                table+="<td>${health(device)}</td>"
-                table+="<td>${getLastReport(device)}</td>"
+                table+="<td>${String.format('%.2f',drain)}</td>"
+                table+="<td>${est}</td>"
+                table+="<td>${h}</td>"
+                table+="<td>${last}</td>"
                 table+="</tr>"
             }
             table+="</table>"
