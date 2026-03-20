@@ -450,7 +450,7 @@ def manualReplacementConfirmPage(){
                         state.history[dev.id]?.justReplaced = true
                     }
                 }
-                // Instead of showing Done, navigate directly to mainPage
+                // Navigate directly to mainPage
                 redirectToMainPage()
             } else {
                 paragraph "No devices selected or confirmation missing. Please go back and try again."
@@ -466,9 +466,6 @@ def redirectToMainPage(){
     // Return to mainPage immediately
     mainPage()
 }
-
-       
-    }
 
 // =====================
 // DAILY SUMMARY REPORT
