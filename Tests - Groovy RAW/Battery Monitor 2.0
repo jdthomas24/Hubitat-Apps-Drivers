@@ -403,14 +403,14 @@ def manualReplacementPage(){
                   options: autoDevices.collect{ it.displayName },
                   submitOnChange:true
 
-            // Top Done button → Confirm battery replacement
-            href "manualReplacementConfirmPage", title:"Done", description:"Confirm selected devices"
+            // Confirm button → process selected devices
+            href "manualReplacementConfirmPage", title:"Confirm", description:"Confirm selected devices for replacement"
         }
 
-        // Bottom Done button → Return to Main Page
-        section(){
-            href "mainPage", title:"Done", description:"Return to Main Page"
-        }
+        // Removed bottom Done button
+        // section(){
+        //     href "mainPage", title:"Done", description:"Return to Main Page"
+        // }
     }
 }
 
