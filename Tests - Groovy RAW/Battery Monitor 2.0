@@ -392,54 +392,60 @@ def historyPage(){
         }
     }
 }
-def replacementPage(){
-    dynamicPage(name:"replacementPage",title:"Battery Replacement",install:false){
-        section("Manual Replacement"){
-            paragraph "Note: Only batteries replaced at ≤40% are automatically registered in the app. Manual replacement outside this threshold will not appear in replacement analytics."
-            href "manualReplacementPage", title:"Register Manual Battery Replacement"
+def manualReplacementConfirmPage() {
+    if(state.replacements == null) state.replacements = []
+
+    dynamicPage(name:"manualReplacementConfirmPage", title:"Confirm Replacement", install:false){
+        section("Note"){
+            paragraph "<b style='color:blue;'>⚠ Battery replacement history is displayed in the Battery Replacement tab.</b>"
         }
-        section("Replacement History"){
-            def reps = state.replacements ?: []
-            if(reps.size() == 0){ 
-                paragraph "No battery replacements detected." 
-                return
+
+        section("Replacement Registered"){
+            if(replaceDevicesManual && replaceConfirmManual){
+                replaceDevicesManual.each { deviceId ->
+                    def device = autoDevices.find{ it.id == deviceId }
+                    if(device){
+                        def level = device.currentValue("battery")?.toInteger() ?: 100
+                        level = level ?: 100   // ensure no nulls
+
+                        // Ensure device history exists
+                        if(!state.history[device.id]){
+                            state.history[device.id] = [
+                                lastLevel: level,
+                                lastDate: now(),
+                                drain: 0.3,
+                                samples: []
+                            ]
+                            state.trend[device.id] = "Stable"
+                        }
+
+                        // Register manual replacement
+                        state.replacements << [
+                            device: device.displayName,
+                            level: level,
+                            date: new Date().format("yyyy-MM-dd HH:mm", location.timeZone),
+                            manual: true
+                        ]
+
+                        // Update device history after replacement
+                        state.history[device.id].drain = 0.3
+                        state.trend[device.id] = "Stable"
+                        state.history[device.id].lastLevel = level
+                        state.history[device.id].lastDate = now()
+                        state.history[device.id].justReplaced = true
+                    }
+                }
+                paragraph "Battery replacement for ${replaceDevicesManual.size()} device(s) has been recorded."
+            } else {
+                paragraph "Please select device(s) and confirm replacement or use the Back button to cancel."
             }
+        }
 
-            // Sort alphabetically by device name
-            reps = reps.sort{ a, b -> a.device <=> b.device }
-
-            // Build table
-            def table = "<table style='width:100%; border-collapse: collapse;'>"
-            table += "<tr style='font-weight:bold; border-bottom:1px solid #000;'><td>Date</td><td>Device</td><td>Level</td><td>Type</td></tr>"
-
-            reps.each{ r ->
-                def deviceObj = autoDevices.find{ it.displayName == r.device }
-                def level = r.level ?: deviceObj?.currentValue("battery") ?: "N/A"
-
-                // Colored type code: A = Auto, M = Manual
-                def typeCode = r.manual ? "<span style='color:blue;font-weight:bold'>M</span>" 
-                                         : "<span style='color:green;font-weight:bold'>A</span>"
-
-                table += "<tr>"
-                table += "<td>${r.date.split(' ')[0]}</td>"  // show only date
-                table += "<td>${r.device}</td>"
-                table += "<td>${level}%</td>"
-                table += "<td>${typeCode}</td>"
-                table += "</tr>"
-            }
-
-            // Add notes row
-            table += "<tr><td colspan='4' style='padding-top:8px; font-size:small;'>"
-            table += "<b>Notes:</b> A = Auto-detected replacement (≤40% → ≥95%), M = Manual replacement"
-            table += "</td></tr>"
-
-            table += "</table>"
-
-            paragraph table
+        section(){
+            href "replacementPage", title:"Back to Replacement Page"
         }
     }
 }
-
 def manualReplacementPage() {
     if(state.replacements == null) state.replacements = []
 
