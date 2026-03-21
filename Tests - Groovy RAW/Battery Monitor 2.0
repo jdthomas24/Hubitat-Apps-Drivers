@@ -256,6 +256,47 @@ def batteryHandler(evt){
     }
 }
 
+// =====================
+// SAFE BATTERY REPLACEMENT
+// =====================
+
+// Detects if a battery has been replaced automatically
+def detectReplacement(device, newLevel, oldLevel) {
+    // Default newLevel to 100 if null, oldLevel to last recorded or 0
+    newLevel = newLevel ?: 100
+    oldLevel = oldLevel ?: state.history[device.id]?.lastLevel ?: 0
+
+    // Initialize history if missing
+    if(!state.history[device.id]){
+        state.history[device.id] = [
+            lastLevel: oldLevel,
+            lastDate: now(),
+            drain: 0.3,
+            samples: [],
+            justReplaced: false
+        ]
+        state.trend[device.id] = "Stable"
+    }
+
+    // Detect replacement if old ≤40% and new ≥95%
+    if(newLevel >= 95 && oldLevel <= 40){
+        state.replacements << [
+            device: device.displayName,
+            level: newLevel,
+            date: new Date().format("yyyy-MM-dd HH:mm", location.timeZone)
+        ]
+        // Reset drain and trend
+        state.history[device.id].drain = 0.3
+        state.trend[device.id] = "Stable"
+        // Update history
+        state.history[device.id].lastLevel = newLevel
+        state.history[device.id].lastDate = now()
+        state.history[device.id].justReplaced = true
+        state.history[device.id].replacedTime = now()
+    }
+}
+
+// Update battery function must call detectReplacement
 def updateBattery(device, level){
     def data = state.history[device.id]
     if(!data){
@@ -270,71 +311,21 @@ def updateBattery(device, level){
         data = state.history[device.id]
     }
 
+    // Call replacement detection
     detectReplacement(device, level, data.lastLevel)
 
-    // Auto-clear recently replaced after reporting
-    if(data.justReplaced && (now() - data.lastDate) > 1000*60*60){
-        data.justReplaced = false
-    }
-
-    def days = (now() - data.lastDate) / (1000*60*60*24)
-    if(days > 0 && !data.justReplaced){
-        def drain = (data.lastLevel - level)/days
-        if(drain > 0){
-            data.samples << drain
-            if(data.samples.size() > 5){
-                data.samples.remove(0)
-            }
-            data.drain = data.samples.sum() / data.samples.size()
-            updateTrend(device, data.drain)
+    // Auto-clear recently replaced flag after ~24 hours
+    if(data.justReplaced && data.replacedTime){
+        def hours = (now() - data.replacedTime) / (1000*60*60)
+        if(hours >= 24){
+            data.justReplaced = false
         }
     }
 
+    // Update last level and date
     data.lastLevel = level
     data.lastDate = now()
-    // Trigger report if critical-only mode
-    if(reportFrequency == "critical" && level <= 25){
-        sendCriticalReport(device, level)
-    }
-
-    if(data.justReplaced){
-        data.justReplaced = false
-    }
 }
-
-// =====================
-// SAFE BATTERY REPLACEMENT
-// =====================
-def detectReplacement(device, newLevel, oldLevel) {
-    newLevel = newLevel ?: 100
-    oldLevel = oldLevel ?: state.history[device.id]?.lastLevel ?: 0
-
-    if(!state.history[device.id]){
-        state.history[device.id] = [
-            lastLevel: oldLevel,
-            lastDate: now(),
-            drain: 0.3,
-            samples: [],
-            justReplaced: false
-        ]
-        state.trend[device.id] = "Stable"
-    }
-
-    if(newLevel >= 95 && oldLevel <= 40){
-        state.replacements << [
-            device: device.displayName,
-            level: newLevel,
-            date: new Date().format("yyyy-MM-dd HH:mm", location.timeZone)
-        ]
-        state.history[device.id].drain = 0.3
-        state.trend[device.id] = "Stable"
-        state.history[device.id].lastLevel = newLevel
-        state.history[device.id].lastDate = now()
-        state.history[device.id].justReplaced = true
-        state.history[device.id].replacedTime = now()
-    }
-}
-
 // =====================
 // TREND LOGIC (Auto-adjust for heavy reporters)
 // =====================
@@ -357,6 +348,19 @@ def updateTrend(device, drain){
     if(adjustedDrain < 0.3) state.trend[device.id] = "Stable"
     else if(adjustedDrain < 0.8) state.trend[device.id] = "Moderate"
     else state.trend[device.id] = "Heavy Drain"
+}
+
+// =====================
+// SAFE BATTERY LEVEL HELPER
+// =====================
+def getSafeBatteryLevel(device){
+    def level = device?.currentValue("battery")?.toInteger() 
+    if(level == null){
+        def hist = state.history?.get(device?.id)
+        if(hist) level = hist.lastLevel ?: 100
+        else level = 100
+    }
+    return level
 }
 
 def getDrain(device){ return state.history?.get(device.id)?.drain ?:0.3 }
