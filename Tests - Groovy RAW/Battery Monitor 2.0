@@ -1,3 +1,9 @@
+/**
+ *  Battery Monitor 2.3.1
+ *  Advanced Hubitat battery monitoring with analytics, trends and replacement tracking.
+ *  Author: Jdthomas24
+ */
+
 definition(
     name: "Battery Monitor 2.3", // DO NOT CHANGE (HPM SAFE)
     namespace: "jdthomas24",
@@ -88,17 +94,14 @@ def mainPage(){
 }
 
 // =====================
-// CORE LOGIC (Full Replacement)
+// CORE LOGIC
 // =====================
 def installed(){ initialize() }
 def updated(){
     unsubscribe()
     unschedule()
     initialize()
-
-    if(settings?.customAppName){
-        app.updateLabel(settings.customAppName)
-    }
+    if(settings?.customAppName){ app.updateLabel(settings.customAppName) }
 }
 
 def initialize(){
@@ -109,7 +112,6 @@ def initialize(){
     subscribe(autoDevices,"battery",batteryHandler)
 
     scheduleScan()
-
     scheduleReportFrequency()
 
     autoDevices.each{ device ->
@@ -127,109 +129,43 @@ def initialize(){
     }
 }
 
+// =====================
+// SCHEDULED SCAN & REPORT
+// =====================
 def scheduleReportFrequency(){
     unschedule("reportScheduler")
-
-    if(reportFrequency == "critical"){
-        return
-    }
-
-    if(!summaryTime){
-        return
-    }
-
+    if(reportFrequency == "critical") return
+    if(!summaryTime) return
     schedule(summaryTime, reportScheduler)
 }
 
 def reportScheduler(){
     switch(reportFrequency){
-        case "daily":
-            scheduledSummary()
-            break
-        case "every2":
-            if(shouldRunEveryXDays(2)){
-                scheduledSummary()
-            }
-            break
-        case "every3":
-            if(shouldRunEveryXDays(3)){
-                scheduledSummary()
-            }
-            break
-        case "weekly":
-            if(shouldRunWeekly()){
-                scheduledSummary()
-            }
-            break
+        case "daily": scheduledSummary(); break
+        case "every2": if(shouldRunEveryXDays(2)) scheduledSummary(); break
+        case "every3": if(shouldRunEveryXDays(3)) scheduledSummary(); break
+        case "weekly": if(shouldRunWeekly()) scheduledSummary(); break
     }
 }
 
 def shouldRunEveryXDays(daysInterval){
     def today = new Date().clearTime()
     def lastRun = state.lastReportRun ? new Date(state.lastReportRun).clearTime() : null
-
-    if(!lastRun){
-        state.lastReportRun = now()
-        return true
-    }
-
+    if(!lastRun){ state.lastReportRun = now(); return true }
     def diff = (today.time - lastRun.time) / (1000*60*60*24)
-
-    if(diff >= daysInterval){
-        state.lastReportRun = now()
-        return true
-    }
-
+    if(diff >= daysInterval){ state.lastReportRun = now(); return true }
     return false
 }
 
 def shouldRunWeekly(){
     def today = new Date()
     def lastRun = state.lastReportRun ? new Date(state.lastReportRun) : null
-
-    if(!lastRun){
-        state.lastReportRun = now()
-        return true
-    }
-
-    if(today.format("u") == "1"){ // Monday
+    if(!lastRun){ state.lastReportRun = now(); return true }
+    if(today.format("u") == "1"){ 
         def diff = (today.time - lastRun.time) / (1000*60*60*24)
-        if(diff >= 7){
-            state.lastReportRun = now()
-            return true
-        }
+        if(diff >= 7){ state.lastReportRun = now(); return true }
     }
-
     return false
-}
-
-def reportWrapper(){
-    if(reportFrequency == "every2"){
-        def days = (now() / (1000*60*60*24)).toInteger()
-        if(days % 2 == 0){
-            scheduledSummary()
-        }
-    } else {
-        scheduledSummary()
-    }
-}
-
-if(reportFrequency != "critical" && summaryTime){
-    schedule(summaryTime,scheduledSummary)
-}
-
-autoDevices.each{ device ->
-    if(!state.history[device.id]){
-        def level=device.currentValue("battery")?.toInteger() ?:100
-        state.history[device.id]=[
-            lastLevel:level,
-            lastDate:now(),
-            drain:0.3,
-            samples:[],
-            justReplaced:false
-        ]
-        state.trend[device.id]="Stable"
-    }
 }
 
 def scheduleScan(){
@@ -243,369 +179,21 @@ def scheduleScan(){
 def scanBatteries(){
     autoDevices.each{ device ->
         def level=device.currentValue("battery")?.toInteger()
-        if(level!=null){
-            updateBattery(device,level)
-        }
+        if(level!=null) updateBattery(device,level)
     }
 }
 
 def batteryHandler(evt){
     def level=evt.value?.toInteger()
-    if(level!=null){
-        updateBattery(evt.device,level)
-    }
+    if(level!=null) updateBattery(evt.device,level)
 }
 
 // =====================
-// CORE LOGIC (Full Replacement)
+// BATTERY REPLACEMENT DETECTION
 // =====================
-def installed(){ initialize() }
-def updated(){
-    unsubscribe()
-    unschedule()
-    initialize()
-
-    if(settings?.customAppName){
-        app.updateLabel(settings.customAppName)
-    }
-}
-
-def initialize(){
-    if(!state.history) state.history=[:]
-    if(!state.trend) state.trend=[:]
-    if(!state.replacements) state.replacements=[]
-
-    subscribe(autoDevices,"battery",batteryHandler)
-
-    scheduleScan()
-
-    scheduleReportFrequency()
-
-    autoDevices.each{ device ->
-        if(!state.history[device.id]){
-            def level=device.currentValue("battery")?.toInteger() ?:100
-            state.history[device.id]=[
-                lastLevel:level,
-                lastDate:now(),
-                drain:0.3,
-                samples:[],
-                justReplaced:false
-            ]
-            state.trend[device.id]="Stable"
-        }
-    }
-}
-
-def scheduleReportFrequency(){
-    unschedule("reportScheduler")
-
-    if(reportFrequency == "critical"){
-        return
-    }
-
-    if(!summaryTime){
-        return
-    }
-
-    schedule(summaryTime, reportScheduler)
-}
-
-def reportScheduler(){
-    switch(reportFrequency){
-        case "daily":
-            scheduledSummary()
-            break
-        case "every2":
-            if(shouldRunEveryXDays(2)){
-                scheduledSummary()
-            }
-            break
-        case "every3":
-            if(shouldRunEveryXDays(3)){
-                scheduledSummary()
-            }
-            break
-        case "weekly":
-            if(shouldRunWeekly()){
-                scheduledSummary()
-            }
-            break
-    }
-}
-
-def shouldRunEveryXDays(daysInterval){
-    def today = new Date().clearTime()
-    def lastRun = state.lastReportRun ? new Date(state.lastReportRun).clearTime() : null
-
-    if(!lastRun){
-        state.lastReportRun = now()
-        return true
-    }
-
-    def diff = (today.time - lastRun.time) / (1000*60*60*24)
-
-    if(diff >= daysInterval){
-        state.lastReportRun = now()
-        return true
-    }
-
-    return false
-}
-
-def shouldRunWeekly(){
-    def today = new Date()
-    def lastRun = state.lastReportRun ? new Date(state.lastReportRun) : null
-
-    if(!lastRun){
-        state.lastReportRun = now()
-        return true
-    }
-
-    if(today.format("u") == "1"){ // Monday
-        def diff = (today.time - lastRun.time) / (1000*60*60*24)
-        if(diff >= 7){
-            state.lastReportRun = now()
-            return true
-        }
-    }
-
-    return false
-}
-
-def reportWrapper(){
-    if(reportFrequency == "every2"){
-        def days = (now() / (1000*60*60*24)).toInteger()
-        if(days % 2 == 0){
-            scheduledSummary()
-        }
-    } else {
-        scheduledSummary()
-    }
-}
-
-if(reportFrequency != "critical" && summaryTime){
-    schedule(summaryTime,scheduledSummary)
-}
-
-autoDevices.each{ device ->
-    if(!state.history[device.id]){
-        def level=device.currentValue("battery")?.toInteger() ?:100
-        state.history[device.id]=[
-            lastLevel:level,
-            lastDate:now(),
-            drain:0.3,
-            samples:[],
-            justReplaced:false
-        ]
-        state.trend[device.id]="Stable"
-    }
-}
-
-def scheduleScan(){
-    switch(scanInterval){
-        case "1": runEvery1Hour(scanBatteries); break
-        case "3": runEvery3Hours(scanBatteries); break
-        case "6": schedule("0 0 */6 ? * *",scanBatteries); break
-    }
-}
-
-def scanBatteries(){
-    autoDevices.each{ device ->
-        def level=device.currentValue("battery")?.toInteger()
-        if(level!=null){
-            updateBattery(device,level)
-        }
-    }
-}
-
-def batteryHandler(evt){
-    def level=evt.value?.toInteger()
-    if(level!=null){
-        updateBattery(evt.device,level)
-    }
-}
-
-// =====================
-// CORE LOGIC (Full Replacement)
-// =====================
-def installed(){ initialize() }
-def updated(){
-    unsubscribe()
-    unschedule()
-    initialize()
-
-    if(settings?.customAppName){
-        app.updateLabel(settings.customAppName)
-    }
-}
-
-def initialize(){
-    if(!state.history) state.history=[:]
-    if(!state.trend) state.trend=[:]
-    if(!state.replacements) state.replacements=[]
-
-    subscribe(autoDevices,"battery",batteryHandler)
-
-    scheduleScan()
-
-    scheduleReportFrequency()
-
-    autoDevices.each{ device ->
-        if(!state.history[device.id]){
-            def level=device.currentValue("battery")?.toInteger() ?:100
-            state.history[device.id]=[
-                lastLevel:level,
-                lastDate:now(),
-                drain:0.3,
-                samples:[],
-                justReplaced:false
-            ]
-            state.trend[device.id]="Stable"
-        }
-    }
-}
-
-def scheduleReportFrequency(){
-    unschedule("reportScheduler")
-
-    if(reportFrequency == "critical"){
-        return
-    }
-
-    if(!summaryTime){
-        return
-    }
-
-    schedule(summaryTime, reportScheduler)
-}
-
-def reportScheduler(){
-    switch(reportFrequency){
-        case "daily":
-            scheduledSummary()
-            break
-        case "every2":
-            if(shouldRunEveryXDays(2)){
-                scheduledSummary()
-            }
-            break
-        case "every3":
-            if(shouldRunEveryXDays(3)){
-                scheduledSummary()
-            }
-            break
-        case "weekly":
-            if(shouldRunWeekly()){
-                scheduledSummary()
-            }
-            break
-    }
-}
-
-def shouldRunEveryXDays(daysInterval){
-    def today = new Date().clearTime()
-    def lastRun = state.lastReportRun ? new Date(state.lastReportRun).clearTime() : null
-
-    if(!lastRun){
-        state.lastReportRun = now()
-        return true
-    }
-
-    def diff = (today.time - lastRun.time) / (1000*60*60*24)
-
-    if(diff >= daysInterval){
-        state.lastReportRun = now()
-        return true
-    }
-
-    return false
-}
-
-def shouldRunWeekly(){
-    def today = new Date()
-    def lastRun = state.lastReportRun ? new Date(state.lastReportRun) : null
-
-    if(!lastRun){
-        state.lastReportRun = now()
-        return true
-    }
-
-    if(today.format("u") == "1"){ // Monday
-        def diff = (today.time - lastRun.time) / (1000*60*60*24)
-        if(diff >= 7){
-            state.lastReportRun = now()
-            return true
-        }
-    }
-
-    return false
-}
-
-def reportWrapper(){
-    if(reportFrequency == "every2"){
-        def days = (now() / (1000*60*60*24)).toInteger()
-        if(days % 2 == 0){
-            scheduledSummary()
-        }
-    } else {
-        scheduledSummary()
-    }
-}
-
-if(reportFrequency != "critical" && summaryTime){
-    schedule(summaryTime,scheduledSummary)
-}
-
-autoDevices.each{ device ->
-    if(!state.history[device.id]){
-        def level=device.currentValue("battery")?.toInteger() ?:100
-        state.history[device.id]=[
-            lastLevel:level,
-            lastDate:now(),
-            drain:0.3,
-            samples:[],
-            justReplaced:false
-        ]
-        state.trend[device.id]="Stable"
-    }
-}
-
-def scheduleScan(){
-    switch(scanInterval){
-        case "1": runEvery1Hour(scanBatteries); break
-        case "3": runEvery3Hours(scanBatteries); break
-        case "6": schedule("0 0 */6 ? * *",scanBatteries); break
-    }
-}
-
-def scanBatteries(){
-    autoDevices.each{ device ->
-        def level=device.currentValue("battery")?.toInteger()
-        if(level!=null){
-            updateBattery(device,level)
-        }
-    }
-}
-
-def batteryHandler(evt){
-    def level=evt.value?.toInteger()
-    if(level!=null){
-        updateBattery(evt.device,level)
-    }
-}
-
-
-// =====================
-// SAFE BATTERY REPLACEMENT + TREND TRACKING
-// =====================
-
-// Detects if a battery has been replaced automatically
 def detectReplacement(device, newLevel, oldLevel) {
-    // Default newLevel to 100 if null, oldLevel to last recorded or 0
     newLevel = newLevel ?: 100
     oldLevel = oldLevel ?: state.history[device.id]?.lastLevel ?: 0
-
-    // Initialize history if missing
     if(!state.history[device.id]) {
         state.history[device.id] = [
             lastLevel: oldLevel,
@@ -616,18 +204,14 @@ def detectReplacement(device, newLevel, oldLevel) {
         ]
         state.trend[device.id] = "Stable"
     }
-
-    // Detect replacement if old ≤40% and new ≥95%
     if(newLevel >= 95 && oldLevel <= 40) {
         state.replacements << [
             device: device.displayName,
             level: newLevel,
             date: new Date().format("yyyy-MM-dd HH:mm", location.timeZone)
         ]
-        // Reset drain and trend
         state.history[device.id].drain = 0.3
         state.trend[device.id] = "Stable"
-        // Update history
         state.history[device.id].lastLevel = newLevel
         state.history[device.id].lastDate = now()
         state.history[device.id].justReplaced = true
@@ -635,7 +219,6 @@ def detectReplacement(device, newLevel, oldLevel) {
     }
 }
 
-// Update battery function must call detectReplacement
 def updateBattery(device, level) {
     def data = state.history[device.id]
     if(!data) {
@@ -649,48 +232,33 @@ def updateBattery(device, level) {
         state.trend[device.id] = "Stable"
         data = state.history[device.id]
     }
-
-    // Call replacement detection
     detectReplacement(device, level, data.lastLevel)
-
-    // Auto-clear recently replaced flag after ~24 hours
-    if(data.justReplaced && data.replacedTime) {
+    if(data.justReplaced && data.replacedTime){
         def hours = (now() - data.replacedTime) / (1000*60*60)
-        if(hours >= 24) {
-            data.justReplaced = false
-        }
+        if(hours >= 24) data.justReplaced = false
     }
-
-    // Update last level and date
     data.lastLevel = level
     data.lastDate = now()
 }
+
 // =====================
-// TREND LOGIC (Auto-adjust for heavy reporters)
+// TREND LOGIC
 // =====================
 def updateTrend(device, drain){
-    // Suppress false heavy drain for devices that report frequently or spike
     def adjustedDrain = drain
-    if(drain > 5){  // extremely high single-sample drain
-        adjustedDrain = 0.3
-    }
-
-    // Maintain recent history to auto-adjust for high reporters
+    if(drain > 5) adjustedDrain = 0.3
     def hist = state.history[device.id]
     if(hist?.samples && hist.samples.size() >= 3){
         def avg = hist.samples.sum() / hist.samples.size()
-        if(avg > 3){  // consistently high sample average
-            adjustedDrain = Math.min(adjustedDrain, 1.0) // cap to avoid false "Heavy Drain"
-        }
+        if(avg > 3) adjustedDrain = Math.min(adjustedDrain, 1.0)
     }
-
     if(adjustedDrain < 0.3) state.trend[device.id] = "Stable"
     else if(adjustedDrain < 0.8) state.trend[device.id] = "Moderate"
     else state.trend[device.id] = "Heavy Drain"
 }
 
 // =====================
-// SAFE BATTERY LEVEL HELPER
+// HELPER FUNCTIONS
 // =====================
 def getSafeBatteryLevel(device){
     def level = device?.currentValue("battery")?.toInteger() 
@@ -717,19 +285,15 @@ def health(device){
     if(drain<1.2) return "Fair"
     return "Poor"
 }
-
 def getBatteryLevelDisplay(level, device=null){
     level = (level instanceof Number ? level : null) ?: 100
-
     def label = ""
     if(level<=25) label = "🔴 ${level}%"
     else if(level<=70) label = "🟠 ${level}%"
     else label = "🟢 ${level}%"
-
     def data = device ? state.history?.get(device.id) : null
     def showTag = data?.justReplaced
     def replacedTime = data?.replacedTime
-
     if(showTag && replacedTime){
         def hours = (now() - replacedTime) / (1000*60*60)
         if(hours >= 24){
@@ -737,11 +301,7 @@ def getBatteryLevelDisplay(level, device=null){
             showTag = false
         }
     }
-
-    if(device && showTag){
-        label += " (Recently Replaced)"
-    }
-
+    if(device && showTag) label += " (Recently Replaced)"
     return label
 }
 
@@ -759,9 +319,10 @@ def getLastReport(device){
 }
 
 // =====================
-// PAGES
+// FULL PAGES, REPORTS, MANUAL & INFO
 // =====================
-// --- Battery Summary ---
+
+// --- Battery Summary Page ---
 def summaryPage(){
     dynamicPage(name:"summaryPage",title:"Battery Summary",install:false){
         section("Battery Summary"){
@@ -976,9 +537,7 @@ def scheduledSummary(){
 
     def notifyList = notifyDevices?.unique{ it.id }
     if(enablePush && notifyList){
-        notifyList.each{
-            it.deviceNotification(report)
-        }
+        notifyList.each{ it.deviceNotification(report) }
     }
 }
 
@@ -990,9 +549,7 @@ def sendCriticalReport(device, level){
 
     def notifyList = notifyDevices?.unique{ it.id }
     if(enablePush && notifyList){
-        notifyList.each{
-            it.deviceNotification(msg)
-        }
+        notifyList.each{ it.deviceNotification(msg) }
     }
 }
 
