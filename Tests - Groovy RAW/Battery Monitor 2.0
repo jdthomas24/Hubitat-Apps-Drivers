@@ -50,9 +50,22 @@ def mainPage(){
             defaultValue:"3"
         }
 
-        section("Daily Report"){
-            input "summaryTime","time",title:"Daily report time"
-        }
+        section("Report Settings"){
+    input "reportFrequency","enum",
+        title:"Report Frequency",
+        options:[
+            "daily":"Daily",
+            "every2":"Every 2 Days",
+            "every3":"Every 3 Days",
+            "weekly":"Weekly",
+            "critical":"Only When Critical"
+        ],
+        defaultValue:"daily"
+
+    input "summaryTime","time",
+        title:"Report Time (not used for Critical Only)",
+        required:false
+}
 
         section("Notifications"){
             input "enablePush","bool",title:"Enable notifications",defaultValue:true
