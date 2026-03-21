@@ -7,7 +7,7 @@ definition(
     iconUrl: "https://raw.githubusercontent.com/hubitat/HubitatPublic/master/examples/icons/battery.png",
     iconX2Url: "https://raw.githubusercontent.com/hubitat/HubitatPublic/master/examples/icons/battery@2x.png",
     iconX3Url: "https://raw.githubusercontent.com/hubitat/HubitatPublic/master/examples/icons/battery@2x.png",
-    version: "2.3.2"
+    version: "2.3.3"
 )
 
 preferences {
@@ -95,7 +95,6 @@ def updated(){
     unsubscribe()
     unschedule()
     initialize()
-
     if(settings?.customAppName){
         app.updateLabel(settings.customAppName)
     }
@@ -119,7 +118,8 @@ def initialize(){
                 lastDate:now(),
                 drain:0.3,
                 samples:[],
-                justReplaced:false
+                justReplaced:false,
+                adjustedDrain:0
             ]
             state.trend[device.id]="Stable"
         }
@@ -128,15 +128,8 @@ def initialize(){
 
 def scheduleReportFrequency(){
     unschedule("reportScheduler")
-
-    if(reportFrequency == "critical"){
-        return
-    }
-
-    if(!summaryTime){
-        return
-    }
-
+    if(reportFrequency == "critical") return
+    if(!summaryTime) return
     schedule(summaryTime, reportScheduler)
 }
 
@@ -146,19 +139,13 @@ def reportScheduler(){
             scheduledSummary()
             break
         case "every2":
-            if(shouldRunEveryXDays(2)){
-                scheduledSummary()
-            }
+            if(shouldRunEveryXDays(2)) scheduledSummary()
             break
         case "every3":
-            if(shouldRunEveryXDays(3)){
-                scheduledSummary()
-            }
+            if(shouldRunEveryXDays(3)) scheduledSummary()
             break
         case "weekly":
-            if(shouldRunWeekly()){
-                scheduledSummary()
-            }
+            if(shouldRunWeekly()) scheduledSummary()
             break
     }
 }
@@ -166,70 +153,29 @@ def reportScheduler(){
 def shouldRunEveryXDays(daysInterval){
     def today = new Date().clearTime()
     def lastRun = state.lastReportRun ? new Date(state.lastReportRun).clearTime() : null
-
     if(!lastRun){
         state.lastReportRun = now()
         return true
     }
-
     def diff = (today.time - lastRun.time) / (1000*60*60*24)
-    if(diff >= daysInterval){
-        state.lastReportRun = now()
-        return true
-    }
-
+    if(diff >= daysInterval){ state.lastReportRun = now(); return true }
     return false
 }
 
 def shouldRunWeekly(){
     def today = new Date()
     def lastRun = state.lastReportRun ? new Date(state.lastReportRun) : null
-
-    if(!lastRun){
-        state.lastReportRun = now()
-        return true
-    }
-
-    if(today.format("u") == "1"){ // Monday
+    if(!lastRun){ state.lastReportRun = now(); return true }
+    if(today.format("u") == "1"){ 
         def diff = (today.time - lastRun.time) / (1000*60*60*24)
-        if(diff >= 7){
-            state.lastReportRun = now()
-            return true
-        }
+        if(diff >= 7){ state.lastReportRun = now(); return true }
     }
-
     return false
 }
 
-def reportWrapper(){
-    if(reportFrequency == "every2"){
-        def days = (now() / (1000*60*60*24)).toInteger()
-        if(days % 2 == 0){
-            scheduledSummary()
-        }
-    } else {
-        scheduledSummary()
-    }
-}
-
-if(reportFrequency != "critical" && summaryTime){
-    schedule(summaryTime,scheduledSummary)
-}
-
-autoDevices.each{ device ->
-    if(!state.history[device.id]){
-        def level=device.currentValue("battery")?.toInteger() ?:100
-        state.history[device.id]=[
-            lastLevel:level,
-            lastDate:now(),
-            drain:0.3,
-            samples:[],
-            justReplaced:false
-        ]
-        state.trend[device.id]="Stable"
-    }
-}
-
+// =====================
+// SCAN & HANDLER
+// =====================
 def scheduleScan(){
     switch(scanInterval){
         case "1": runEvery1Hour(scanBatteries); break
@@ -241,22 +187,18 @@ def scheduleScan(){
 def scanBatteries(){
     autoDevices.each{ device ->
         def level=device.currentValue("battery")?.toInteger()
-        if(level!=null){
-            updateBattery(device,level)
-        }
+        if(level!=null) updateBattery(device,level)
     }
+}
+
+def batteryHandler(evt){
+    def level=evt.value?.toInteger()
+    if(level!=null) updateBattery(evt.device,level)
 }
 
 // =====================
 // UPDATE BATTERY + AUTO ADJUST HEAVY REPORTERS
 // =====================
-def batteryHandler(evt){
-    def level=evt.value?.toInteger()
-    if(level!=null){
-        updateBattery(evt.device,level)
-    }
-}
-
 def updateBattery(device, level){
     def data = state.history[device.id]
     if(!data){
@@ -265,7 +207,8 @@ def updateBattery(device, level){
             lastDate: now(),
             drain: 0.3,
             samples: [],
-            justReplaced: false
+            justReplaced: false,
+            adjustedDrain:0
         ]
         state.trend[device.id] = "Stable"
         data = state.history[device.id]
@@ -273,29 +216,28 @@ def updateBattery(device, level){
 
     detectReplacement(device, level, data.lastLevel)
 
-    // Auto-adjust for frequent reporters to prevent false heavy drain
+    // --- Auto detect heavy reporters ---
     def days = (now() - data.lastDate) / (1000*60*60*24)
     if(days > 0 && !data.justReplaced){
         def rawDrain = (data.lastLevel - level)/days
-        // Smooth high values from fast-reporting devices
-        def adjustedDrain = rawDrain > 1.5 ? rawDrain * 0.5 : rawDrain
-        if(adjustedDrain > 0){
-            data.samples << adjustedDrain
-            if(data.samples.size() > 5){
-                data.samples.remove(0)
-            }
-            data.drain = data.samples.sum() / data.samples.size()
-            updateTrend(device, data.drain)
-        }
+
+        // Auto-adjust per device type
+        def adjustmentFactor = 1.0
+        if(device.hasCapability("lock")) adjustmentFactor = 0.5 // door locks tend to report more
+        else if(device.hasCapability("motionSensor")) adjustmentFactor = 0.7
+
+        def adjustedDrain = rawDrain * adjustmentFactor
+        data.samples << adjustedDrain
+        if(data.samples.size() > 5) data.samples.remove(0)
+        data.drain = data.samples.sum() / data.samples.size()
+        updateTrend(device, data.drain)
     }
 
     data.lastLevel = level
     data.lastDate = now()
 
-    // Clear "Recently Replaced" after first real report
-    if(data.justReplaced){
-        data.justReplaced = false
-    }
+    // Clear "Recently Replaced" after first report
+    if(data.justReplaced) data.justReplaced = false
 
     if(reportFrequency == "critical" && level <= 25){
         sendCriticalReport(device, level)
@@ -314,7 +256,8 @@ def detectReplacement(device, newLevel, oldLevel) {
             lastLevel: oldLevel,
             lastDate: now(),
             drain: 0.3,
-            samples: []
+            samples: [],
+            adjustedDrain:0
         ]
         state.trend[device.id] = "Stable"
     }
@@ -335,64 +278,7 @@ def detectReplacement(device, newLevel, oldLevel) {
 }
 
 // =====================
-// MANUAL BATTERY FIXES
-// =====================
-def redirectToMainPage(){
-    app?.updateSetting("replaceDevicesManual",[value:[],type:"enum"])
-    app?.updateSetting("replaceConfirmManual",[value:false,type:"bool"])
-    mainPage()
-}
-
-def manualReplacementPage(){
-    dynamicPage(name:"manualReplacementPage", title:"Manual Battery Replacement", install:false){
-        section("Register Manual Battery Replacement"){
-            paragraph "<b>Note: Only batteries replaced at ≤40% are automatically registered in the app. Manual replacement outside this threshold will not appear in replacement analytics.</b>"
-
-            input "replaceDevicesManual","enum",
-                  title:"Select devices manually replaced",
-                  multiple:true,
-                  required:false,
-                  options: autoDevices.collect{ it.displayName },
-                  submitOnChange:true
-        }
-
-        section(){
-            href "manualReplacementConfirmPage", title:"Confirm Replacement", description:"Confirm the selected devices have been replaced"
-        }
-    }
-}
-
-def manualReplacementConfirmPage() {
-    dynamicPage(name: "manualReplacementConfirmPage", title: "Processing Manual Replacement", install: false) {
-        section("Processing Manual Replacement") {
-            if(settings?.replaceDevicesManual) {
-                settings.replaceDevicesManual.each { name ->
-                    def dev = autoDevices.find { it.displayName == name }
-                    if(dev) {
-                        state.replacements << [
-                            device: dev.displayName,
-                            level: dev.currentValue("battery")?.toInteger() ?: 100,
-                            date: new Date().format("yyyy-MM-dd HH:mm", location.timeZone),
-                            manual: true
-                        ]
-                        state.history[dev.id]?.drain = 0.3
-                        state.trend[dev.id] = "Stable"
-                        state.history[dev.id]?.lastLevel = dev.currentValue("battery")?.toInteger() ?: 100
-                        state.history[dev.id]?.lastDate = now()
-                        state.history[dev.id]?.justReplaced = true
-                        state.history[dev.id].replacedTime = now()
-                    }
-                }
-                app?.updateSetting("replaceDevicesManual", [value: [], type: "enum"])
-            } else {
-                paragraph "No devices selected or confirmation missing. Please go back and try again."
-            }
-        }
-    }
-}
-
-// =====================
-// TREND FUNCTIONS
+// TREND & HEALTH FUNCTIONS
 // =====================
 def updateTrend(device,drain){
     if(drain<0.3) state.trend[device.id]="Stable"
@@ -416,50 +302,9 @@ def health(device){
     return "Poor"
 }
 
-def getBatteryLevelDisplay(level, device=null){
-    level = (level instanceof Number ? level : null) ?: 100
-
-    def label = ""
-    if(level<=25) label = "🔴 ${level}%"
-    else if(level<=70) label = "🟠 ${level}%"
-    else label = "🟢 ${level}%"
-
-    def data = device ? state.history?.get(device.id) : null
-    def showTag = data?.justReplaced
-    def replacedTime = data?.replacedTime
-
-    if(showTag && replacedTime){
-        def hours = (now() - replacedTime) / (1000*60*60)
-        if(hours >= 24){
-            state.history[device.id].justReplaced = false
-            showTag = false
-        }
-    }
-
-    if(device && showTag){
-        label += " (Recently Replaced)"
-    }
-
-    return label
-}
-
-def getLastReport(device){
-    def last = state.history?.get(device.id)?.lastDate
-    if(!last) return "Never"
-    def diff = now() - last
-    def mins = (diff / 60000).toInteger()
-    def hrs = (mins / 60).toInteger()
-    def days = (hrs / 24).toInteger()
-    if(days>0) return "${days}d ago"
-    if(hrs>0) return "${hrs}h ago"
-    if(mins>0) return "${mins}m ago"
-    return "Just now"
-}
 // =====================
-// PAGES
+// PAGES: SUMMARY, TRENDS, HISTORY, MANUAL
 // =====================
-
-// --- Battery Summary ---
 def summaryPage(){
     dynamicPage(name:"summaryPage",title:"Battery Summary",install:false){
         section("Battery Summary"){
@@ -503,12 +348,11 @@ def summaryPage(){
     }
 }
 
-// --- Trends Page ---
 def trendsPage(){
     dynamicPage(name:"trendsPage",title:"Battery Trends",install:false){
         section("Battery Trend Analysis"){
             paragraph "⚠ Note: Trends may be overestimated until the device reports at least 5 battery events. Trend accuracy improves as more data is collected over time. Devices with 'Recently Replaced' tag will clear when device starts reporting."
-
+            
             def devs = autoDevices.findAll{ it.currentValue("battery") != null }.sort{ a,b -> a.displayName <=> b.displayName }
             if(!devs){ paragraph "No battery devices."; return }
 
@@ -535,10 +379,7 @@ def historyPage(){
     dynamicPage(name:"historyPage",title:"Battery Replacement History",install:false){
         section("Replacement Log"){
             def replacements = state.replacements ?: []
-            if(replacements.size() == 0){
-                paragraph "No battery replacements detected."
-                return
-            }
+            if(replacements.size() == 0){ paragraph "No battery replacements detected."; return }
 
             def latestReps = replacements.groupBy{ it.device }.collect{ k,v -> v.max{ new Date().parse("yyyy-MM-dd HH:mm", it.date) } }
             latestReps = latestReps.sort{ a,b -> a.device <=> b.device }
@@ -563,23 +404,14 @@ def historyPage(){
                 table += "</tr>"
             }
             table += "</table>"
-
             paragraph table
         }
     }
 }
 
-// --- Replacement Page ---
-def replacementPage(){
-    dynamicPage(name:"replacementPage", title:"Battery Replacement", install:false){
-        section("Manual Replacement"){
-            paragraph "<b>Note: Only batteries replaced at ≤40% are automatically registered in the app. Manual replacement outside this threshold will not appear in replacement analytics.</b>"
-            href "manualReplacementPage", title:"Register Manual Battery Replacement"
-        }
-    }
-}
-
-// --- Manual Replacement Page ---
+// =====================
+// MANUAL REPLACEMENT PAGES
+// =====================
 def manualReplacementPage(){
     dynamicPage(name:"manualReplacementPage", title:"Manual Battery Replacement", install:false){
         section("Register Manual Battery Replacement"){
@@ -596,39 +428,36 @@ def manualReplacementPage(){
         section(){
             href "manualReplacementConfirmPage", title:"Confirm Replacement", description:"Confirm the selected devices have been replaced"
         }
-
-        section(){
-            href "mainPage", title:"Return to Main Menu", description:"Go back to the main app page"
-        }
     }
 }
 
-// --- Manual Replacement Confirm Page ---
 def manualReplacementConfirmPage() {
     dynamicPage(name: "manualReplacementConfirmPage", title: "Processing Manual Replacement", install: false) {
         section("Processing Manual Replacement") {
             if(settings?.replaceDevicesManual) {
-                settings.replaceDevicesManual.each{ deviceName ->
-                    def deviceObj = autoDevices.find{ it.displayName == deviceName }
-                    if(deviceObj){
+                settings.replaceDevicesManual.each { name ->
+                    def dev = autoDevices.find { it.displayName == name }
+                    if(dev) {
                         state.replacements << [
-                            device: deviceName,
-                            level: deviceObj.currentValue("battery")?.toInteger() ?: 100,
+                            device: dev.displayName,
+                            level: dev.currentValue("battery")?.toInteger() ?: 100,
                             date: new Date().format("yyyy-MM-dd HH:mm", location.timeZone),
-                            manual:true
+                            manual: true
                         ]
-                        state.history[deviceObj.id].lastLevel = deviceObj.currentValue("battery")?.toInteger() ?: 100
-                        state.history[deviceObj.id].drain = 0.3
-                        state.trend[deviceObj.id] = "Stable"
+                        state.history[dev.id]?.drain = 0.3
+                        state.trend[dev.id] = "Stable"
+                        state.history[dev.id]?.lastLevel = dev.currentValue("battery")?.toInteger() ?: 100
+                        state.history[dev.id]?.lastDate = now()
+                        state.history[dev.id]?.justReplaced = true
+                        state.history[dev.id].replacedTime = now()
                     }
                 }
-                paragraph "Manual replacement has been recorded for selected devices."
+                // Clear selection after processing
+                app?.updateSetting("replaceDevicesManual", [value: [], type: "enum"])
+                paragraph "<b>Manual replacement registered. Use the Done button above to return to the main menu.</b>"
             } else {
-                paragraph "No devices selected for manual replacement."
+                paragraph "No devices selected or confirmation missing. Please go back and try again."
             }
-        }
-        section(){
-            href "mainPage", title:"Return to Main Menu", description:"Go back to the main app page"
         }
     }
 }
