@@ -605,96 +605,97 @@ def historyPage(){
 }
 
 // ============================================================
-// ===================== MANUAL REPLACEMENT PAGES ============
+// ===================== MANUAL REPLACEMENT PAGE =============
 // ============================================================
-
-// ===================== SELECTION PAGE =======================
-def manualReplacementPage(){
+def manualReplacementPage() {
     if(state.replacements == null) state.replacements = []
+    if(!autoDevices) autoDevices = []
 
-    dynamicPage(name:"manualReplacementPage", title:"Manual Battery Replacement", install:false){
-        section("Select a device to log a manual battery replacement"){
-
-            // Only include valid devices
-            def deviceOptions = (autoDevices ?: []).findAll{ it != null }*.displayName
-            if(!deviceOptions || deviceOptions.size() == 0){
+    dynamicPage(name: "manualReplacementPage", title: "Manual Battery Replacement", install: false) {
+        section("Select Devices") {
+            if(!autoDevices || autoDevices.size() == 0) {
                 paragraph "⚠ No battery devices available. Please select devices on the main page first."
-                return
-            }
-
-            // Device selection triggers page reload
-            input "manualDevice", "enum",
-                  title: "Select Device",
-                  options: deviceOptions,
-                  required: true,
-                  submitOnChange: true
-
-            if(settings.manualDevice){
-                // Battery level input (no page reload)
-                input "manualLevel", "number",
-                      title: "Battery Level After Replacement",
-                      defaultValue: 100,
-                      range: 0..100,
-                      required: true,
-                      submitOnChange: false
-
-                // Confirm page only visible when both selections made
-                if(settings.manualLevel != null){
-                    href "manualReplacementConfirmPage",
-                         title: "Confirm Replacement",
-                         description: "Click to log manual replacement"
-                }
+            } else {
+                input "replaceDevicesManual", "enum",
+                      title: "Select Devices (can choose multiple)",
+                      options: autoDevices.collectEntries { [(it.id): it.displayName] }
+                                         .sort { a, b -> a.value <=> b.value },
+                      multiple: true,
+                      required: false
             }
         }
-        section(){
-            href "mainPage", title:"← Back to Main Page"
+
+        section("Confirm Replacement") {
+            input "replaceConfirmManual", "bool",
+                  title: "Confirm Battery Replaced",
+                  required: false
+        }
+
+        section() {
+            href "manualReplacementConfirmPage", title: "Submit Replacement"
+        }
+
+        section() {
+            href "replacementPage", title: "Back"
         }
     }
 }
 
-// ===================== CONFIRM PAGE ==========================
-def manualReplacementConfirmPage(){
+// ============================================================
+// ================ MANUAL REPLACEMENT CONFIRM PAGE ==========
+// ============================================================
+def manualReplacementConfirmPage() {
     if(state.replacements == null) state.replacements = []
+    if(!autoDevices) autoDevices = []
 
-    dynamicPage(name:"manualReplacementConfirmPage", title:"Confirm Manual Replacement", install:false){
-        section("Confirm Replacement"){
+    dynamicPage(name: "manualReplacementConfirmPage", title: "Confirm Replacement", install: false) {
+        section("Replacement Registered") {
+            if(replaceDevicesManual && replaceConfirmManual) {
+                def successCount = 0
 
-            def selectedDeviceName = settings.manualDevice
-            def selectedLevel = settings.manualLevel?.toInteger()
+                replaceDevicesManual.each { deviceId ->
+                    def device = autoDevices.find { it.id == deviceId }
+                    if(device) {
+                        def level = device.currentValue("battery")?.toInteger() ?: 100
 
-            if(!selectedDeviceName){
-                paragraph "❌ No device selected. Go back and select a device first."
-                return
-            }
+                        // Ensure history exists
+                        if(!state.history[device.id]) {
+                            state.history[device.id] = [
+                                lastLevel: level,
+                                lastDate: now(),
+                                drain: 0.3,
+                                samples: []
+                            ]
+                        }
 
-            if(selectedLevel == null){
-                paragraph "❌ No battery level entered. Go back and enter the battery level."
-                return
-            }
+                        // Log replacement
+                        state.replacements << [
+                            device: device.displayName,
+                            level: level,
+                            date: new Date().format("yyyy-MM-dd HH:mm", location.timeZone)
+                        ]
+                        state.history[device.id].drain = 0.3
+                        state.trend[device.id] = "Stable"
+                        state.history[device.id].lastLevel = 100
+                        state.history[device.id].lastDate = now()
 
-            def device = (autoDevices ?: []).find{ it.displayName == selectedDeviceName }
+                        successCount++
+                    }
+                }
 
-            if(device){
-                logReplacement(device, selectedLevel, true)
-                paragraph "✅ Manual replacement logged for ${device.displayName} at ${selectedLevel}%."
+                if(successCount > 0) {
+                    paragraph "✅ Battery replacement for ${successCount} device(s) has been recorded."
+                } else {
+                    paragraph "❌ No valid devices found. Please select devices on the main page first."
+                }
 
-                // Clear settings to prevent stale values
-                app.updateSetting("manualDevice",[value:null,type:"enum"])
-                app.updateSetting("manualLevel",[value:null,type:"number"])
             } else {
-                paragraph "❌ Device not found. Please go back and select a valid device."
+                paragraph "⚠ Please select device(s) and confirm replacement or use the Back button to cancel."
             }
+        }
 
-            section(){
-                href "manualReplacementPage",
-                     title:"← Back",
-                     description:"Return to Manual Replacement page"
-            }
-            section(){
-                href "mainPage",
-                     title:"← Back to Main Page",
-                     description:"Return to Main Page"
-            }
+        section() {
+            href "replacementPage", title: "Back to Replacement Page"
         }
     }
 }
