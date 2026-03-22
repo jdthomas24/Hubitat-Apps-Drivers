@@ -476,9 +476,7 @@ def formatTimeAgo(ts){
     def mins = (diffMs / (1000*60)).toInteger()
     return mins < 60 ? "${mins}m ago" : "${(mins/60).toInteger()}h ago"
 }
-// =====================
-// PAGES
-// =====================
+
 // =====================
 // --- Battery Summary Page ---
 // =====================
