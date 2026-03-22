@@ -103,36 +103,16 @@ def updated(){
 
 def initialize(){
     if(!state.history) state.history=[:]
-    
-    // ✅ CLEAN UP DUPLICATES IN REPLACEMENTS (KEEP LATEST PER DEVICE+DATE)
-    if(state.replacements){
-        def deduped = [:]  // key = device+date
-        state.replacements.each { r ->
-            def key = "${r.device}-${r.date}"
-            // Keep only the latest occurrence
-            deduped[key] = r
-        }
-        state.replacements = deduped.values().sort{ a,b -> 
-            Date.parse("yyyy-MM-dd HH:mm", b.date) <=> Date.parse("yyyy-MM-dd HH:mm", a.date)
-        }
-    }
-    
     if(!state.trend) state.trend=[:]
     if(!state.replacements) state.replacements=[]
-
-    // ✅ CLEAN UP BAD HISTORICAL DRAIN VALUES (RUN ONCE)
-    state.history.each{ id, data ->
-        if(data?.drain > 5){
-            data.drain = 0.3
-            data.samples = []
-        }
-    }
 
     // Subscribe to battery events
     subscribe(autoDevices,"battery",batteryHandler)
 
-    // Schedule scans and reports
+    // Schedule incremental scans
     scheduleScan()
+
+    // Schedule reports
     scheduleReportFrequency()
 
     // Initialize history for each device if missing
@@ -147,6 +127,24 @@ def initialize(){
                 justReplaced:false
             ]
             state.trend[device.id]="Stable"
+        }
+    }
+}
+
+// =====================
+// BATTERY SCAN SCHEDULER (FIXED PATCH)
+// =====================
+def scheduleScan(){
+    unschedule("runBatteryScan")  // clear old schedules
+    def intervalHours = (scanInterval ?: "3").toInteger()  // default 3 hours
+    runEveryXHours(intervalHours, "runBatteryScan")
+}
+
+def runBatteryScan(){
+    autoDevices.each { device ->
+        def level = device.currentValue("battery")?.toInteger()
+        if(level != null){
+            updateBattery(device, level)
         }
     }
 }
