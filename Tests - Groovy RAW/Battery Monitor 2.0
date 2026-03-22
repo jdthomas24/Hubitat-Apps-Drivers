@@ -411,20 +411,14 @@ def getBatteryLevelDisplay(level, device=null){
 def summaryPage(){
     dynamicPage(name:"summaryPage",title:"Battery Summary",install:false){
         section("Battery Summary"){
-            // Get all devices with a battery value
             def devs = autoDevices.findAll{ it.currentValue("battery") != null }
             devs = devs.sort{ a,b -> a.currentValue("battery") <=> b.currentValue("battery") }
-            if(!devs){ 
-                paragraph "No battery devices found."
-                return 
-            }
+            if(!devs){ paragraph "No battery devices found."; return }
 
-            // Start HTML table
             def table="<table style='width:100%; border-collapse: collapse;'>"
             table+="<tr style='font-weight:bold;'><td>Device</td><td>Battery</td><td>Drain</td><td>Est Days</td><td>Health</td><td>Last Report</td></tr>"
 
             devs.each{ device ->
-                // Ensure history exists
                 if(!state.history[device.id]){
                     state.history[device.id] = [
                         lastLevel: device.currentValue("battery")?.toInteger() ?: 100,
@@ -441,7 +435,7 @@ def summaryPage(){
                 def est = estDays(device)
                 def h = health(device)
 
-                // --- Convert lastDate to relative time (hours/minutes ago) ---
+                // --- Last Report in hours/minutes ago ---
                 def lastReport = state.history[device.id]?.lastDate
                 def lastReportStr = "N/A"
                 if(lastReport){
@@ -470,7 +464,8 @@ def summaryPage(){
         }
     }
 }
-// --- Trends Page ---
+
+// --- Battery Trends Page ---
 def trendsPage(){
     dynamicPage(name:"trendsPage",title:"Battery Trends",install:false){
         section("Battery Trend Analysis"){
@@ -488,7 +483,6 @@ def trendsPage(){
                 def drainStr=String.format('%.2f',getDrain(device))
                 def trendStr=state.trend?.get(device.id) ?: 'Stable'
 
-                // --- Relative Last Report (hours & minutes ago) ---
                 def lastReport = state.history[device.id]?.lastDate
                 def lastReportStr = "N/A"
                 if(lastReport){
@@ -514,7 +508,6 @@ def trendsPage(){
         }
     }
 }
-
 // --- History Page ---
 def historyPage(){
     dynamicPage(name:"historyPage",title:"Battery Replacement History",install:false){
