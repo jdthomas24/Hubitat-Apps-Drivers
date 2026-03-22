@@ -390,14 +390,58 @@ def safeHistory(device){
     return state.history[device.id]
 }
 // =====================
-// BATTERY DISPLAY HELPERS
+// BATTERY DISPLAY HELPERS + SAFE HISTORY
 // =====================
+def safeHistory(device){
+    if(!device) return [:]
+    def data = state.history?.get(device.id)
+    if(!data){
+        data = [
+            lastLevel: device.currentValue("battery")?.toInteger() ?: 100,
+            lastDate: now(),
+            drain: 0.3,
+            samples: [],
+            justReplaced: false
+        ]
+        state.history[device.id] = data
+        state.trend[device.id] = "Stable"
+    }
+    return data
+}
+
+def getLastBatteryTime(device){
+    def data = safeHistory(device)
+    def ts = data.lastDate
+    return ts instanceof Long ? ts : ts.time
+}
+
+def getLastActivityTime(device){
+    def last = device.getLastActivity()
+    return last instanceof Long ? last : last?.time
+}
+
+def isStale(device){
+    def lastBattery = getLastBatteryTime(device)
+    def lastActivity = getLastActivityTime(device)
+    if(!lastBattery || !lastActivity) return false
+    def diffHours = (lastActivity - lastBattery) / (1000*60*60)
+    return diffHours >= 24
+}
+
+def formatTimeAgo(ts){
+    if(!ts) return "N/A"
+    ts = ts instanceof Long ? ts : ts.time
+    def diffMs = now() - ts
+    def mins = (diffMs / (1000*60)).toInteger()
+    return mins < 60 ? "${mins}m ago" : "${(mins/60).toInteger()}h ago"
+}
+
 def getBatteryLevelDisplay(level, device=null){
     level = (level instanceof Number ? level : null) ?: 100
 
     // 🔥 Hide "Recently Replaced" if battery is 0%
     if(level == 0){
-        def data = device ? state.history[device.id] : null
+        def data = device ? safeHistory(device) : null
         if(data) data.justReplaced = false
     }
 
@@ -406,13 +450,13 @@ def getBatteryLevelDisplay(level, device=null){
     else if(level<=70) label = "🟠 ${level}%"
     else label = "🟢 ${level}%"
 
-    def data = (device && state.history?.containsKey(device.id)) ? state.history[device.id] : null
+    def data = (device && state.history?.containsKey(device.id)) ? safeHistory(device) : null
     def showTag = data?.justReplaced == true
     def replacedTime = data?.replacedTime
 
     if(showTag){
         replacedTime = (replacedTime instanceof Number) ? replacedTime : now()
-        def hoursSinceReplacement = (now() - replacedTime.time) / (1000*60*60)
+        def hoursSinceReplacement = (now() - replacedTime) / (1000*60*60)
         if(hoursSinceReplacement >= 24){
             if(data) data.justReplaced = false    // Clear flag after 24h
             showTag = false
