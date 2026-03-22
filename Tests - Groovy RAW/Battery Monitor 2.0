@@ -63,7 +63,7 @@ def mainPage(){
                   defaultValue:"daily"
 
             input "summaryTime","time",
-                  title:"Report Time (not used for Critical Only)",
+                  title:"Report Time (ignored when set to Critical Only — alerts are event-driven)",
                   required:false
         }
 
