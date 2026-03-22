@@ -608,11 +608,11 @@ def historyPage(){
 // ===================== MANUAL REPLACEMENT PAGE =============
 // ============================================================
 def manualReplacementPage(){
-    dynamicPage(name:"manualReplacementPage", title:"Manual Battery Replacement", install:false){
+    dynamicPage(name:"replacementPage", title:"Manual Battery Replacement", install:false){
         section("Manual Replacement"){
             input "manualDevice","enum",
                   title:"Select device manually replaced",
-                  options:(autoDevices ?: []).collect{ it.displayName },
+                  options:autoDevices.collect{ it.displayName },
                   required:true
             input "manualLevel","number",
                   title:"Battery level after replacement",
