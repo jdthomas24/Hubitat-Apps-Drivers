@@ -485,7 +485,6 @@ def safeHistory(device){
 def safeParseDate(str){
     try{ return Date.parse("yyyy-MM-dd HH:mm", str) } catch(e){ return new Date(0) }
 }
-
 // --- Battery Summary Page ---
 def summaryPage(){
     dynamicPage(name:"summaryPage",title:"Battery Summary",install:false){
