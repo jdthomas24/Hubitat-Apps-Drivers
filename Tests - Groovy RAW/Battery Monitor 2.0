@@ -441,9 +441,17 @@ def summaryPage(){
                 def est = estDays(device)
                 def h = health(device)
 
-                // Use lastDate from state.history for Last Report
-                def lastReport = state.history[device.id]?.lastDate ? 
-                    new Date(state.history[device.id].lastDate).format("yyyy-MM-dd HH:mm", location.timeZone) : "N/A"
+                // --- Convert lastDate to relative time (hours/minutes ago) ---
+                def lastReport = state.history[device.id]?.lastDate
+                def lastReportStr = "N/A"
+                if(lastReport){
+                    def diffMs = now() - lastReport
+                    def diffHours = (diffMs / (1000*60*60)).toInteger()
+                    def diffMinutes = ((diffMs / (1000*60)) % 60).toInteger()
+                    lastReportStr = ""
+                    if(diffHours > 0) lastReportStr += "${diffHours}h "
+                    lastReportStr += "${diffMinutes}m ago"
+                }
 
                 def color = getBatteryLevelDisplay(level, device)
 
@@ -453,7 +461,7 @@ def summaryPage(){
                 table+="<td>${String.format('%.2f',drain)}</td>"
                 table+="<td>${est}</td>"
                 table+="<td>${h}</td>"
-                table+="<td>${lastReport}</td>"
+                table+="<td>${lastReportStr}</td>"
                 table+="</tr>"
             }
 
@@ -462,7 +470,6 @@ def summaryPage(){
         }
     }
 }
-
 // --- Trends Page ---
 def trendsPage(){
     dynamicPage(name:"trendsPage",title:"Battery Trends",install:false){
