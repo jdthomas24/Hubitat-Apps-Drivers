@@ -604,7 +604,10 @@ def historyPage(){
 // ============================================================
 // ===================== MANUAL REPLACEMENT PAGE =============
 // ============================================================
-def replacementPage(){
+def manualReplacementPage(){
+    // Redirect to replacementPage to avoid missing page error
+    replacementPage()
+}
     dynamicPage(name:"replacementPage",title:"Manual Battery Replacement",install:false){
         section("Manual Replacement"){
             input "manualDevice","enum",
