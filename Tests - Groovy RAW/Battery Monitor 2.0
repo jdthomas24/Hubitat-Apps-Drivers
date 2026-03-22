@@ -605,21 +605,18 @@ def historyPage(){
 // ===================== MANUAL REPLACEMENT PAGE =============
 // ============================================================
 def manualReplacementPage(){
-    // Redirect to replacementPage to avoid missing page error
-    replacementPage()
-}
-    dynamicPage(name:"replacementPage",title:"Manual Battery Replacement",install:false){
+    dynamicPage(name:"manualReplacementPage", title:"Manual Battery Replacement", install:false){
         section("Manual Replacement"){
             input "manualDevice","enum",
                   title:"Select device manually replaced",
-                  options:autoDevices.collect{ it.displayName },
+                  options:(autoDevices ?: []).collect{ it.displayName },
                   required:true
             input "manualLevel","number",
                   title:"Battery level after replacement",
                   defaultValue:100,
                   range:0..100,
                   required:true
-            href "manualReplacementConfirmPage",title:"Confirm Replacement",description:"Click to log manual replacement"
+            href "manualReplacementConfirmPage", title:"Confirm Replacement", description:"Click to log manual replacement"
         }
     }
 }
