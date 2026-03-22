@@ -610,16 +610,25 @@ def historyPage(){
 def manualReplacementPage(){
     dynamicPage(name:"manualReplacementPage", title:"Manual Battery Replacement", install:false){
         section("Manual Replacement"){
+
+            // Check if devices exist
+            def deviceOptions = (autoDevices ?: []).findAll{ it != null }*.displayName
+            if(!deviceOptions){
+                paragraph "⚠ No battery devices available. Please select devices on the main page first."
+                return
+            }
+
             input "manualDevice","enum",
                   title:"Select device manually replaced",
-                  options:autoDevices.collect{ it.displayName },
+                  options:deviceOptions,
                   required:true
+
             input "manualLevel","number",
                   title:"Battery level after replacement",
                   defaultValue:100,
                   range:0..100,
                   required:true
-            // Navigate to confirm page safely
+
             href "manualReplacementConfirmPage", 
                  title:"Confirm Replacement", 
                  description:"Click to log manual replacement"
