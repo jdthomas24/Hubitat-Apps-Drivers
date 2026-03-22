@@ -517,7 +517,20 @@ def historyPage(){
                 return
             }
 
-            def latestReps = replacements.sort{ a,b ->
+            // ✅ Deduplicate to keep only the latest replacement per device
+            def latestPerDevice = [:]  // key = device.displayName, value = replacement map
+            replacements.each { r ->
+                def existing = latestPerDevice[r.device]
+                if(!existing){
+                    latestPerDevice[r.device] = r
+                } else {
+                    def rDate = Date.parse("yyyy-MM-dd HH:mm", r.date)
+                    def existingDate = Date.parse("yyyy-MM-dd HH:mm", existing.date)
+                    if(rDate > existingDate) latestPerDevice[r.device] = r
+                }
+            }
+
+            def latestReps = latestPerDevice.values().sort{ a,b ->
                 Date.parse("yyyy-MM-dd HH:mm", b.date) <=> Date.parse("yyyy-MM-dd HH:mm", a.date)
             }
 
@@ -547,7 +560,6 @@ def historyPage(){
             }
 
             table += "</table>"
-
             paragraph table
         }
     }
