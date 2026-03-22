@@ -613,29 +613,30 @@ def manualReplacementPage(){
     dynamicPage(name:"manualReplacementPage", title:"Manual Battery Replacement", install:false){
         section("Select a device to log a manual battery replacement"){
 
+            // Only include devices that are non-null
             def deviceOptions = (autoDevices ?: []).findAll{ it != null }*.displayName
             if(!deviceOptions || deviceOptions.size() == 0){
                 paragraph "⚠ No battery devices available. Please select devices on the main page first."
                 return
             }
 
-            // Only manualDevice triggers page reload
+            // Device selection triggers page reload
             input "manualDevice", "enum",
                   title: "Select Device",
                   options: deviceOptions,
                   required: true,
                   submitOnChange: true
 
-            // Only show battery level input after a device is selected
+            // Battery level input shown only after device is selected
             if(settings.manualDevice){
                 input "manualLevel", "number",
                       title: "Battery Level After Replacement",
                       defaultValue: 100,
                       range: 0..100,
                       required: true,
-                      submitOnChange: false  // removed submitOnChange to prevent reload loop
+                      submitOnChange: false  // Prevent reload loop
 
-                // Show confirm button only when both inputs are selected
+                // Only show confirm href after both inputs are set
                 if(settings.manualLevel != null){
                     href "manualReplacementConfirmPage",
                          title: "Confirm Replacement",
@@ -651,9 +652,11 @@ def manualReplacementConfirmPage(){
     dynamicPage(name:"manualReplacementConfirmPage", title:"Confirm Manual Replacement", install:false){
         section("Confirm Replacement"){
 
+            // Read settings
             def selectedDeviceName = settings.manualDevice
             def selectedLevel = settings.manualLevel?.toInteger()
 
+            // Basic validations
             if(!selectedDeviceName){
                 paragraph "❌ No device selected. Go back and select a device first."
                 return
@@ -664,37 +667,38 @@ def manualReplacementConfirmPage(){
                 return
             }
 
+            // Find the actual device object
             def device = (autoDevices ?: []).find{ it.displayName == selectedDeviceName }
-
             if(!device){
                 paragraph "❌ Device not found. Please go back and select a valid device."
                 return
             }
 
-            // ✅ Show explicit confirmation button
+            // Explicit confirmation checkbox
             input "confirmManualReplacement", "bool",
                   title: "Yes, log this replacement",
                   required: true,
                   submitOnChange: true
 
+            // Only log replacement after user confirms
             if(settings.confirmManualReplacement){
                 logReplacement(device, selectedLevel, true)
 
                 paragraph "✅ Manual replacement logged for ${device.displayName} at ${selectedLevel}%."
 
-                // Clear settings to prevent stale values
+                // Clear settings after logging
                 app.updateSetting("manualDevice",[value:null,type:"enum"])
                 app.updateSetting("manualLevel",[value:null,type:"number"])
                 app.updateSetting("confirmManualReplacement",[value:null,type:"bool"])
             }
 
+            // Back link
             href "manualReplacementPage",
                  title:"← Back",
                  description:"Return to Manual Replacement page"
         }
     }
 }
-
 // ============================================================
 // ===================== INFO PAGE ===========================
 // ============================================================
