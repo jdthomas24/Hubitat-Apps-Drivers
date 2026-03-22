@@ -619,6 +619,7 @@ def manualReplacementPage(){
                   defaultValue:100,
                   range:0..100,
                   required:true
+            // Navigate to confirm page safely
             href "manualReplacementConfirmPage", 
                  title:"Confirm Replacement", 
                  description:"Click to log manual replacement"
@@ -630,15 +631,20 @@ def manualReplacementPage(){
 // ===================== MANUAL CONFIRMATION PAGE ============
 // ============================================================
 def manualReplacementConfirmPage(){
-    dynamicPage(name:"manualReplacementConfirmPage", title:"Confirm Manual Replacement"){
+    dynamicPage(name:"manualReplacementConfirmPage", title:"Confirm Manual Replacement", install:false){
         section("Confirm"){
             def device = autoDevices.find{ it.displayName == manualDevice }
             if(device){
                 logReplacement(device, manualLevel.toInteger(), true)
-                paragraph "Manual replacement logged for ${device.displayName} at ${manualLevel}%."
+                paragraph "✅ Manual replacement logged for ${device.displayName} at ${manualLevel}%."
             }else{
-                paragraph "Device not found."
+                paragraph "❌ Device not found."
             }
+
+            // Add a button to go back safely
+            href "manualReplacementPage",
+                 title: "← Back",
+                 description: "Return to Manual Replacement page"
         }
     }
 }
