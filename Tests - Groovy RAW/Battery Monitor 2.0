@@ -515,8 +515,10 @@ def historyPage(){
                 return
             }
 
-            def latestReps = replacements.groupBy{ it.device }.collect{ k,v -> v.max{ new Date().parse("yyyy-MM-dd HH:mm", it.date) } }
-            latestReps = latestReps.sort{ a,b -> a.device <=> b.device }
+            latestReps = latestReps.sort{ a,b ->
+            Date.parse("yyyy-MM-dd HH:mm", b.date) <=> Date.parse("yyyy-MM-dd HH:mm", a.date)
+}
+
 
             def table = "<table style='width:100%; border-collapse: collapse;'>"
             table += "<tr><td colspan='4' style='font-weight:bold; padding-bottom:5px;'>" +
@@ -528,7 +530,7 @@ def historyPage(){
                 def deviceObj = autoDevices.find{ it.displayName == r.device }
                 def level = r.level ?: deviceObj?.currentValue("battery") ?: "N/A"
                 def typeCode = r.manual ? "<span style='color:blue;font-weight:bold;'>M</span>" : "<span style='color:green;font-weight:bold;'>A</span>"
-                def dateOnly = r.date.split(" ")[0]
+                def dateOnly = r.date
 
                 table += "<tr>"
                 table += "<td>${dateOnly}</td>"
