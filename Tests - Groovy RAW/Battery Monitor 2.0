@@ -188,13 +188,7 @@ def scheduledSummary() {
     def devs = (autoDevices ?: []).findAll { it?.currentValue("battery") != null }
     if (!devs) return
 
-    // Sort devices by worst battery first
-    devs = devs.sort { a, b ->
-        def order = ["Poor": 1, "Fair": 2, "Good": 3, "Excellent": 4]
-        return (order[health(a)] ?: 5) <=> (order[health(b)] ?: 5)
-    }
-
-    // Categorize devices
+    // Categorize devices by battery percentage using same color codes
     def categories = [
         "🔴 Poor": [],
         "🟠 Fair": [],
@@ -205,7 +199,12 @@ def scheduledSummary() {
     devs.each { device ->
         def lvl = device.currentValue("battery")?.toInteger() ?: 100
         def cat = lvl <= 25 ? "🔴 Poor" : lvl <= 70 ? "🟠 Fair" : lvl <= 100 ? "🟢 Good" : "🟢 Excellent"
-        categories[cat] << "${device.displayName} (${lvl}%)"
+        categories[cat] << [name: device.displayName, level: lvl]
+    }
+
+    // Sort each category by battery percentage (lowest first)
+    categories.each { cat, list ->
+        categories[cat] = list.sort { it.level }
     }
 
     // Build message
@@ -213,7 +212,7 @@ def scheduledSummary() {
     categories.each { cat, list ->
         if (list) {
             msg += "\n${cat} (${list.size()} devices):\n"
-            list.each { dev -> msg += "- ${dev}\n" }
+            list.each { dev -> msg += "- ${dev.name} (${dev.level}%)\n" }
         }
     }
 
@@ -221,6 +220,7 @@ def scheduledSummary() {
     if (enablePush) sendPush(msg)
     if (notifyDevices) notifyDevices.each { it.deviceNotification(msg) }
 }
+
 // ============================================================
 // ===================== BATTERY HANDLER =====================
 // ============================================================
