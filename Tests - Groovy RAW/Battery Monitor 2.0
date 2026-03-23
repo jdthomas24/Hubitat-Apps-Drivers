@@ -188,19 +188,23 @@ def scheduledSummary() {
     def devs = (autoDevices ?: []).findAll{ it?.currentValue("battery") != null }
     if(!devs) return
 
-    // Categorize devices
-    def low = []
-    def medium = []
-    def good = []
+    // Categorize and sort devices by battery within each category
+    def low = devs.findAll { it.currentValue("battery")?.toInteger() <= 25 }
+                  .sort { a,b -> (a.currentValue("battery") ?: 0) <=> (b.currentValue("battery") ?: 0) }
+                  .collect { "${it.displayName} – ${it.currentValue("battery")}%"} 
 
-    devs.each { device ->
-        def level = device.currentValue("battery")?.toInteger() ?: 100
-        if(level <= 25) low << "${device.displayName} – ${level}%"
-        else if(level <= 70) medium << "${device.displayName} – ${level}%"
-        else good << "${device.displayName} – ${level}%"
-    }
+    def medium = devs.findAll { 
+                    def lvl = it.currentValue("battery")?.toInteger() ?: 100
+                    lvl > 25 && lvl <= 70 
+                 }
+                 .sort { a,b -> (a.currentValue("battery") ?: 0) <=> (b.currentValue("battery") ?: 0) }
+                 .collect { "${it.displayName} – ${it.currentValue("battery")}%"} 
 
-    // Build message in reversed order: low → medium → good
+    def good = devs.findAll { it.currentValue("battery")?.toInteger() > 70 }
+                  .sort { a,b -> (a.currentValue("battery") ?: 0) <=> (b.currentValue("battery") ?: 0) }
+                  .collect { "${it.displayName} – ${it.currentValue("battery")}%"} 
+
+    // Build message: Low → Medium → Good
     def msg = "📊 Battery Summary Notification\n\n"
     if(low) msg += "🔴 Low (${low.size()} devices)\n- ${low.join('\n- ')}\n\n"
     if(medium) msg += "🟡 Medium (${medium.size()} devices)\n- ${medium.join('\n- ')}\n\n"
