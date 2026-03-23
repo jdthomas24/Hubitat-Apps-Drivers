@@ -184,41 +184,31 @@ def shouldRunEveryXDays(daysInterval){
     if(diff >= daysInterval){ state.lastReportRun = now(); return true }
     return false
 }
-def scheduledSummary(){
+def scheduledSummary() {
     def devs = (autoDevices ?: []).findAll{ it?.currentValue("battery") != null }
     if(!devs) return
 
-    // Sort by battery (lowest first like summary page)
-    devs = devs.sort{ a,b -> (a.currentValue("battery") ?: 100) <=> (b.currentValue("battery") ?: 100) }
+    // Categorize devices
+    def low = []
+    def medium = []
+    def good = []
 
-    def msg = "Battery Report:\n"
-
-    devs.each{ device ->
+    devs.each { device ->
         def level = device.currentValue("battery")?.toInteger() ?: 100
-        def drain = getDrain(device)
-        def est = estDays(device)
-        def h = health(device)
-
-        msg += "${device.displayName}: ${level}% | Drain ${String.format('%.2f',drain)} | ${est}d | ${h}\n"
+        if(level <= 25) low << "${device.displayName} – ${level}%"
+        else if(level <= 70) medium << "${device.displayName} – ${level}%"
+        else good << "${device.displayName} – ${level}%"
     }
 
-    if(enablePush){
-        sendPush(msg)
-    }
+    // Build message in reversed order: low → medium → good
+    def msg = "📊 Battery Summary Notification\n\n"
+    if(low) msg += "🔴 Low (${low.size()} devices)\n- ${low.join('\n- ')}\n\n"
+    if(medium) msg += "🟡 Medium (${medium.size()} devices)\n- ${medium.join('\n- ')}\n\n"
+    if(good) msg += "🟢 Good (${good.size()} devices)\n- ${good.join('\n- ')}\n\n"
 
-    if(notifyDevices){
-        notifyDevices.each{ it.deviceNotification(msg) }
-    }
-}
-def shouldRunWeekly(){
-    def today = new Date()
-    def lastRun = state.lastReportRun ? new Date(state.lastReportRun) : null
-    if(!lastRun){ state.lastReportRun = now(); return true }
-    if(today.format("u") == "1"){ // Monday
-        def diff = (today.time - lastRun.time) / (1000*60*60*24)
-        if(diff >= 7){ state.lastReportRun = now(); return true }
-    }
-    return false
+    // Send notifications
+    if(enablePush) sendPush(msg)
+    if(notifyDevices) notifyDevices.each{ it.deviceNotification(msg) }
 }
 
 // ============================================================
