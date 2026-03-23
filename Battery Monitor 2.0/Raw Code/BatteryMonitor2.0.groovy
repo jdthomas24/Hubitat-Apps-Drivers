@@ -1,13 +1,21 @@
+// ============================================================
+// Battery Monitor 2.0
+// Version 2.3.3
+// Author: Jdthomas24
+// Namespace: jdthomas24
+// Description: Advanced Hubitat battery monitoring with analytics, trends and replacement tracking (v2.3.2). Auto-adjusts drain for low-activity devices.
+// ============================================================
+
 definition(
     name: "Battery Monitor 2.0", // DO NOT CHANGE (HPM SAFE)
     namespace: "jdthomas24",
     author: "Jdthomas24",
-    description: "Advanced Hubitat battery monitoring with analytics, trends and replacement tracking.",
+    description: "Advanced Hubitat battery monitoring with analytics, trends and replacement tracking (v2.3.2). Auto-adjusts drain for low-activity devices.",
     category: "Convenience",
     iconUrl: "https://raw.githubusercontent.com/hubitat/HubitatPublic/master/examples/icons/battery.png",
     iconX2Url: "https://raw.githubusercontent.com/hubitat/HubitatPublic/master/examples/icons/battery@2x.png",
     iconX3Url: "https://raw.githubusercontent.com/hubitat/HubitatPublic/master/examples/icons/battery@2x.png",
-    version: "2.1.1"  // <-- Added version for Package Manager
+    version: "2.3.3"
 )
 
 preferences {
@@ -15,59 +23,110 @@ preferences {
     page(name:"summaryPage")
     page(name:"trendsPage")
     page(name:"historyPage")
-    page(name:"replacementPage")
     page(name:"manualReplacementPage")
     page(name:"manualReplacementConfirmPage")
     page(name:"infoPage")
 }
 
-// =====================
-// MAIN PAGE
-// =====================
-def mainPage(){
-    dynamicPage(name:"mainPage",title:(settings?.customAppName ?: "Battery Monitor 2.3"),install:true,uninstall:true){
+// ============================================================
+// ===================== MAIN PAGE ===========================
+// ============================================================
+def mainPage() {
+    // Update app label if custom name provided
+    if(settings?.customAppName) {
+        if(app.label != settings.customAppName) {
+            app.updateLabel(settings.customAppName)
+        }
+    }
 
-        section("App Display Name"){
-            input "customAppName","text",
-                  title:"Custom App Name (optional)",
-                  description:"Change how the app name appears in Hubitat UI",
-                  required:false
+    dynamicPage(name: "mainPage",
+                title: (settings?.customAppName ?: "Battery Monitor 2.0"),
+                install: true, uninstall: true) {
+
+        // ================= App Display Name =================
+        section("App Display Name (optional)") {
+            input "customAppName", "text",
+                  title: "Custom App Name",
+                  description: "Change how the app name appears in Hubitat UI",
+                  required: false
         }
 
-        section("Auto Battery Discovery"){
-            paragraph "**⚠ Important: The app will automatically detect all devices reporting battery levels. " +
-                      "Please select the devices you want to actively monitor from the list below. " +
-                      "Only selected devices will be tracked for trends, battery health, and notifications.**"
-            input "autoDevices","capability.battery",
-                  title:"Select battery devices to monitor",
-                  multiple:true,
-                  required:true
+        // ================= Auto Battery Discovery =============
+section("Auto Battery Discovery") {
+    paragraph "<b>⚠ Important: The app automatically detects all devices reporting battery levels. " +
+          "Select the devices you want to monitor from the list below. Only selected devices will be tracked for trends, battery health, and notifications.</b>"
+
+    // ⚠ Mobile note for long device names
+    paragraph "<span style='color:red; font-weight:bold;'>Note for mobile users:</span> If your device names are long, they may extend past the screen in the selection list. This is a UI limitation on smaller screens. You can still select devices as usual."
+
+    paragraph "<span style='color:red; font-weight:bold;'>IMPORTANT: After selecting devices, you MUST click 'Done' to exit the app BEFORE viewing the battery report. Skipping this step may cause an error.</span>"
+
+    // Existing input logic stays exactly the same
+    input "autoDevices", "capability.battery",
+          title: "Select battery devices to monitor",
+          multiple: true,
+          required: true
+
+    // Initialize state.history and state.trend for selected devices
+    if(autoDevices) {
+        if(!state.history) state.history = [:]
+        if(!state.trend) state.trend = [:]
+        autoDevices.each { device ->
+            if(!state.history[device.id]) {
+                state.history[device.id] = [
+                    lastLevel: device.currentValue("battery")?.toInteger() ?: 100,
+                    lastDate: now(),
+                    drain: 0.3,
+                    samples: [],
+                    justReplaced: false
+                ]
+                state.trend[device.id] = "Stable"
+            }
+        }
+    }
+}
+        // ================= Battery Scan Interval =================
+        section("Battery Scan Interval") {
+            input "scanInterval", "enum",
+                  title: "Scan Frequency",
+                  options: ["1": "Hourly", "3": "Every 3 Hours", "6": "Every 6 Hours"],
+                  defaultValue: "3"
         }
 
-        section("Battery Scan Interval"){
-            input "scanInterval","enum",
-            title:"Scan Frequency",
-            options:["1":"Hourly","3":"Every 3 Hours","6":"Every 6 Hours"],
-            defaultValue:"3"
+        // ================= Report Settings =================
+        section("Report Settings") {
+            input "reportFrequency", "enum",
+                  title: "Report Frequency",
+                  options: [
+                      "daily": "Daily",
+                      "every2": "Every 2 Days",
+                      "every3": "Every 3 Days",
+                      "weekly": "Weekly",
+                      "critical": "Only When Critical"
+                  ],
+                  defaultValue: "daily"
+
+            input "summaryTime", "time",
+                  title: "Report Time (ignored when set to Critical Only — alerts are event-driven)",
+                  required: false
         }
 
-        section("Daily Report"){
-            input "summaryTime","time",title:"Daily report time"
+        // ================= Notifications =================
+        section("Notifications") {
+            input "enablePush", "bool", title: "Enable notifications", defaultValue: true
+            input "notifyDevices", "capability.notification", title: "Notification devices", multiple: true, required: false
         }
 
-        section("Notifications"){
-            input "enablePush","bool",title:"Enable notifications",defaultValue:true
-            input "notifyDevices","capability.notification",title:"Notification devices",multiple:true,required:false
+        // ================= Reports =================
+        section("Reports") {
+            href "summaryPage", title: "Battery Summary"
+            href "trendsPage", title: "Battery Trends"
+            href "historyPage", title: "Battery Replacement History"
+            href "manualReplacementPage", title: "Manual Battery Replacement"
         }
 
-        section("Reports"){
-            href "summaryPage",title:"Battery Summary"
-            href "trendsPage",title:"Battery Trends"
-            href "historyPage",title:"Battery Replacement History"
-            href "replacementPage",title:"Manual Battery Replacement"
-        }
-
-        section("Help & Info"){
+        // ================= Help & Info =================
+        section("Help & Info") {
             href "infoPage",
                  title: "Battery Health Guide",
                  description: "Learn what battery drain, health, and trends mean"
@@ -75,111 +134,185 @@ def mainPage(){
     }
 }
 
-// =====================
-// CORE LOGIC
-// =====================
-def installed(){ initialize() }
-def updated(){
-    unsubscribe()
-    unschedule()
-    initialize()
+// ============================================================
+// ===================== REPORT SCHEDULING ==================
+// ============================================================
+def scheduleReportFrequency(){
+    unschedule("reportScheduler")
+    if(reportFrequency == "critical") return
+    if(!summaryTime) return
+    schedule(summaryTime, reportScheduler)
+}
 
-    if(settings?.customAppName){
-        app.updateLabel(settings.customAppName)
+def reportScheduler(){
+    switch(reportFrequency){
+        case "daily": scheduledSummary(); break
+        case "every2": if(shouldRunEveryXDays(2)) scheduledSummary(); break
+        case "every3": if(shouldRunEveryXDays(3)) scheduledSummary(); break
+        case "weekly": if(shouldRunWeekly()) scheduledSummary(); break
     }
 }
 
-def initialize(){
-    if(!state.history) state.history=[:]
-    if(!state.trend) state.trend=[:]
-    if(!state.replacements) state.replacements=[]
-
-    subscribe(autoDevices,"battery",batteryHandler)
-
-    scheduleScan()
-
-    if(summaryTime){
-        schedule(summaryTime,scheduledSummary)
-    }
-
-    autoDevices.each{ device ->
-        if(!state.history[device.id]){
-            def level=device.currentValue("battery")?.toInteger() ?:100
-            state.history[device.id]=[
-                lastLevel:level,
-                lastDate:now(),
-                drain:0.3,
-                samples:[]
-            ]
-            state.trend[device.id]="Stable"
-        }
-    }
+def shouldRunEveryXDays(daysInterval){
+    def today = new Date().clearTime()
+    def lastRun = state.lastReportRun ? new Date(state.lastReportRun).clearTime() : null
+    if(!lastRun){ state.lastReportRun = now(); return true }
+    def diff = (today.time - lastRun.time) / (1000*60*60*24)
+    if(diff >= daysInterval){ state.lastReportRun = now(); return true }
+    return false
 }
 
-def scheduleScan(){
-    switch(scanInterval){
-        case "1": runEvery1Hour(scanBatteries); break
-        case "3": runEvery3Hours(scanBatteries); break
-        case "6": schedule("0 0 */6 ? * *",scanBatteries); break
+def shouldRunWeekly(){
+    def today = new Date()
+    def lastRun = state.lastReportRun ? new Date(state.lastReportRun) : null
+    if(!lastRun){ state.lastReportRun = now(); return true }
+    if(today.format("u") == "1"){ // Monday
+        def diff = (today.time - lastRun.time) / (1000*60*60*24)
+        if(diff >= 7){ state.lastReportRun = now(); return true }
     }
+    return false
 }
 
-def scanBatteries(){
-    autoDevices.each{ device ->
-        def level=device.currentValue("battery")?.toInteger()
-        if(level!=null){
-            updateBattery(device,level)
-        }
-    }
-}
-
+// ============================================================
+// ===================== BATTERY HANDLER =====================
+// ============================================================
 def batteryHandler(evt){
-    def level=evt.value?.toInteger()
-    if(level!=null){
-        updateBattery(evt.device,level)
+    def device = evt.device
+    def level = evt.value?.toInteger()
+    if(device && level != null){
+        updateBattery(device, level)
     }
 }
 
-def updateBattery(device,level){
-    def data=state.history[device.id]
-    if(!data) return
+def updateBattery(device, level){
+    def data = state.history[device.id]
 
-    detectReplacement(device,level,data.lastLevel)
+    // Initialize history entry if missing
+    if(!data){
+        state.history[device.id] = [
+            lastLevel: level ?: 100,
+            lastDate: now(),
+            drain: 0.3,
+            samples: [],
+            justReplaced: false
+        ]
+        state.trend[device.id] = "Stable"
+        data = state.history[device.id]
+    }
 
-    def days=(now()-data.lastDate)/(1000*60*60*24)
-    if(days>0){
-        def drain=(data.lastLevel-level)/days
-        if(drain>0){
-            data.samples << drain
-            if(data.samples.size()>5){
-                data.samples.remove(0)
-            }
-            data.drain=data.samples.sum()/data.samples.size()
-            updateTrend(device,data.drain)
+    // Handle 0% battery correctly
+    if(level == 0){
+        data.justReplaced = false
+        data.replacedTime = null
+        data.drain = 1.0
+        data.samples = []
+        state.trend[device.id] = "Heavy Drain"
+    }
+
+    // Force sanity check for sudden high battery
+    if(level >= 90 && data?.lastLevel <= 50 && data?.lastDate){
+        def hoursSinceLast = (now() - safeTime(data.lastDate)) / (1000*60*60)
+        if(hoursSinceLast >= 24){
+            detectReplacement(device, level, data.lastLevel)
         }
     }
 
-    data.lastLevel=level
-    data.lastDate=now()
+    // Always check for possible replacement
+    detectReplacement(device, level, data.lastLevel)
+
+    // Clear justReplaced flag after real usage OR 24h fallback
+    def replacedAt = data.replacedTime ?: now()
+
+    // 🔹 Clear if battery has started draining (real usage detected)
+    if(data.justReplaced && level < 95){
+    data.justReplaced = false
 }
 
-def detectReplacement(device,newLevel,oldLevel){
-    if(oldLevel==null) return
-    if(newLevel>=95 && oldLevel<=40){
-        state.replacements << [
-            device:device.displayName,
-            level:newLevel,
-            date:new Date().format("yyyy-MM-dd HH:mm",location.timeZone)
-        ]
-        state.history[device.id].drain=0.3
-        state.trend[device.id]="Stable"
+    // 🔹 Fallback: clear after 24 hours
+    else if(data.justReplaced && (now() - safeTime(replacedAt)) > 1000*60*60*24){
+    data.justReplaced = false
+}
+
+    // Update drain based on lastLevel and samples
+    def days = (now() - safeTime(data.lastDate)) / (1000*60*60*24)
+    if(days > 0 && !data.justReplaced){
+        def drain = (data.lastLevel - level) / days
+        if(drain > 0 && drain < 5){
+            data.samples << drain
+            if(data.samples.size() > 5) data.samples.remove(0)
+        }
+
+        if(data.samples && data.samples.size() > 0){
+            def avg = data.samples.sum() / data.samples.size()
+            data.drain = Math.min(avg, 1.5)
+            updateTrend(device, data.drain)
+        }
+    }
+
+    // Update lastLevel and lastDate after drain calculation
+    data.lastLevel = level
+    data.lastDate = now()
+
+    // Critical report check
+    if(reportFrequency == "critical" && level <= 25){
+        sendCriticalReport(device, level)
     }
 }
 
-def updateTrend(device,drain){
-    if(drain<0.3) state.trend[device.id]="Stable"
-    else if(drain<0.8) state.trend[device.id]="Moderate"
-    else state.trend[device.id]="Heavy Drain"
+// ============================================================
+// ===================== DETECT REPLACEMENT ==================
+// ============================================================
+def detectReplacement(device, newLevel, oldLevel){
+    newLevel = newLevel ?: 100
+    oldLevel = oldLevel ?: state.history[device.id]?.lastLevel ?: 0
+
+    if(!state.history[device.id]){
+        state.history[device.id] = [
+            lastLevel: oldLevel,
+            lastDate: now(),
+            drain: 0.3,
+            samples: [],
+            justReplaced: false
+        ]
+        state.trend[device.id] = "Stable"
+    }
+
+    def data = state.history[device.id]
+
+    def largeJump = (newLevel - oldLevel)
+    def hadDrainHistory = data?.samples && data.samples.size() >= 2
+    def detected = false
+
+    if(newLevel >= 95 && oldLevel <= 40) detected = true
+    else if(newLevel >= 90 && oldLevel <= 40 && largeJump >= 25) detected = true
+    else if(newLevel >= 90 && hadDrainHistory && largeJump >= 15 && oldLevel <= 40) detected = true
+    else if(newLevel >= 95 && hadDrainHistory && oldLevel <= 40) detected = true
+
+    if(detected){
+    logReplacement(device, newLevel, false)
+   }
+}
+
+// ============================================================
+// ===================== TREND LOGIC =========================
+// ============================================================
+def updateTrend(device, drain){
+    def adjustedDrain = drain
+    if(drain > 5){
+        adjustedDrain = 0.3
+    }
+
+    def hist = state.history[device.id]
+    if(hist?.samples && hist.samples.size() >= 3){
+        def avg = hist.samples.sum() / hist.samples.size()
+        if(avg > 3){
+            adjustedDrain = Math.min(adjustedDrain, 1.0)
+        }
+    }
+
+    if(adjustedDrain < 0.3) state.trend[device.id] = "Stable"
+    else if(adjustedDrain < 0.8) state.trend[device.id] = "Moderate"
+    else state.trend[device.id] = "Heavy Drain"
 }
 
 def getDrain(device){ return state.history?.get(device.id)?.drain ?:0.3 }
@@ -198,227 +331,382 @@ def health(device){
     return "Poor"
 }
 
-def getBatteryLevelDisplay(level){
-    if(level<=25) return "🔴 ${level}%"
-    if(level<=70) return "🟠 ${level}%"
-    return "🟢 ${level}%"
+// ============================================================
+// ===================== SAFE HISTORY HELPERS =================
+// ============================================================
+def safeTime(ts){ return (ts instanceof Number) ? ts : ts?.time }
+
+def safeHistory(device){
+    if(!device) return [:]
+    def data = state.history?.get(device.id)
+    if(!data){
+        data = [
+            lastLevel: device.currentValue("battery")?.toInteger() ?: 100,
+            lastDate: now(),
+            drain: 0.3,
+            samples: [],
+            justReplaced: false
+        ]
+        state.history[device.id] = data
+        state.trend[device.id] = "Stable"
+    }
+    return data
 }
 
-def getLastReport(device){
-    def last = state.history?.get(device.id)?.lastDate
-    if(!last) return "Never"
-    def diff = now() - last
-    def mins = (diff / 60000).toInteger()
-    def hrs = (mins / 60).toInteger()
-    def days = (hrs / 24).toInteger()
-    if(days>0) return "${days}d ago"
-    if(hrs>0) return "${hrs}h ago"
-    if(mins>0) return "${mins}m ago"
-    return "Just now"
+def getLastBatteryTime(device){ return safeTime(state.history[device.id]?.lastDate) }
+def getLastActivityTime(device){ 
+    def last = device.getLastActivity()
+    return safeTime(last)
 }
 
-// =====================
-// PAGES
-// =====================
-def summaryPage(){
-    dynamicPage(name:"summaryPage",title:"Battery Summary",install:false){
-        section("Battery Summary"){
-            def devs = autoDevices.findAll{ it.currentValue("battery") != null }
-            devs = devs.sort{ a,b -> a.currentValue("battery") <=> b.currentValue("battery") }
-            if(!devs){ paragraph "No battery devices found."; return }
+def isStale(device){
+    def lastBattery = getLastBatteryTime(device)
+    def lastActivity = getLastActivityTime(device)
+    if(!lastBattery || !lastActivity) return false
+    def diffHours = (lastActivity - lastBattery) / (1000*60*60)
+    return diffHours >= 24
+}
 
-            def table="<table style='width:100%; border-collapse: collapse;'>"
-            table+="<tr style='font-weight:bold;'><td>Device</td><td>Battery</td><td>Drain</td><td>Est Days</td><td>Health</td><td>Last Report</td></tr>"
-            devs.each{ device ->
-                def level=device.currentValue("battery")?.toInteger()
-                def color=getBatteryLevelDisplay(level)
-                table+="<tr>"
-                table+="<td>${level<=25?'⚠️ ':''}${device.displayName}</td>"
-                table+="<td>${color}</td>"
-                table+="<td>${String.format('%.2f',getDrain(device))}</td>"
-                table+="<td>${estDays(device)}</td>"
-                table+="<td>${health(device)}</td>"
-                table+="<td>${getLastReport(device)}</td>"
-                table+="</tr>"
-            }
-            table+="</table>"
-            paragraph table
+def formatTimeAgo(ts){
+    if(!ts) return "N/A"
+    ts = safeTime(ts)
+    def diffMs = now() - ts
+    def mins = (diffMs / (1000*60)).toInteger()
+    return mins < 60 ? "${mins}m ago" : "${(mins/60).toInteger()}h ago"
+}
+
+// ============================================================
+// ===================== BATTERY DISPLAY =====================
+// ============================================================
+def getBatteryLevelDisplay(level, device=null){
+    level = (level instanceof Number ? level : null) ?: 100
+
+    if(level == 0){
+        def data = device ? safeHistory(device) : null
+        if(data) data.justReplaced = false
+    }
+
+    def label = ""
+    if(level<=25) label = "🔴 ${level}%"
+    else if(level<=70) label = "🟠 ${level}%"
+    else label = "🟢 ${level}%"
+
+    def data = (device && state.history?.containsKey(device.id)) ? safeHistory(device) : null
+    def showTag = data?.justReplaced == true
+    def replacedTime = data?.replacedTime
+
+    if(showTag){
+        replacedTime = safeTime(replacedTime)
+        def hoursSinceReplacement = (now() - replacedTime) / (1000*60*60)
+        if(hoursSinceReplacement >= 24){
+            if(data) data.justReplaced = false
+            showTag = false
         }
     }
+
+    if(device && showTag){
+        label += " (Recently Replaced)"
+    }
+
+    return label
 }
 
-def trendsPage(){
-    dynamicPage(name:"trendsPage",title:"Battery Trends",install:false){
-        section("Battery Trend Analysis"){
-            paragraph "⚠ Note: Trends may be overestimated until the device reports at least 5 battery events. Trend accuracy improves as more data is collected over time."
-            
-            // Collect devices reporting battery and sort alphabetically by displayName
-            def devs = autoDevices.findAll{ it.currentValue("battery") != null }
-            devs = devs.sort{ a, b -> a.displayName <=> b.displayName }
-            
-            if(!devs){ paragraph "No battery devices."; return }
+// ============================================================
+// ===================== BATTERY REPLACEMENT LOGGER ===========
+// ============================================================
+def logReplacement(device, newLevel, manual=false){
+    if(!device) return
+
+    def data = state.history[device.id]
+    if(!data){
+        state.history[device.id] = [
+            lastLevel: newLevel ?: 100,
+            lastDate: now(),
+            drain: 0.3,
+            samples: [],
+            justReplaced: false
+        ]
+        data = state.history[device.id]
+        state.trend[device.id] = "Stable"
+    }
+
+    data.drain = 0.3
+    data.samples = []
+    data.lastLevel = newLevel
+    data.lastDate = now()
+    data.justReplaced = true
+    data.replacedTime = now()
+    state.trend[device.id] = "Stable"
+    data.lastReplacementLogged = now()
+
+    // ===== DEDUPLICATE PREVIOUS ENTRIES FOR THIS DEVICE =====
+    state.replacements = state.replacements?.findAll{ it.device != device.displayName } ?: []
+
+    // Add new replacement entry
+    // tag as manual or auto
+       state.replacements << [
+       device: device.displayName,
+       level: newLevel,
+       date: new Date().format("yyyy-MM-dd HH:mm", location.timeZone),
+       type: manual ? "manual" : "auto"
+]
+
+    // Sort descending by date
+    state.replacements = state.replacements.sort { a, b -> b.date <=> a.date }
+}
+
+// ============================================================
+// ===================== SUMMARY PAGE ========================
+// ============================================================
+def summaryPage(){
+    dynamicPage(name:"summaryPage",title:"Battery Summary",install:false){
+
+        // 🛑 FIRST RUN PROTECTION
+        if(!state.history || state.history.size() == 0){
+            section("Setup Required"){
+                paragraph "⚠ <b>Setup Not Complete</b><br><br>" +
+                          "You must click <b>Done</b> after selecting your devices before viewing reports.<br><br>" +
+                          "Please exit the app and reopen it, then try again."
+            }
+            return
+        }
+
+        section("Battery Summary"){
+            def devs = (autoDevices ?: []).findAll{ it?.currentValue("battery") != null }
+            devs = devs.sort{ a,b -> (a.currentValue("battery") ?: 100) <=> (b.currentValue("battery") ?: 100) }
+            if(!devs){
+                paragraph "No battery devices found."
+                return
+            }
 
             def table="<table style='width:100%; border-collapse: collapse;'>"
-            table+="<tr style='font-weight:bold;'><td>Device</td><td>Battery</td><td>Drain/day</td><td>Trend</td></tr>"
+            table+="<tr style='font-weight:bold;'>"
+            table+="<td>Device</td><td>Battery</td><td>Drain</td><td>Est Days</td><td>Health</td><td>Last Battery</td><td>Last Activity</td>"
+            table+="</tr>"
+
             devs.each{ device ->
-                def level=device.currentValue("battery")?.toInteger()
-                def color=getBatteryLevelDisplay(level)
+                def data = safeHistory(device)
+
+                def level = device.currentValue("battery")?.toInteger() ?: 100
+                def drain = getDrain(device)
+                def est = estDays(device)
+                def h = health(device)
+                def lastBatteryStr = formatTimeAgo(getLastBatteryTime(device))
+                def lastActivityStr = formatTimeAgo(getLastActivityTime(device))
+                def stale = isStale(device)
+                def color = getBatteryLevelDisplay(level, device)
+
                 table+="<tr>"
                 table+="<td>${device.displayName}</td>"
                 table+="<td>${color}</td>"
-                table+="<td>${String.format('%.2f',getDrain(device))}</td>"
-                table+="<td>${state.trend?.get(device.id) ?: 'Stable'}</td>"
+                table+="<td>${String.format('%.2f',drain)}</td>"
+                table+="<td>${est}</td>"
+                table+="<td>${h}</td>"
+                table+="<td>${lastBatteryStr}</td>"
+                table+="<td>${lastActivityStr}${stale?' ⚠':' '}</td>"
                 table+="</tr>"
             }
+
+            table+="</table>"
+            paragraph table
+        }
+    }
+}
+// ============================================================
+// ===================== TRENDS PAGE =========================
+// ============================================================
+def trendsPage(){
+    dynamicPage(name:"trendsPage", title:"Battery Trends", install:false){
+        section("Battery Trends"){
+            def devs = (autoDevices ?: []).findAll{ it?.currentValue("battery") != null }
+            if(!devs){
+                paragraph "No battery devices found for trends."
+                return
+            }
+
+            // Start table
+            def table="<table style='width:100%; border-collapse: collapse;'>"
+            table+="<tr style='font-weight:bold;'>"
+            table+="<td>Device</td><td>Battery</td><td>Trend</td><td>Day Drain</td>"
+            table+="</tr>"
+
+            devs.each{ device ->
+                def hist = safeHistory(device)
+                def level = device.currentValue("battery")?.toInteger() ?: 100
+                def drain = hist?.drain ?: 0.3
+                def trend = state.trend[device.id] ?: "Unknown"
+                def color = getBatteryLevelDisplay(level, device)
+
+                table+="<tr>"
+                table+="<td>${device.displayName}</td>"
+                table+="<td>${color}</td>"
+                table+="<td>${trend}</td>"
+                table+="<td>${String.format('%.2f', drain)}</td>"
+                table+="</tr>"
+            }
+
             table+="</table>"
             paragraph table
         }
     }
 }
 
+// ============================================================
+// ===================== HISTORY PAGE ========================
+// ============================================================
 def historyPage(){
-    dynamicPage(name:"historyPage",title:"Battery Replacement History",install:false){
-        section("Replacement Log"){
-            def replacements = state.replacements ?: []
-            if(replacements.size()==0){ paragraph "No battery replacements detected." }
-            else{ replacements.reverse().each{ paragraph "${it.device} - ${it.level}% - ${it.date}" } }
-        }
-    }
-}
-
-def replacementPage(){
-    dynamicPage(name:"replacementPage",title:"Battery Replacement",install:false){
-        section("Manual Replacement"){
-            paragraph "Note: Only batteries replaced at ≤40% are automatically registered in the app. Manual replacement outside this threshold will not appear in replacement analytics."
-            href "manualReplacementPage", title:"Register Manual Battery Replacement"
-        }
-        section("Replacement History"){
-            def reps = state.replacements ?: []
-            if(reps.size()==0){ 
-                paragraph "No battery replacements detected." 
-            } else { 
-                reps.reverse().each{ r ->
-                    def deviceObj = autoDevices.find{ it.displayName == r.device }
-                    def level = r.level ?: deviceObj?.currentValue("battery") ?: "N/A"
-                    paragraph "${r.date} — ${r.device} — ${level}%"
-                } 
+    dynamicPage(name:"historyPage", title:"Battery Replacement History", install:false){
+        section("Battery Replacement History"){
+            if(!state.replacements || state.replacements.size() == 0){
+                paragraph "No battery replacements have been logged yet."
+                return
             }
+
+            def table="<table style='width:100%; border-collapse: collapse;'>"
+            table+="<tr style='font-weight:bold;'>"
+            table+="<td>Device</td><td>Level</td><td>Date</td><td>Type?</td>"
+            table+="</tr>"
+
+            state.replacements.sort{ a,b -> b.date <=> a.date }.each{ r ->
+                def typeTag = r.type == "manual" ? "<span style='color:blue;'>M</span>" :
+                              r.type == "auto"   ? "<span style='color:green;'>A</span>" : "?"
+                table+="<tr>"
+                table+="<td>${r.device}</td>"
+                table+="<td>${r.level}%</td>"
+                table+="<td>${r.date}</td>"
+                table+="<td>${typeTag}</td>"
+                table+="</tr>"
+            }
+
+            table+="</table>"
+            paragraph table
+            paragraph "<b>Legend:</b> <span style='color:green;'>A</span> = Automatic, <span style='color:blue;'>M</span> = Manual"
         }
     }
 }
 
+// ============================================================
+// ===================== MANUAL REPLACEMENT PAGE =============
+// ============================================================
 def manualReplacementPage() {
     if(state.replacements == null) state.replacements = []
+    if(!autoDevices) autoDevices = []
 
-    dynamicPage(name:"manualReplacementPage", title:"Manual Battery Replacement", install:false){
-        section("Select Devices"){
-            input "replaceDevicesManual","enum",
-                  title:"Select Devices (can choose multiple)",
-                  options:autoDevices.collectEntries{[(it.id):it.displayName]}.sort { a,b -> a.value <=> b.value },
-                  multiple:true,
-                  required:false
+    // Clear previous selections (Hubitat settings)
+    app.removeSetting("replaceDevicesManual")
+    app.updateSetting("replaceConfirmManual",[value: false, type:"bool"])
+
+    dynamicPage(name: "manualReplacementPage", title: "Manual Battery Replacement", install: false) {
+        section("Select Devices") {
+            if(!autoDevices || autoDevices.size() == 0) {
+                paragraph "⚠ No battery devices available. Please select devices on the main page first."
+            } else {
+                input "replaceDevicesManual", "enum",
+                      title: "Select Devices (can choose multiple)",
+                      options: autoDevices.collectEntries { [(it.id): it.displayName] }
+                                         .sort { a, b -> a.value <=> b.value },
+                      multiple: true,
+                      required: false
+            }
         }
-        section("Confirm Replacement"){
-            input "replaceConfirmManual","bool",
-                  title:"Confirm Battery Replaced",
-                  required:false
+
+        section("Confirm Replacement") {
+            input "replaceConfirmManual", "bool",
+                  title: "Confirm Battery Replaced",
+                  required: false
         }
-        section(){
-            href "manualReplacementConfirmPage", title:"Submit Replacement"
+
+        section() {
+            href "manualReplacementConfirmPage", title: "Submit Replacement"
         }
-        section(){
-            href "replacementPage", title:"Back"
+
+        section() {
+            href "manualReplacementPage", title: "Back"
         }
     }
 }
 
+// ============================================================
+// ================ MANUAL REPLACEMENT CONFIRM PAGE ==========
+// ============================================================
 def manualReplacementConfirmPage() {
     if(state.replacements == null) state.replacements = []
+    if(!autoDevices) autoDevices = []
 
-    dynamicPage(name:"manualReplacementConfirmPage", title:"Confirm Replacement", install:false){
-        section("Replacement Registered"){
-            if(replaceDevicesManual && replaceConfirmManual){
+    dynamicPage(name: "manualReplacementConfirmPage", title: "Confirm Replacement", install: false) {
+        section("Replacement Registered") {
+            if(replaceDevicesManual && replaceConfirmManual) {
+                def successCount = 0
+
                 replaceDevicesManual.each { deviceId ->
-                    def device = autoDevices.find{ it.id == deviceId }
-                    if(device){
+                    def device = autoDevices.find { it.id == deviceId }
+                    if(device) {
                         def level = device.currentValue("battery")?.toInteger() ?: 100
-                        state.replacements << [
-                            device: device.displayName,
-                            level: level,
-                            date: new Date().format("yyyy-MM-dd HH:mm", location.timeZone)
+
+                        // Ensure history exists
+                        if(!state.history[device.id]) {
+                            state.history[device.id] = [
+                                lastLevel: level,
+                                lastDate: now(),
+                                drain: 0.3,
+                                samples: []
+                            ]
+                        }
+
+                        // ===== DEDUPLICATE PREVIOUS MANUAL ENTRIES =====
+                        state.replacements = state.replacements?.findAll { it.device != device.displayName } ?: []
+
+                        // Log the manual replacement
+                       // tag as manual
+                          state.replacements << [
+                          device: device.displayName,
+                          level: level,
+                          date: new Date().format("yyyy-MM-dd HH:mm", location.timeZone),
+                          type: "manual"
                         ]
+
+                        // Sort descending by date
+                        state.replacements = state.replacements.sort { a, b -> b.date <=> a.date }
+
+                        // Reset device history and mark as replaced
                         state.history[device.id].drain = 0.3
+                        state.history[device.id].samples = []
                         state.trend[device.id] = "Stable"
                         state.history[device.id].lastLevel = 100
                         state.history[device.id].lastDate = now()
+
+                        // THIS IS THE MISSING PIECE
+                        state.history[device.id].justReplaced = true
+                        state.history[device.id].replacedTime = now()
+
+                        successCount++
                     }
                 }
-                paragraph "Battery replacement for ${replaceDevicesManual.size()} device(s) has been recorded."
+
+                if(successCount > 0) {
+                    paragraph "✅ Battery replacement for ${successCount} device(s) has been recorded."
+                } else {
+                    paragraph "❌ No valid devices found. Please select devices on the main page first."
+                }
+
             } else {
-                paragraph "Please select device(s) and confirm replacement or use the Back button to cancel."
+                paragraph "⚠ Please select device(s) and confirm replacement or use the Back button to cancel."
             }
         }
-        section(){
-            href "replacementPage", title:"Back to Replacement Page"
+
+        section() {
+            href "manualReplacementPage", title: "Back to Replacement Page"
         }
     }
 }
-
-def scheduledSummary(){
-    def devices = autoDevices.collect{ d -> [device: d, level: d.currentValue("battery")?.toInteger()] }.findAll{ it.level != null }
-    devices = devices.sort{ it.level }
-
-    def critical = []
-    def good = []
-    def full = []
-
-    devices.each{ entry ->
-        if(entry.level <= 25) critical << entry
-        else if(entry.level == 100) full << entry
-        else good << entry
-    }
-
-    def report = "Battery Monitor Daily Report\n\n"
-    report += "Critical (≤25%): ${critical.size()}\n"
-    report += "Good (26-99%): ${good.size()}\n"
-    report += "Full (100%): ${full.size()}\n\n"
-
-    if(critical){
-        report += "🔴 Critical Devices\n"
-        critical.each{ report += "${it.device.displayName} : ${it.level}%\n" }
-        report += "\n"
-    }
-
-    if(good){
-        report += "🟢 Good Devices\n"
-        good.each{ report += "${it.device.displayName} : ${it.level}%\n" }
-        report += "\n"
-    }
-
-    if(full){
-        report += "🟢 Full Devices\n"
-        full.each{ report += "${it.device.displayName} : ${it.level}%\n" }
-    }
-
-    def notifyList = notifyDevices?.unique{ it.id }
-    if(enablePush && notifyList){
-        notifyList.each{
-            it.deviceNotification(report)
-        }
-    }
-}
-
-// =====================
-// INFO PAGE
-// =====================
+// ============================================================
+// ===================== INFO PAGE ===========================
+// ============================================================
 def infoPage(Map params = [:]){
     dynamicPage(name:"infoPage", title:"Battery Health Guide", install:false){
-
         section("<b>Battery Health Breakdown</b>"){
             def table = """<table style='width:100%; border-collapse: collapse;'>
-<tr style='font-weight:bold;'>
-<td>Health</td><td>Drain Rate (per day)</td><td>What It Means</td>
-</tr>
+<tr style='font-weight:bold;'><td>Health</td><td>Drain Rate (per day)</td><td>What It Means</td></tr>
 <tr><td>🟢 Excellent</td><td>&lt; 0.3%</td><td>Battery is barely draining (very efficient device)</td></tr>
 <tr><td>🟡 Good</td><td>0.3 – 0.7%</td><td>Normal battery usage</td></tr>
 <tr><td>🟠 Fair</td><td>0.7 – 1.2%</td><td>Higher-than-normal drain</td></tr>
@@ -427,38 +715,25 @@ def infoPage(Map params = [:]){
             paragraph table
         }
 
-        section("<b>🔍 What is Battery Drain?</b>"){
-            paragraph "Battery drain shows how fast a device uses battery (% per day). Lower values mean longer battery life. Higher values may indicate excessive usage, weak signal, or device issues."
-        }
-
-        section("<b>📅 How Estimated Days Works</b>"){
-            paragraph "Estimated days remaining is calculated using the current battery level divided by the average daily drain rate. This becomes more accurate after multiple battery reports."
-        }
-
-        section("<b>📊 Understanding Trends</b>"){
-            paragraph "Trends are calculated using recent battery activity. Devices need multiple battery reports before trends become accurate."
-            paragraph "• Stable = very low drain\n• Moderate = normal usage\n• Heavy Drain = higher-than-normal usage"
-        }
-
-        section("<b>🔋 Battery Replacement Detection</b>"){
-            paragraph "The app automatically detects battery replacement when a device jumps from ≤40% to ≥95%."
-            paragraph "Manual replacement can be used if a battery is changed outside this range."
-        }
-
-        section("<b>⚠ Troubleshooting High Drain</b>"){
-            paragraph "If a device shows high drain:\n\n" +
-                      "• Check signal strength (Z-Wave/Zigbee routing)\n" +
-                      "• Verify device isn't reporting too frequently\n" +
-                      "• Confirm correct battery type is used\n" +
-                      "• Look for environmental factors (cold, humidity)\n" +
-                      "• Consider device firmware or driver issues"
-        }
-
-        section("<b>💡 Tips</b>"){
-            paragraph "• Devices with consistent low drain are healthy\n" +
-                      "• Sudden spikes usually indicate a problem\n" +
-                      "• Compare similar devices to identify outliers\n" +
-                      "• Let the app collect data over time for best accuracy"
-        }
+        section("<b>🔍 What is Battery Drain?</b>"){ paragraph "Battery drain shows how fast a device uses battery (% per day). Lower values mean longer battery life. Higher values may indicate excessive usage, weak signal, or device issues." }
+        section("<b>📅 How Estimated Days Works</b>"){ paragraph "Estimated days remaining is calculated using the current battery level divided by the average daily drain rate. This becomes more accurate after multiple battery reports." }
+        section("<b>📊 Understanding Trends</b>"){ paragraph "Trends are calculated using recent battery activity. Devices need multiple battery reports before trends become accurate.\n• Stable = very low drain\n• Moderate = normal usage\n• Heavy Drain = higher-than-normal usage" }
+        section("<b>🔋 Battery Replacement Detection</b>"){ 
+    paragraph "The app automatically detects battery replacement when a device jumps from ≤40% to ≥95%. Manual replacement can be used if a battery is changed outside this range.\n\nAfter a battery is replaced, the device will be marked as 'Recently Replaced'. This tag will automatically clear after about 24 hours or once the device reports again." 
+}
+        section("<b>⚠ Troubleshooting High Drain</b>"){ paragraph "If a device shows high drain:\n• Check signal strength (Z-Wave/Zigbee routing)\n• Verify device isn't reporting too frequently\n• Confirm correct battery type is used\n• Look for environmental factors (cold, humidity)\n• Consider device firmware or driver issues" }
+        section("<b>💡 Tips</b>"){ paragraph "• Devices with consistent low drain are healthy\n• Sudden spikes usually indicate a problem\n• Compare similar devices to identify outliers\n" }
+   }
+}
+// ============================================================
+// ===================== CRITICAL ALERTS =====================
+// ============================================================
+def sendCriticalReport(device,level){
+    def msg="Battery Low Alert: ${device.displayName} at ${level}%."
+    if(enablePush){
+        sendPush(msg)
+    }
+    if(notifyDevices){
+        notifyDevices.each{ it.deviceNotification(msg) }
     }
 }
