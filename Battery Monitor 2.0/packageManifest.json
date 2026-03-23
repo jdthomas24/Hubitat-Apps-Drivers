@@ -2,7 +2,7 @@
     "packageName": "Battery Monitor 2.0",
     "author": "Jdthomas24",
     "version": "2.1.2",
-    "releaseNotes": "2.2.2 Test for release.\n", 
+    "releaseNotes": "2.1.2 Test for release.\n", 
     "category": "Utility",
     "description": "Advanced Hubitat battery monitoring with analytics, trends, and replacement tracking. Auto-discover devices, monitor battery health, track replacements, and receive daily reports.",
     "dateReleased": "2026/03/16",
