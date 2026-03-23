@@ -1,5 +1,5 @@
 // ============================================================
-// Battery Monitor 2.0
+// Battery Monitor 2.0 (TESTER ONLY!!!!)
 // Version 2.3.3
 // Author: Jdthomas24
 // Namespace: jdthomas24
@@ -533,6 +533,10 @@ def trendsPage(){
     dynamicPage(name:"trendsPage", title:"Battery Trends", install:false){
         section("Battery Trends"){
             def devs = (autoDevices ?: []).findAll{ it?.currentValue("battery") != null }
+
+            // ✅ SORT ALPHABETICALLY BY DEVICE NAME
+            devs = devs.sort { a, b -> a.displayName.toLowerCase() <=> b.displayName.toLowerCase() }
+
             if(!devs){
                 paragraph "No battery devices found for trends."
                 return
