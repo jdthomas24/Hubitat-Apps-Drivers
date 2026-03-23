@@ -478,14 +478,19 @@ def logReplacement(device, newLevel, manual=false){
     state.trend[device.id] = "Stable"
     data.lastReplacementLogged = now()
 
+    // ===== DEDUPLICATE PREVIOUS ENTRIES FOR THIS DEVICE =====
     state.replacements = state.replacements?.findAll{ it.device != device.displayName } ?: []
 
+    // Add new replacement entry
     state.replacements << [
-    device: device.displayName,
-    level: level,
-    date: new Date().format("yyyy-MM-dd HH:mm", location.timeZone)
-    type: manual ? "manual" : "auto"  // <-- colored M/A later
-   ]
+        device: device.displayName,
+        level: newLevel,
+        date: new Date().format("yyyy-MM-dd HH:mm", location.timeZone),
+        type: manual ? "manual" : "auto"  // tag as M/A
+    ]
+
+    // Sort descending by date
+    state.replacements = state.replacements.sort { a, b -> b.date <=> a.date }
 }
 
 // ============================================================
@@ -638,7 +643,7 @@ def manualReplacementPage() {
         }
 
         section() {
-            href "replacementPage", title: "Back"
+            href "manualReplacementPage", title: "Back"
         }
     }
 }
@@ -670,13 +675,21 @@ def manualReplacementConfirmPage() {
                             ]
                         }
 
-                        // Log replacement
+                        // ===== DEDUPLICATE PREVIOUS MANUAL ENTRIES =====
+                        state.replacements = state.replacements?.findAll { it.device != device.displayName } ?: []
+
+                        // Log the manual replacement
                         state.replacements << [
-                        device: device.displayName,
-                        level: level,
-                        date: new Date().format("yyyy-MM-dd HH:mm", location.timeZone),
-                        type: "manual"  // tag as manual
+                            device: device.displayName,
+                            level: level,
+                            date: new Date().format("yyyy-MM-dd HH:mm", location.timeZone),
+                            type: "manual"  // tag as manual
                         ]
+
+                        // Sort descending by date
+                        state.replacements = state.replacements.sort { a, b -> b.date <=> a.date }
+
+                        // Reset device history and trend
                         state.history[device.id].drain = 0.3
                         state.trend[device.id] = "Stable"
                         state.history[device.id].lastLevel = 100
@@ -698,11 +711,10 @@ def manualReplacementConfirmPage() {
         }
 
         section() {
-            href "replacementPage", title: "Back to Replacement Page"
+            href "manualReplacementPage", title: "Back to Replacement Page"
         }
     }
 }
-
 // ============================================================
 // ===================== INFO PAGE ===========================
 // ============================================================
