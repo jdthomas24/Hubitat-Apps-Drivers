@@ -2,7 +2,7 @@
     "packageName": "Battery Monitor 2.0",
     "author": "Jdthomas24",
     "version": "2.3.3",
-    "releaseNotes": "2.3.3 WARNING: Delete the old app from Hubitat apps first, install fresh app via HPM. This will ensure your historical data will be accurate goign forward.\n", 
+    "releaseNotes": "2.3.3 WARNING: Delete the old app from HPM first, Go back to main page of HPM > Click unistall > Click Battery Monitor 2.0 > Click Next. Install fresh BAttery Monitor 2.0 app via HPM using the search function. This will ensure your historical data will be accurate goign forward.\n", 
     "category": "Utility",
     "description": "Advanced Hubitat battery monitoring with analytics, trends, and replacement tracking. Auto-discover devices, monitor battery health, track replacements, and receive daily reports.",
     "dateReleased": "2026/03/16",
