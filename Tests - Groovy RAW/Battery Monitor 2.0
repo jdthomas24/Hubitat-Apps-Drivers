@@ -40,9 +40,13 @@ def mainPage(){
         }
 
         section("Auto Battery Discovery"){
-            paragraph "**⚠ Important: The app will automatically detect all devices reporting battery levels. " +
-                      "Please select the devices you want to actively monitor from the list below. " +
-                      "Only selected devices will be tracked for trends, battery health, and notifications.**"
+    paragraph "**⚠ Important: The app will automatically detect all devices reporting battery levels. " +
+              "Please select the devices you want to actively monitor from the list below. " +
+              "Only selected devices will be tracked for trends, battery health, and notifications.**"
+
+    paragraph "⚠ <b>FIRST TIME SETUP REQUIRED:</b><br>" +
+              "After selecting devices for the first time, you MUST click <b>Done</b> to exit the app before viewing any reports.<br>" +
+              "Failure to do so may result in errors when opening the Battery Summary or Trends pages."
             input "autoDevices","capability.battery",
                   title:"Select battery devices to monitor",
                   multiple:true,
@@ -506,6 +510,17 @@ def logReplacement(device, newLevel, manual=false){
 // ============================================================
 def summaryPage(){
     dynamicPage(name:"summaryPage",title:"Battery Summary",install:false){
+
+        // 🛑 FIRST RUN PROTECTION
+        if(!state.history || state.history.size() == 0){
+            section("Setup Required"){
+                paragraph "⚠ <b>Setup Not Complete</b><br><br>" +
+                          "You must click <b>Done</b> after selecting your devices before viewing reports.<br><br>" +
+                          "Please exit the app and reopen it, then try again."
+            }
+            return
+        }
+
         section("Battery Summary"){
             def devs = (autoDevices ?: []).findAll{ it?.currentValue("battery") != null }
             devs = devs.sort{ a,b -> (a.currentValue("battery") ?: 100) <=> (b.currentValue("battery") ?: 100) }
