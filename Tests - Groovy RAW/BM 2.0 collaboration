@@ -524,7 +524,7 @@ def formatTimeAgo(ts){
 // ============================================================
 // ===================== BATTERY DISPLAY =====================
 // ============================================================
-ddef getBatteryLevelDisplay(level, device=null){
+def getBatteryLevelDisplay(level, device=null){
     level = (level instanceof Number ? level : null) != null ? level : 100
 
     // Get device health if available
