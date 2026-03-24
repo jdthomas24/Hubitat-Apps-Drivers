@@ -168,7 +168,7 @@ section("Auto Battery Discovery") {
 			input "notifyFair",      "bool", title: "🟠 Include Fair (26–70%)",   defaultValue: true
 			input "notifyGood",      "bool", title: "🟢 Include Good (71–99%)",   defaultValue: false
 			input "notifyExcellent", "bool", title: "🟢 Include Excellent (100%)", defaultValue: false
-			input "notifyHighDrain", "bool", title: "⚠️ Include High Drain (drain ≥ 0.7%/day)", defaultValue: true
+			input "notifyHighDrain", "bool", title: "⚠️ Include High Drain (Fair or Poor, drain > 0.7%/day)", defaultValue: true
 
 			paragraph "<b>Test notification:</b>"
 			input "sendTestNow", "bool", title: "📤 Send Test Notification Now (tap, then click Done)", defaultValue: false
@@ -469,10 +469,10 @@ def estDays(device){
     return Math.round(level/drain)
 }
 def health(device){
-    def drain=getDrain(device)
-    if(drain<0.3) return "Excellent"
-    if(drain<0.7) return "Good"
-    if(drain<1.2) return "Fair"
+    def drain = getDrain(device)
+    if(drain < 0.3) return "Excellent"
+    if(drain >= 0.3 && drain <= 0.7) return "Good"
+    if(drain > 0.7 && drain <= 1.2) return "Fair"
     return "Poor"
 }
 
@@ -524,19 +524,27 @@ def formatTimeAgo(ts){
 // ============================================================
 // ===================== BATTERY DISPLAY =====================
 // ============================================================
-def getBatteryLevelDisplay(level, device=null){
+ddef getBatteryLevelDisplay(level, device=null){
     level = (level instanceof Number ? level : null) != null ? level : 100
 
-    if(level == 0){
-        def data = device ? safeHistory(device) : null
-        if(data) data.justReplaced = false
-    }
+    // Get device health if available
+    def h = device ? health(device) : null
 
     def label = ""
-    if(level<=25) label = "🔴 ${level}%"
-    else if(level<=70) label = "🟠 ${level}%"
-    else label = "🟢 ${level}%"
+    switch(h){
+        case "Excellent": label = "🟢 ${level}%"; break
+        case "Good":      label = "🟡 ${level}%"; break
+        case "Fair":      label = "🟠 ${level}%"; break
+        case "Poor":      label = "🔴 ${level}%"; break
+        default:
+            // fallback if device not present
+            if(level <= 25) label = "🔴 ${level}%"
+            else if(level <= 70) label = "🟠 ${level}%"
+            else label = "🟢 ${level}%"
+            break
+    }
 
+    // Handle recently replaced tag
     def data = (device && state.history?.containsKey(device.id)) ? safeHistory(device) : null
     def showTag = data?.justReplaced == true
     def replacedTime = data?.replacedTime
@@ -556,6 +564,7 @@ def getBatteryLevelDisplay(level, device=null){
 
     return label
 }
+
 
 // ============================================================
 // ===================== BATTERY REPLACEMENT LOGGER ===========
