@@ -1,5 +1,5 @@
 // ============================================================
-// Battery Monitor 2.6 (TESTER)
+// Battery Monitor 2.0
 // Version 2.3.6
 // Author: Jdthomas24
 // Namespace: jdthomas24
@@ -7,7 +7,7 @@
 // ============================================================
 
 definition(
-    name: "Battery Monitor 2.6", // DO NOT CHANGE (HPM SAFE)
+    name: "Battery Monitor 2.0", // DO NOT CHANGE (HPM SAFE)
     namespace: "jdthomas24",
     author: "Jdthomas24",
     description: "Advanced Hubitat battery monitoring with analytics, trends and replacement tracking (v2.3.2). Auto-adjusts drain for low-activity devices.",
@@ -25,6 +25,7 @@ def installed() {
 def updated() {
     log.debug "Updated - re-initializing app"
     unschedule()
+    unsubscribe()
     initialize()
 
     // Clean up state for devices that have been removed
