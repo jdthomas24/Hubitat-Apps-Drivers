@@ -552,27 +552,6 @@ def getBatteryLevelDisplay(level, device=null){
 
     return label
 }
-    // Handle recently replaced tag
-    def data = (device && state.history?.containsKey(device.id)) ? safeHistory(device) : null
-    def showTag = data?.justReplaced == true
-    def replacedTime = data?.replacedTime
-
-    if(showTag){
-        replacedTime = safeTime(replacedTime)
-        def hoursSinceReplacement = (now() - replacedTime) / (1000*60*60)
-        if(hoursSinceReplacement >= 24){
-            if(data) data.justReplaced = false
-            showTag = false
-        }
-    }
-
-    if(device && showTag){
-        label += " (Recently Replaced)"
-    }
-
-    return label
-}
-
 
 // ============================================================
 // ===================== BATTERY REPLACEMENT LOGGER ===========
