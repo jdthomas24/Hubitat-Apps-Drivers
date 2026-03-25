@@ -807,15 +807,19 @@ def logReplacement(device, newLevel, manual=false){
 
 			// 🛠 Scroll to top fix for C8 Pro
 			section("") {
-			    paragraph """<script>
-        			function scrollTopFix() {
-           			 window.scrollTo(0, 0);
-        	}
-        			setTimeout(scrollTopFix, 50);
-        			setTimeout(scrollTopFix, 150);
-        			setTimeout(scrollTopFix, 300);
-    			</script>"""
-		}
+    			paragraph """<script>
+       			 function scrollTopFix() {
+            		window.scrollTo(0, 0);
+        }
+        setTimeout(scrollTopFix, 50);
+        setTimeout(scrollTopFix, 150);
+        setTimeout(scrollTopFix, 300);
+    </script>"""
+	}
+
+		// 🔹 CLOSE dynamicPage and summaryPage function
+	    }  // closes dynamicPage
+		}      // closes summaryPage()
     }
 }
 
