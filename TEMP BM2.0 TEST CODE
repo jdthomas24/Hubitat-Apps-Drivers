@@ -709,24 +709,13 @@ def summaryPage(){
             return
         }
 
-        // ✅ FORCE TOP RENDER (CRITICAL FIX)
-        section(" ") {
-            paragraph " "   // MUST NOT BE EMPTY
-        }
-
-        // ✅ Anchor (secondary)
+        // ✅ HARD TOP LOCK (ONLY WORKING METHOD)
         section("") {
-            paragraph "<div id='top'></div>"
-        }
-
-        // ✅ Header section
-        section("Battery Summary"){
-            paragraph "<span style='color:red; font-weight:bold;'>⚠ Device links below are accessible only on your local network (LAN). They will not work remotely.</span>"
+            paragraph "<b>Battery Summary</b>"
         }
 
         def hubIp = location?.hub?.localIP ?: ""
 
-        // --- SAFE FILTER + SORT ---
         def devs = (autoDevices ?: []).findAll { 
             try { it?.currentValue("battery") != null } catch(e){ return false }
         }
@@ -744,9 +733,7 @@ def summaryPage(){
             return
         }
 
-        // === Build HTML Table ===
-        def table = "<a name='top'></a>"
-        table += "<table style='width:100%; border-collapse: collapse;'>"
+        def table = "<table style='width:100%; border-collapse: collapse;'>"
         table += "<tr style='font-weight:bold;'>"
         table += "<td>Device</td><td>Battery</td><td>Drain</td><td>Est Days</td><td>Health</td><td>Last Battery</td><td>Last Activity</td>"
         table += "</tr>"
@@ -785,17 +772,14 @@ def summaryPage(){
         section("") { paragraph table }
     }
 }
-
 // ============================================================
 // ===================== TRENDS PAGE =========================
 // ============================================================
 def trendsPage(){
     dynamicPage(name:"trendsPage", title:"Battery Trends", install:false){
 
-        section("") { paragraph "<div id='top'></div>" }
-
-        section("Battery Trends"){
-            paragraph "<b>Battery Trend Report</b>"
+        section("") {
+            paragraph "<b>Battery Trends</b>"
         }
 
         def devs = (autoDevices ?: []).findAll{ it?.currentValue("battery") != null }
@@ -820,8 +804,7 @@ def trendsPage(){
             return a.displayName.trim() <=> b.displayName.trim()
         }
 
-        def table="<a name='top'></a>"
-        table+="<table style='width:100%; border-collapse: collapse;'>"
+        def table="<table style='width:100%; border-collapse: collapse;'>"
         table+="<tr style='font-weight:bold;'>"
         table+="<td>Device</td><td>Battery</td><td>Trend</td><td>Day Drain</td>"
         table+="</tr>"
@@ -847,7 +830,6 @@ def trendsPage(){
         section("") { paragraph table }
     }
 }
-
 // ============================================================
 // ===================== HISTORY PAGE ========================
 // ============================================================
