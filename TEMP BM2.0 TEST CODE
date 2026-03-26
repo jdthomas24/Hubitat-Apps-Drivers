@@ -677,6 +677,23 @@ def logReplacement(device, newLevel, manual=false){
 }
 
 // ============================================================
+// ===================== ESTIMATED DAYS =======================
+// ============================================================
+def estDays(device) {
+    if(!device) return 0
+    def data = state.history?.get(device.id)
+    if(!data) return 0
+
+    def level = device.currentValue("battery")?.toInteger() ?: 100
+    def drain = data.drain ?: 0.3
+
+    if(drain <= 0) return 0   // avoid division by zero
+
+    // estimated days remaining
+    return ((level / drain) as BigDecimal).setScale(0, BigDecimal.ROUND_HALF_UP)
+}
+
+// ============================================================
 // ===================== SUMMARY PAGE ========================
 // ============================================================
 def summaryPage(){
@@ -692,7 +709,7 @@ def summaryPage(){
             return
         }
 
-        // ✅ Anchor for scroll top (works for C7, C8, C8Pro)
+        // ✅ Anchor for scroll top
         section("") { paragraph "<div id='top'></div>" }
 
         // ✅ Header section
@@ -720,6 +737,7 @@ def summaryPage(){
             return
         }
 
+        // === Build HTML Table ===
         def table = "<a name='top'></a>"
         table += "<table style='width:100%; border-collapse: collapse;'>"
         table += "<tr style='font-weight:bold;'>"
@@ -728,8 +746,9 @@ def summaryPage(){
 
         devs.each { device ->
             def level = device.currentValue("battery")?.toInteger() ?: 100
-            def drain = getDrain(device) ?: 0.3
-            def est = estDays(device) ?: 0
+            def hist = safeHistory(device)
+            def drain = hist?.drain ?: 0.3
+            def est = estDays(device)
             def h = health(device) ?: "Unknown"
             def lastBatteryStr = formatTimeAgo(getLastBatteryTime(device)) ?: "N/A"
             def lastActivityStr = "N/A"
