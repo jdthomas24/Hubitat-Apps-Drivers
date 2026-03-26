@@ -681,7 +681,7 @@ def logReplacement(device, newLevel, manual=false){
 // ============================================================
 // ===================== SUMMARY PAGE ========================
 // ============================================================
-	def summaryPage(){
+def summaryPage(){
     dynamicPage(name:"summaryPage", title:"Battery Summary", install:false){
 
         // 🛑 FIRST RUN PROTECTION (more robust)
@@ -694,11 +694,19 @@ def logReplacement(device, newLevel, manual=false){
             return
         }
 
+        // ✅ C8 Pro–safe scroll to bottom
+        section("") {
+            paragraph """<script>
+                setTimeout(function(){
+                    window.scrollTo(0, document.body.scrollHeight || document.documentElement.scrollHeight);
+                }, 200);
+            </script>"""
+        }
+
         // ✅ Safe hub IP (C8-safe)
         def hubIp = location?.hub?.localIP ?: ""
 
         section("Battery Summary"){
-
             paragraph "<span style='color:red; font-weight:bold;'>⚠ Device links below are accessible only on your local network (LAN). They will not work remotely.</span>"
 
             def devs = (autoDevices ?: []).findAll { 
@@ -735,64 +743,30 @@ def logReplacement(device, newLevel, manual=false){
             table += "</tr>"
 
             devs.each { device ->
-
-                // ✅ SAFE VALUE EXTRACTION
-                def level = null
-                try { level = device.currentValue("battery")?.toInteger() } catch(e) {}
-                level = level != null ? level : 100
-
-                def drain = 0.3
-                try { drain = getDrain(device) } catch(e) {}
-
-                def est = 0
-                try { est = estDays(device) } catch(e) {}
-
-                def h = "Unknown"
-                try { h = health(device) } catch(e) {}
-
-                def lastBatteryStr = "N/A"
-                try { lastBatteryStr = formatTimeAgo(getLastBatteryTime(device)) } catch(e) {}
-
+                def level = device.currentValue("battery")?.toInteger() ?: 100
+                def drain = getDrain(device) ?: 0.3
+                def est = estDays(device) ?: 0
+                def h = health(device) ?: "Unknown"
+                def lastBatteryStr = formatTimeAgo(getLastBatteryTime(device)) ?: "N/A"
                 def lastActivityStr = "N/A"
                 def lastActivity = null
-                try {
-                    lastActivity = device.getLastActivity()
-                } catch(e) {}
+                try { lastActivity = device.getLastActivity() } catch(e) {}
 
                 if(lastActivity){
-                    try {
-                        lastActivityStr = formatTimeAgo(safeTime(lastActivity))
-                    } catch(e) {}
+                    try { lastActivityStr = formatTimeAgo(safeTime(lastActivity)) } catch(e) {}
                 }
 
-                def stale = false
-                try { stale = isStale(device) } catch(e) {}
-
-                def color = ""
-                try { color = getBatteryLevelDisplay(level, device) } catch(e) {
-                    color = "${level}%"
-                }
-
-                // ✅ SAFE stale tag
-                def staleTag = ""
-                if(stale && lastActivity){
-                    try {
-                        def hours = ((now() - safeTime(lastActivity)) / (1000*60*60)).toInteger()
-                        staleTag = " ⚠️ Stale (${hours}h)"
-                    } catch(e) {}
-                }
-
-                // ✅ SAFE device name
+                def stale = isStale(device) ?: false
+                def color = getBatteryLevelDisplay(level, device)
+                def staleTag = stale && lastActivity ? " ⚠️ Stale (${((now() - safeTime(lastActivity))/(1000*60*60)).toInteger()}h)" : ""
                 def name = device.displayName ?: "Unknown Device"
 
                 table += "<tr>"
-
                 if(hubIp){
                     table += "<td><a href='http://${hubIp}/device/edit/${device.id}' target='_blank'>${name}</a></td>"
                 } else {
                     table += "<td>${name}</td>"
                 }
-
                 table += "<td>${color}</td>"
                 table += "<td>${String.format('%.2f', drain)}</td>"
                 table += "<td>${est}</td>"
@@ -814,10 +788,12 @@ def logReplacement(device, newLevel, manual=false){
 def trendsPage(){
     dynamicPage(name:"trendsPage", title:"Battery Trends", install:false){
 
-        // ✅ Scroll to top on page load
+        // ✅ C8 Pro–safe scroll to bottom
         section("") {
             paragraph """<script>
-                window.scrollTo(0,0);
+                setTimeout(function(){
+                    window.scrollTo(0, document.body.scrollHeight || document.documentElement.scrollHeight);
+                }, 200);
             </script>"""
         }
 
@@ -829,10 +805,8 @@ def trendsPage(){
                 return
             }
 
-            // Define trend priority for sorting
             def trendPriority = ["Heavy Drain": 1, "Moderate": 2, "Stable": 3]
 
-            // Sort by trend, then battery level, then name
             devs = devs.sort { a, b ->
                 def trendA = state.trend[a.id] ?: "Stable"
                 def trendB = state.trend[b.id] ?: "Stable"
@@ -847,7 +821,6 @@ def trendsPage(){
                 return a.displayName.trim() <=> b.displayName.trim()
             }
 
-            // Start table
             def table="<table style='width:100%; border-collapse: collapse;'>"
             table+="<tr style='font-weight:bold;'>"
             table+="<td>Device</td><td>Battery</td><td>Trend</td><td>Day Drain</td>"
@@ -858,12 +831,7 @@ def trendsPage(){
                 def level = device.currentValue("battery")?.toInteger() ?: 100
                 def drain = hist?.drain ?: 0.3
                 def trend = state.trend[device.id] ?: "Unknown"
-
-                // Trend color
-                def trendColor = trend == "Heavy Drain" ? "🔴" :
-                                 trend == "Moderate" ? "🟠" : "🟢"
-
-                // Battery color display
+                def trendColor = trend == "Heavy Drain" ? "🔴" : trend == "Moderate" ? "🟠" : "🟢"
                 def color = getBatteryLevelDisplay(level, device)
 
                 table+="<tr>"
@@ -879,16 +847,19 @@ def trendsPage(){
         }
     }
 }
+
 // ============================================================
 // ===================== HISTORY PAGE ========================
 // ============================================================
 def historyPage() {
     dynamicPage(name:"historyPage", title:"Battery Replacement History", install:false){
 
-        // ✅ Scroll to top on page load
+        // ✅ C8 Pro–safe scroll to bottom
         section("") {
             paragraph """<script>
-                window.scrollTo(0,0);
+                setTimeout(function(){
+                    window.scrollTo(0, document.body.scrollHeight || document.documentElement.scrollHeight);
+                }, 200);
             </script>"""
         }
 
@@ -916,15 +887,9 @@ def historyPage() {
 
             table+="</table>"
             paragraph table
-            paragraph "<b>Legend:</b> <span style='color:green;'>A</span> = Automatic, <span style='color:blue;'>M</span> = Manual"
-        }
-
-        section("Delete an Entry") {
-            href "deleteHistoryPage", title: "🗑️ Delete a History Entry"
         }
     }
 }
-
 // ============================================================
 // ===================== DELETE HISTORY PAGE =================
 // ============================================================
