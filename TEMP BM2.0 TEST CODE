@@ -882,13 +882,12 @@ def historyPage() {
 // ===================== DELETE HISTORY PAGE =================
 // ============================================================
 def deleteHistoryPage() {
-    // Reset any previous selections
+    // Reset previous selections
     app.removeSetting("deleteEntrySelection")
     app.updateSetting("confirmEntryDelete", [value: false, type: "bool"])
 
     dynamicPage(name: "deleteHistoryPage", title: "Delete a History Entry", install: false) {
 
-        // 🛑 FIRST RUN / EMPTY LOG PROTECTION
         if (!state.replacements || state.replacements.size() == 0) {
             section("No Replacements Logged") {
                 paragraph "⚠ <b>No battery replacements have been logged yet.</b>"
@@ -896,39 +895,19 @@ def deleteHistoryPage() {
             return
         }
 
-        // ✅ FORCE TOP RENDER (CRITICAL FIX)
-        section(" ") {
-            paragraph " "   // MUST NOT BE EMPTY
-        }
-
         section("Select a Replacement Entry to Delete") {
+            // Sort entries newest first
+            def sorted = state.replacements.sort { a, b -> b.date <=> a.date }
 
-            // --- Build a safe table with device, level, date, type
-            def table = "<table style='width:100%; border-collapse: collapse;'>"
-            table += "<tr style='font-weight:bold;'>"
-            table += "<td>Device</td><td>Level</td><td>Date</td><td>Type</td>"
-            table += "</tr>"
-
-            state.replacements.sort { a, b -> b.date <=> a.date }.each { r ->
-                def typeTag = r.type == "manual" ? "<span style='color:blue;'>M</span>" :
-                              r.type == "auto"   ? "<span style='color:green;'>A</span>" : "?"
-                table += "<tr>"
-                table += "<td>${r.device}</td>"
-                table += "<td>${r.level}%</td>"
-                table += "<td>${r.date}</td>"
-                table += "<td>${typeTag}</td>"
-                table += "</tr>"
+            // Build display strings
+            def options = sorted.collect { r ->
+                def typeTag = r.type == "manual" ? "M" : r.type == "auto" ? "A" : "?"
+                "${r.date} — ${r.device} (${r.level}%) [${typeTag}]"
             }
 
-            table += "</table>"
-
-            // ✅ Wrap table to fix scroll/overflow issues
-            paragraph "<div style='white-space:normal !important;'>${table}</div>"
-
-            // --- Dropdown for selecting entry to delete
             input "deleteEntrySelection", "enum",
                   title: "Select Replacement Entry to Delete",
-                  options: state.replacements.collect { it.date + " — " + it.device + " (" + it.level + "%)" },
+                  options: options,
                   required: true,
                   multiple: false
         }
@@ -940,18 +919,24 @@ def deleteHistoryPage() {
                   defaultValue: false
         }
 
-        // --- Delete action
+        // Delete action
         if (confirmEntryDelete && deleteEntrySelection) {
-            def entry = state.replacements.find { "${it.date} — ${it.device} (${it.level}%)" == deleteEntrySelection }
+            def entry = state.replacements.find { r ->
+                def typeTag = r.type == "manual" ? "M" : r.type == "auto" ? "A" : "?"
+                "${r.date} — ${r.device} (${r.level}%) [${typeTag}]" == deleteEntrySelection
+            }
             if (entry) {
                 state.replacements.remove(entry)
                 app.updateSetting("confirmEntryDelete", [value: false, type: "bool"])
                 app.removeSetting("deleteEntrySelection")
                 section("") { paragraph "✅ Replacement entry deleted successfully." }
+            } else {
+                section("") { paragraph "⚠️ Selected entry not found." }
             }
         }
     }
 }
+
 // ============================================================
 // ============= DELETE HISTORY CONFIRM PAGE =================
 // ============================================================
@@ -960,17 +945,17 @@ def deleteHistoryConfirmPage() {
         section("Result") {
             if (!confirmEntryDelete) {
                 paragraph "⚠️ Deletion cancelled — confirm checkbox was not checked."
-            } else if (deleteEntrySelection == null) {
+            } else if (!deleteEntrySelection) {
                 paragraph "⚠️ No entry selected."
             } else {
-                def sorted = state.replacements.sort{ a,b -> b.date <=> a.date }
-                def idx = deleteEntrySelection.toInteger()
-                if (idx >= 0 && idx < sorted.size()) {
-                    def entry = sorted[idx]
-                    state.replacements = state.replacements.findAll {
-                        !(it.device == entry.device && it.date == entry.date)
-                    }
+                def entry = state.replacements.find { r ->
+                    def typeTag = r.type == "manual" ? "M" : r.type == "auto" ? "A" : "?"
+                    "${r.date} — ${r.device} (${r.level}%) [${typeTag}]" == deleteEntrySelection
+                }
+                if (entry) {
+                    state.replacements.remove(entry)
                     app.updateSetting("confirmEntryDelete", [value: false, type: "bool"])
+                    app.removeSetting("deleteEntrySelection")
                     paragraph "✅ Deleted entry for ${entry.device} on ${entry.date}."
                 } else {
                     paragraph "⚠️ Entry not found — it may have already been deleted."
