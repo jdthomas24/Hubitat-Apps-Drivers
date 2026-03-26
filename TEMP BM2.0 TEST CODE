@@ -692,31 +692,27 @@ def summaryPage(){
             return
         }
 
-        // ✅ Anchor forces top render (C8 safe)
-        section("") {
-            paragraph "<div id='top'></div>"
-        }
+        // ✅ Anchor for scroll top (works for C7, C8, C8Pro)
+        section("") { paragraph "<div id='top'></div>" }
 
-        // ✅ Header section (forces correct render start)
+        // ✅ Header section
         section("Battery Summary"){
             paragraph "<span style='color:red; font-weight:bold;'>⚠ Device links below are accessible only on your local network (LAN). They will not work remotely.</span>"
         }
 
         def hubIp = location?.hub?.localIP ?: ""
 
+        // --- SAFE FILTER + SORT ---
         def devs = (autoDevices ?: []).findAll { 
             try { it?.currentValue("battery") != null } catch(e){ return false }
         }
 
         devs = devs.sort { a, b ->
-            def levelA = null
-            def levelB = null
-            try { levelA = a.currentValue("battery")?.toInteger() } catch(e) {}
-            try { levelB = b.currentValue("battery")?.toInteger() } catch(e) {}
-            levelA = levelA != null ? levelA : 100
-            levelB = levelB != null ? levelB : 100
-            levelA != levelB ? levelA <=> levelB : 
-            (a.displayName ?: "") <=> (b.displayName ?: "")
+            def timeA = 0
+            def timeB = 0
+            try { timeA = a.getLastActivity()?.time ?: 0 } catch(e) {}
+            try { timeB = b.getLastActivity()?.time ?: 0 } catch(e) {}
+            return timeB <=> timeA
         }
 
         if(!devs){
@@ -739,11 +735,9 @@ def summaryPage(){
             def lastActivityStr = "N/A"
             def lastActivity = null
             try { lastActivity = device.getLastActivity() } catch(e) {}
-
             if(lastActivity){
                 try { lastActivityStr = formatTimeAgo(safeTime(lastActivity)) } catch(e) {}
             }
-
             def stale = isStale(device) ?: false
             def color = getBatteryLevelDisplay(level, device)
             def staleTag = stale && lastActivity ? " ⚠️ Stale (${((now() - safeTime(lastActivity))/(1000*60*60)).toInteger()}h)" : ""
@@ -762,10 +756,7 @@ def summaryPage(){
 
         table += "</table>"
 
-        // ✅ Table isolated in its own section (KEY FIX)
-        section("") {
-            paragraph table
-        }
+        section("") { paragraph table }
     }
 }
 
@@ -775,16 +766,13 @@ def summaryPage(){
 def trendsPage(){
     dynamicPage(name:"trendsPage", title:"Battery Trends", install:false){
 
-        section("") {
-            paragraph "<div id='top'></div>"
-        }
+        section("") { paragraph "<div id='top'></div>" }
 
         section("Battery Trends"){
             paragraph "<b>Battery Trend Report</b>"
         }
 
         def devs = (autoDevices ?: []).findAll{ it?.currentValue("battery") != null }
-
         if(!devs){
             section(""){ paragraph "No battery devices found for trends." }
             return
@@ -830,9 +818,7 @@ def trendsPage(){
 
         table+="</table>"
 
-        section("") {
-            paragraph table
-        }
+        section("") { paragraph table }
     }
 }
 
@@ -842,9 +828,7 @@ def trendsPage(){
 def historyPage() {
     dynamicPage(name:"historyPage", title:"Battery Replacement History", install:false){
 
-        section("") {
-            paragraph "<div id='top'></div>"
-        }
+        section("") { paragraph "<div id='top'></div>" }
 
         section("Battery Replacement History"){
             paragraph "<b>Replacement Log</b>"
@@ -874,9 +858,7 @@ def historyPage() {
 
         table+="</table>"
 
-        section("") {
-            paragraph table
-        }
+        section("") { paragraph table }
     }
 }
 
@@ -890,11 +872,8 @@ def deleteHistoryPage() {
     dynamicPage(name: "deleteHistoryPage", title: "Delete a History Entry", install: false) {
 
         if (!state.replacements || state.replacements.size() == 0) {
-            section() {
-                paragraph "No replacement history to delete."
-            }
+            section() { paragraph "No replacement history to delete." }
         } else {
-            // Build options as "Device — Date" strings, keyed by index
             def options = [:]
             state.replacements.sort{ a,b -> b.date <=> a.date }.eachWithIndex { r, i ->
                 options["${i}"] = "🗑️ ${r.device} — ${r.date}"
@@ -914,9 +893,7 @@ def deleteHistoryPage() {
                       defaultValue: false
             }
 
-            section() {
-                href "deleteHistoryConfirmPage", title: "Submit"
-            }
+            section() { href "deleteHistoryConfirmPage", title: "Submit" }
         }
     }
 }
@@ -956,7 +933,6 @@ def manualReplacementPage() {
     if(state.replacements == null) state.replacements = []
     if(!autoDevices) autoDevices = []
 
-    // Clear previous selections (Hubitat settings)
     app.removeSetting("replaceDevicesManual")
     app.updateSetting("replaceConfirmManual",[value: false, type:"bool"])
 
@@ -980,9 +956,7 @@ def manualReplacementPage() {
                   required: false
         }
 
-        section() {
-            href "manualReplacementConfirmPage", title: "Submit Replacement"
-        }
+        section() { href "manualReplacementConfirmPage", title: "Submit Replacement" }
     }
 }
 
@@ -997,46 +971,29 @@ def manualReplacementConfirmPage() {
         section("Replacement Registered") {
             if(replaceDevicesManual && replaceConfirmManual) {
                 def successCount = 0
-
                 replaceDevicesManual.each { deviceId ->
                     def device = autoDevices.find { it.id == deviceId }
                     if(device) {
-                        def level = device.currentValue("battery")?.toInteger()
-                        level = level != null ? level : 100
-
-                        // Ensure history exists
+                        def level = device.currentValue("battery")?.toInteger() ?: 100
                         if(!state.history[device.id]) {
-                            state.history[device.id] = [
-                                lastLevel: level,
-                                lastDate: now(),
-                                drain: 0.3,
-                                samples: []
-                            ]
+                            state.history[device.id] = [lastLevel: level, lastDate: now(), drain: 0.3, samples: []]
                         }
 
-                        // ===== DEDUPLICATE PREVIOUS MANUAL ENTRIES =====
                         state.replacements = state.replacements?.findAll { it.device != device.displayName } ?: []
-
-                        // Log the manual replacement
-                       // tag as manual
-                          state.replacements << [
-                          device: device.displayName,
-                          level: level,
-                          date: new Date().format("yyyy-MM-dd HH:mm", location.timeZone),
-                          type: "manual"
+                        state.replacements << [
+                            device: device.displayName,
+                            level: level,
+                            date: new Date().format("yyyy-MM-dd HH:mm", location.timeZone),
+                            type: "manual"
                         ]
 
-                        // Sort descending by date
                         state.replacements = state.replacements.sort { a, b -> b.date <=> a.date }
 
-                        // Reset device history and mark as replaced
                         state.history[device.id].drain = 0.3
                         state.history[device.id].samples = []
                         state.trend[device.id] = "Stable"
                         state.history[device.id].lastLevel = 100
                         state.history[device.id].lastDate = now()
-
-                        // THIS IS THE MISSING PIECE
                         state.history[device.id].justReplaced = true
                         state.history[device.id].replacedTime = now()
 
@@ -1049,13 +1006,23 @@ def manualReplacementConfirmPage() {
                 } else {
                     paragraph "❌ No valid devices found. Please select devices on the main page first."
                 }
-
             } else {
                 paragraph "⚠ Please select device(s) and confirm replacement or use the Back button to cancel."
             }
         }
     }
 }
+
+// ============================================================
+// ================= HUB TYPE & DRAIN HELPERS ================
+// ============================================================
+
+// Safely get the drain value for a device
+private Float getDrain(deviceWrapper) {
+    if (!deviceWrapper || !state.history?.get(deviceWrapper.id)) return 0.0
+    return state.history[deviceWrapper.id].drain?.toFloat() ?: 0.0
+}
+
 // ============================================================
 // ===================== INFO PAGE ===========================
 // ============================================================
