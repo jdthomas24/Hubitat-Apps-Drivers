@@ -709,8 +709,15 @@ def summaryPage(){
             return
         }
 
-        // ✅ Anchor for scroll top
-        section("") { paragraph "<div id='top'></div>" }
+        // ✅ FORCE TOP RENDER (CRITICAL FIX)
+        section(" ") {
+            paragraph " "   // MUST NOT BE EMPTY
+        }
+
+        // ✅ Anchor (secondary)
+        section("") {
+            paragraph "<div id='top'></div>"
+        }
 
         // ✅ Header section
         section("Battery Summary"){
