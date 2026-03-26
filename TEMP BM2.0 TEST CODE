@@ -696,7 +696,7 @@ def estDays(device) {
 // ============================================================
 // ===================== SUMMARY PAGE ========================
 // ============================================================
-def summaryPage(){
+def summaryPage() {
     dynamicPage(name:"summaryPage", title:"Battery Summary", install:false){
 
         // 🛑 FIRST RUN PROTECTION
@@ -709,7 +709,7 @@ def summaryPage(){
             return
         }
 
-        // ✅ FORCE TOP RENDER (CRITICAL FIX)
+        // ✅ FORCE TOP RENDER
         section(" ") { paragraph " " }
 
         def hubIp = location?.hub?.localIP ?: ""
@@ -763,7 +763,6 @@ def summaryPage(){
 
         table += "</table>"
 
-        // ✅ WRAP ENTIRE CONTENT TO FIX WRAPPING/SCROLL ISSUES
         section("") { 
             paragraph "<div style='white-space:normal !important; overflow-wrap:break-word;'>${table}</div>" 
         }
@@ -773,7 +772,7 @@ def summaryPage(){
 // ============================================================
 // ===================== TRENDS PAGE =========================
 // ============================================================
-def trendsPage(){
+def trendsPage() {
     dynamicPage(name:"trendsPage", title:"Battery Trends", install:false){
 
         section("Battery Trends"){
@@ -823,7 +822,6 @@ def trendsPage(){
 
         table+="</table>"
 
-        // ✅ WRAP ENTIRE CONTENT
         section("") { 
             paragraph "<div style='white-space:normal !important; overflow-wrap:break-word;'>${table}</div>" 
         }
@@ -833,37 +831,31 @@ def trendsPage(){
 // ============================================================
 // ===================== HISTORY PAGE ========================
 // ============================================================
-def deviceHistoryPage(){
-    dynamicPage(name:"deviceHistoryPage", title:"Device Battery History", install:false){
+def historyPage() {
+    dynamicPage(name:"historyPage", title:"Battery Replacement History", install:false){
 
-        section("Battery History"){
-            paragraph "<b>Historical Battery Levels</b>"
-        }
-
-        def devs = (autoDevices ?: []).findAll{ it?.currentValue("battery") != null }
-        if(!devs){
-            section(""){ paragraph "No battery devices found." }
+        if(!state.replacements || state.replacements.size() == 0){
+            section("No Replacements Logged"){
+                paragraph "⚠ No battery replacements have been logged yet."
+            }
             return
         }
 
-        devs.each{ device ->
-            def hist = safeHistory(device) ?: []
+        section("Battery Replacement History") {
             def table="<table style='width:100%; border-collapse: collapse; table-layout:auto; word-wrap:break-word;'>"
-            table+="<tr style='font-weight:bold;'><td>Timestamp</td><td>Battery</td><td>Drain</td></tr>"
+            table+="<tr style='font-weight:bold;'><td>Device</td><td>Level</td><td>Date</td><td>Type</td></tr>"
 
-            hist.each{ h ->
+            state.replacements.each { entry ->
                 table+="<tr>"
-                table+="<td>${formatTimeAgo(h.time)}</td>"
-                table+="<td>${h.level}%</td>"
-                table+="<td>${String.format('%.2f', h.drain)}</td>"
+                table+="<td>${entry.device}</td>"
+                table+="<td>${entry.level}%</td>"
+                table+="<td>${entry.date}</td>"
+                table+="<td>${entry.type}</td>"
                 table+="</tr>"
             }
 
             table+="</table>"
-
-            section("${device.displayName}"){ 
-                paragraph "<div style='white-space:normal !important; overflow-wrap:break-word;'>${table}</div>" 
-            }
+            paragraph "<div style='white-space:normal !important; overflow-wrap:break-word;'>${table}</div>"
         }
     }
 }
@@ -885,44 +877,24 @@ def deleteHistoryPage() {
             return
         }
 
-        section("Select a Replacement Entry to Delete") {
-            // Sort entries newest first
-            def sorted = state.replacements.sort { a, b -> b.date <=> a.date }
-
-            // Build display strings
-            def options = sorted.collect { r ->
-                def typeTag = r.type == "manual" ? "M" : r.type == "auto" ? "A" : "?"
-                "${r.date} — ${r.device} (${r.level}%) [${typeTag}]"
-            }
-
+        section("Select Replacement to Delete") {
             input "deleteEntrySelection", "enum",
-                  title: "Select Replacement Entry to Delete",
-                  options: options,
-                  required: true,
-                  multiple: false
+                  title: "Select Entry",
+                  multiple: false,
+                  options: state.replacements.collect { "${it.date} | ${it.device} | ${it.level}%" }
         }
 
-        section("Confirm Deletion") {
+        section("Confirm Delete") {
             input "confirmEntryDelete", "bool",
-                  title: "⚠ Check to confirm deletion",
-                  required: true,
-                  defaultValue: false
+                  title: "Confirm deletion of selected entry",
+                  required: true
         }
 
-        // Delete action
-        if (confirmEntryDelete && deleteEntrySelection) {
-            def entry = state.replacements.find { r ->
-                def typeTag = r.type == "manual" ? "M" : r.type == "auto" ? "A" : "?"
-                "${r.date} — ${r.device} (${r.level}%) [${typeTag}]" == deleteEntrySelection
-            }
-            if (entry) {
-                state.replacements.remove(entry)
-                app.updateSetting("confirmEntryDelete", [value: false, type: "bool"])
-                app.removeSetting("deleteEntrySelection")
-                section("") { paragraph "✅ Replacement entry deleted successfully." }
-            } else {
-                section("") { paragraph "⚠️ Selected entry not found." }
-            }
+        if(confirmEntryDelete && deleteEntrySelection){
+            state.replacements.removeAll { "${it.date} | ${it.device} | ${it.level}%" == deleteEntrySelection }
+            app.updateSetting("confirmEntryDelete", [value: false, type: "bool"])
+            app.removeSetting("deleteEntrySelection")
+            section("Deleted") { paragraph "✅ Selected replacement deleted." }
         }
     }
 }
