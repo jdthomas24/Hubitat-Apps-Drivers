@@ -178,7 +178,7 @@ def mainPage() {
             input "notifyFair",      "bool", title: "🟠 Include Fair (26–70%)",                            defaultValue: true
             input "notifyGood",      "bool", title: "🟢 Include Good (71–99%)",                            defaultValue: false
             input "notifyExcellent", "bool", title: "🟢 Include Excellent (100%)",                         defaultValue: false
-            input "notifyHighDrain", "bool", title: "⚠️ Include Health (Fair, Poor, & High Drain Only, > 0.7%/day)", defaultValue: true
+            input "notifyHighDrain", "bool", title: "⚠️ Include Health (Fair, Poor, & High Drain Only, > 1.2%/day)", defaultValue: true
 
             input "notifyStale",     "bool", title: "⚠️ Include Stale Devices",                            defaultValue: true
             input "staleThresholdHours", "number",
