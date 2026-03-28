@@ -4,21 +4,22 @@
 // Author: Jdthomas24
 // Namespace: jdthomas24
 // Description: Advanced Hubitat battery monitoring with analytics, trends and replacement tracking.
-//              v2.4.0b14: Confidence-weighted health, EWMA smoothing, dual sample+time gate,
-//              raised drain cap, Pending state for new devices, updated info page.
+//              v2.4.0b16: scanInterval now wired up as a real recurring scan job separate from
+//              notification frequency. Dead code removed (unused 'needed' var, unreachable
+//              'critical' reportFrequency branches).
 // ============================================================
 
 definition(
     name: "Battery Monitor 2.0", // DO NOT CHANGE (HPM SAFE)
     namespace: "jdthomas24",
     author: "Jdthomas24",
-    description: "Advanced Hubitat battery monitoring with analytics, trends and replacement tracking (v2.4.0b14). Confidence-weighted health with EWMA smoothing eliminates false positives on new/replaced devices.",
+    description: "Advanced Hubitat battery monitoring with analytics, trends and replacement tracking (v2.4.0b16). Recurring scan schedule, confidence-weighted health, EWMA smoothing.",
     category: "Convenience",
     importUrl: "https://raw.githubusercontent.com/jdthomas24/TEST-Codes-RAW-/refs/heads/main/BM%202.0%20Collaboration",
     iconUrl: "https://raw.githubusercontent.com/hubitat/HubitatPublic/master/examples/icons/battery.png",
     iconX2Url: "https://raw.githubusercontent.com/hubitat/HubitatPublic/master/examples/icons/battery@2x.png",
     iconX3Url: "https://raw.githubusercontent.com/hubitat/HubitatPublic/master/examples/icons/battery@2x.png",
-    version: "2.4.0 beta 14"
+    version: "2.4.0 beta 16"
 )
 
 def installed() {
@@ -51,6 +52,7 @@ def initialize() {
     log.debug "Initialization complete"
     if (state.replacements == null) state.replacements = []
     scheduleReportFrequency()
+    scheduleScanInterval()
     if (autoDevices) {
         subscribe(autoDevices, "battery", batteryHandler)
     }
@@ -129,10 +131,14 @@ def mainPage() {
         }
 
         section("<b>Battery Scan Interval</b>") {
+            paragraph "Sets how often the app actively reads each device's battery level to build drain samples. " +
+                      "More frequent scans help health ratings mature faster. " +
+                      "Devices also update automatically whenever they report a battery event."
             input "scanInterval", "enum",
-                  title: "Scan Frequency (used to calculate trends and battery analytics):",
+                  title: "Scan Frequency:",
                   options: ["1": "Hourly", "3": "Every 3 Hours", "6": "Every 6 Hours"],
-                  defaultValue: "3"
+                  defaultValue: "3",
+                  submitOnChange: true
         }
 
         section("<b>Notifications (Toggle must be on to receive notifications)</b>") {
@@ -201,9 +207,52 @@ def mainPage() {
 // ============================================================
 def scheduleReportFrequency() {
     unschedule("reportScheduler")
-    if (reportFrequency == "critical") return
     if (!summaryTime) return
     schedule(summaryTime, reportScheduler)
+}
+
+// ============================================================
+// ===================== SCAN INTERVAL SCHEDULING ============
+// ============================================================
+/**
+ * Schedules a recurring battery scan independent of notification frequency.
+ * Each scan calls updateBattery() on every monitored device using its current
+ * reported level, forcing a drain sample even if the device hasn't fired an event.
+ * This allows samples to accumulate faster and health ratings to mature sooner.
+ */
+def scheduleScanInterval() {
+    unschedule("scanAllDevices")
+    def interval = (settings?.scanInterval ?: "3").toInteger()
+    def cronExpr = ""
+    switch (interval) {
+        case 1:  cronExpr = "0 0 * * * ?";   break   // every hour, on the hour
+        case 3:  cronExpr = "0 0 */3 * * ?";  break   // every 3 hours
+        case 6:  cronExpr = "0 0 */6 * * ?";  break   // every 6 hours
+        default: cronExpr = "0 0 */3 * * ?";  break
+    }
+    schedule(cronExpr, scanAllDevices)
+    log.debug "Battery scan scheduled every ${interval}h (cron: ${cronExpr})"
+}
+
+/**
+ * Runs on the scanInterval schedule. Reads each device's current battery level
+ * and feeds it into updateBattery() to generate a fresh drain sample.
+ * Skips devices with no battery reading or no history entry yet.
+ */
+def scanAllDevices() {
+    if (!autoDevices) return
+    log.debug "Running scheduled battery scan for ${autoDevices.size()} device(s)"
+    autoDevices.each { device ->
+        try {
+            def level = device.currentValue("battery")?.toInteger()
+            if (level != null) {
+                updateBattery(device, level)
+                log.debug "Scanned ${device.displayName}: ${level}%"
+            }
+        } catch (e) {
+            log.warn "Scan failed for ${device.displayName}: ${e.message}"
+        }
+    }
 }
 
 def reportScheduler() {
@@ -425,10 +474,6 @@ def updateBattery(device, level) {
 
     data.lastLevel = level
     data.lastDate  = now()
-
-    if (reportFrequency == "critical" && level <= 25) {
-        sendCriticalReport(device, level)
-    }
 }
 
 // ============================================================
@@ -775,7 +820,6 @@ def summaryPage() {
                 // Health display — show pending note for new devices
                 def healthDisplay = h
                 if (h == "Pending") {
-                    def needed = Math.max(0, 5 - sampleCount)
                     healthDisplay = "⏳ Pending (${sampleCount}/5 samples)"
                 }
 
@@ -1200,7 +1244,10 @@ def infoPage(Map params = [:]) {
             paragraph "Drain shows how fast a device uses battery (% per day). Lower values mean longer battery life. " +
                       "Drain is calculated using EWMA (exponential weighted moving average) across the last 10 readings — " +
                       "recent readings matter slightly more than older ones, but a single spike won't throw off the average. " +
-                      "Accuracy improves as more samples accumulate over time."
+                      "Accuracy improves as more samples accumulate over time.<br><br>" +
+                      "The <b>Scan Interval</b> setting controls how often the app actively reads each device to generate a new sample. " +
+                      "Devices also contribute a sample automatically whenever they fire a battery event on their own. " +
+                      "Scanning more frequently means health ratings mature faster."
         }
 
         section("<b>📅 How Estimated Days Works</b>") {
