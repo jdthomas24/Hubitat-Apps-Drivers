@@ -690,6 +690,10 @@ def logReplacement(device, newLevel, manual = false) {
 def summaryPage() {
     dynamicPage(name: "summaryPage", title: "Battery Summary", install: false) {
 
+        section("") {
+            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {};</script>"
+        }
+
         if (!state.history || !autoDevices || autoDevices.size() == 0) {
             section("Setup Required") {
                 paragraph "⚠ <b>Setup Not Complete</b><br><br>" +
@@ -809,7 +813,7 @@ def trendsPage() {
     dynamicPage(name: "trendsPage", title: "Battery Trends", install: false) {
 
         section("") {
-            paragraph """<script>window.scrollTo(0,0);</script>"""
+            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {};</script>"
         }
 
         section("Battery Trends") {
@@ -872,7 +876,7 @@ def historyPage() {
     dynamicPage(name: "historyPage", title: "Battery Replacement History", install: false) {
 
         section("") {
-            paragraph """<script>window.scrollTo(0,0);</script>"""
+            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {};</script>"
         }
 
         section("Battery Replacement History") {
@@ -920,6 +924,9 @@ def deleteHistoryPage() {
     app.updateSetting("confirmEntryDelete", [value: false, type: "bool"])
 
     dynamicPage(name: "deleteHistoryPage", title: "Delete a History Entry", install: false) {
+        section("") {
+            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {};</script>"
+        }
         if (!state.replacements || state.replacements.size() == 0) {
             section() { paragraph "No replacement history to delete." }
         } else {
@@ -951,6 +958,9 @@ def deleteHistoryPage() {
 // ============================================================
 def deleteHistoryConfirmPage() {
     dynamicPage(name: "deleteHistoryConfirmPage", title: "Delete Entry", install: false) {
+        section("") {
+            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {};</script>"
+        }
         section("Result") {
             if (!confirmEntryDelete) {
                 paragraph "⚠️ Deletion cancelled — confirm checkbox was not checked."
@@ -985,6 +995,9 @@ def manualReplacementPage() {
     app.updateSetting("replaceConfirmManual", [value: false, type: "bool"])
 
     dynamicPage(name: "manualReplacementPage", title: "Manual Battery Replacement", install: false) {
+        section("") {
+            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {};</script>"
+        }
         section("Select Devices") {
             if (!autoDevices || autoDevices.size() == 0) {
                 paragraph "⚠ No battery devices available. Please select devices on the main page first."
@@ -1016,6 +1029,9 @@ def manualReplacementConfirmPage() {
     if (!autoDevices) autoDevices = []
 
     dynamicPage(name: "manualReplacementConfirmPage", title: "Confirm Replacement", install: false) {
+        section("") {
+            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {};</script>"
+        }
         section("Replacement Registered") {
             if (replaceDevicesManual && replaceConfirmManual) {
                 def successCount = 0
@@ -1073,6 +1089,10 @@ def manualReplacementConfirmPage() {
 // ============================================================
 def batteryCatalogPage() {
     dynamicPage(name: "batteryCatalogPage", title: "🔋 Battery Catalog", install: false) {
+
+        section("") {
+            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {};</script>"
+        }
 
         def devs = (autoDevices ?: []).sort { a, b -> a.displayName.trim() <=> b.displayName.trim() }
 
@@ -1135,6 +1155,10 @@ def batteryCatalogPage() {
 // ============================================================
 def infoPage(Map params = [:]) {
     dynamicPage(name: "infoPage", title: "Battery Monitoring Guide", install: false) {
+
+        section("") {
+            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {};</script>"
+        }
 
         section("<b>Note on Colors</b>") {
             paragraph "Battery level colors reflect current charge percentage:<br>" +
