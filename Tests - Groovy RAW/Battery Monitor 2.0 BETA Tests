@@ -727,6 +727,7 @@ def summaryPage() {
 
         section("") {
             paragraph "<span style='color:red; font-weight:bold;'>⚠ Device links below are accessible only on your local network (LAN). They will not work remotely.</span>"
+            paragraph "<span style='color:red; font-weight:bold;'>¹ Last Battery</span> shows when this app last received a battery reading — from a scheduled scan or device event. It is independent of Last Activity. A device can be active recently but still show an old Last Battery timestamp if its battery level has not changed or reported."
             href "forceScanPage", title: "🔄 Force Scan Now", description: "Tap to immediately read battery levels from all monitored devices"
 
             // FIX #8: Use local devList instead of reassigning autoDevices
@@ -856,8 +857,6 @@ def summaryPage() {
             }
 
             table += "</table>"
-            table += "<br><small>¹ <b>Last Battery</b> shows when this app last received a battery reading for the device — either from a scheduled scan or a device-triggered event. " +
-                     "It is independent of Last Activity. A device can be active recently but still show an old Last Battery timestamp if its battery attribute has not changed or reported.</small>"
             paragraph table
         }
     }
