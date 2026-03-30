@@ -40,14 +40,12 @@ def initialize() {
     state.msgBuffer     = ""
     state.objectMap     = [:]
     state.pendingCmds   = [:]
-    state.lastPingTime  = 0
+    // lastPingTime removed — WebSocket handles keepalive natively
     state.connected     = false
 
     unschedule()
-    // Ping every 10 seconds
-    schedule("0/10 * * * * ?", sendPing)
-    // Watchdog every 2 minutes
-    schedule("0 0/2 * * * ?",  reconnectIfNeeded)
+    // Watchdog every 2 minutes — WebSocket handles keepalive natively
+    schedule("0 0/2 * * * ?", reconnectIfNeeded)
 
     connect()
 }
@@ -71,22 +69,10 @@ def connect() {
     }
 
     try {
-        if (debugMode) log.debug "Connecting to ${ipAddress}:${portNumber ?: 6680}"
-        interfaces.rawSocket.connect(
-            ipAddress,
-            (portNumber ?: 6680) as Integer,
-            byteInterface: false,
-            readDelay: 50
-        )
-        state.connected     = true
-        state.lastPingTime  = now()
-        state.msgBuffer     = ""
-        sendEvent(name: "connectionStatus", value: "Connected")
-        log.info "IntelliCenter connected to ${ipAddress}:${portNumber ?: 6680}"
-
-        // Give socket a moment then request full state
-        runIn(1, requestEquipment)
-
+        def uri = "ws://${ipAddress}:${portNumber ?: 6680}"
+        if (debugMode) log.debug "Connecting via WebSocket to ${uri}"
+        interfaces.webSocket.connect(uri)
+        // connected/disconnected confirmed via webSocketStatus callback
     } catch (e) {
         log.error "Connection failed: ${e.message}"
         state.connected = false
@@ -96,19 +82,23 @@ def connect() {
 
 def disconnect() {
     try {
-        interfaces.rawSocket.close()
+        interfaces.webSocket.close()
     } catch (e) { }
     state.connected = false
     sendEvent(name: "connectionStatus", value: "Disconnected")
     log.info "IntelliCenter disconnected"
 }
 
-def socketStatus(String message) {
-    if (debugMode) log.debug "Socket status: ${message}"
-    if (message.toLowerCase().contains("error") ||
-        message.toLowerCase().contains("closed") ||
-        message.toLowerCase().contains("reset")) {
-        log.warn "Socket lost connection: ${message}"
+def webSocketStatus(String message) {
+    if (debugMode) log.debug "WebSocket status: ${message}"
+    if (message.contains("open")) {
+        log.info "WebSocket open — IntelliCenter connected"
+        state.connected = true
+        state.msgBuffer = ""
+        sendEvent(name: "connectionStatus", value: "Connected")
+        runIn(1, requestEquipment)
+    } else if (message.contains("failure") || message.contains("error") || message.contains("clos")) {
+        log.warn "WebSocket disconnected: ${message}"
         state.connected = false
         sendEvent(name: "connectionStatus", value: "Disconnected")
     }
@@ -116,62 +106,24 @@ def socketStatus(String message) {
 
 def reconnectIfNeeded() {
     if (!state.connected) {
-        log.info "Reconnecting to IntelliCenter"
+        log.info "Watchdog: reconnecting to IntelliCenter"
         connect()
-        return
-    }
-    // No pong heard in 60 seconds
-    if (state.lastPingTime && (now() - state.lastPingTime) > 60000) {
-        log.warn "No pong in 60s — reconnecting"
-        disconnect()
-        runIn(2, connect)
     }
 }
 
-// ============================================================
-// ===================== KEEPALIVE ===========================
-// ============================================================
-def sendPing() {
-    if (!state.connected) return
-    try {
-        interfaces.rawSocket.sendMessage("ping")
-        if (debugMode) log.debug "Ping sent"
-    } catch (e) {
-        log.warn "Ping failed: ${e.message}"
-        state.connected = false
-        sendEvent(name: "connectionStatus", value: "Disconnected")
-    }
-}
+// Keepalive is handled by the WebSocket protocol natively — no application-level ping needed
 
 // ============================================================
 // ===================== INCOMING DATA =======================
 // ============================================================
 def parse(String message) {
-    // Pong response to our ping
-    if (message.trim() == "pong") {
-        state.lastPingTime = now()
-        if (debugMode) log.debug "Pong received"
-        return
-    }
+    // WebSocket delivers complete frames — no buffering needed
+    message = message.trim()
 
-    // Accumulate into buffer — messages are newline-terminated JSON
-    state.msgBuffer = (state.msgBuffer ?: "") + message
-
-    // Process complete lines
-    def lines = state.msgBuffer.split("\n")
-    state.msgBuffer = ""
-
-    lines.each { line ->
-        line = line.trim()
-        if (!line) return
-
-        // If it looks like complete JSON process it, otherwise re-buffer
-        if (line.startsWith("{") && line.endsWith("}")) {
-            processMessage(line)
-        } else if (line.startsWith("{")) {
-            // Incomplete — buffer for next parse call
-            state.msgBuffer = line
-        }
+    if (message.startsWith("{")) {
+        processMessage(message)
+    } else {
+        if (debugMode) log.debug "Non-JSON message: ${message}"
     }
 }
 
@@ -313,6 +265,13 @@ def routeUpdate(String objnam, Map params) {
 // ===================== DEVICE UPDATES ======================
 // ============================================================
 def processCircuit(String objnam, Map params) {
+    // Only create devices for real user circuits (C####)
+    // Skip internal/system objects: X#### (virtual), _#### (system), FTR, GRP, ALL subtypes
+    if (!objnam.matches("C\\d+")) {
+        if (debugMode) log.debug "Skipping internal circuit: ${objnam}"
+        return
+    }
+
     def label  = params.SNAME ?: state.objectMap?.get(objnam)?.SNAME ?: objnam
     def status = params.STATUS
     if (status == null) return
@@ -462,12 +421,27 @@ def sendCommand(Map payload) {
     def json = groovy.json.JsonOutput.toJson(payload)
     if (debugMode) log.debug "TX: ${json}"
     try {
-        interfaces.rawSocket.sendMessage(json)
+        interfaces.webSocket.sendMessage(json)
     } catch (e) {
         log.error "Send failed: ${e.message}"
         state.connected = false
         sendEvent(name: "connectionStatus", value: "Disconnected")
     }
+}
+
+// ============================================================
+// ===================== COMPONENT CALLBACKS =================
+// ============================================================
+// Called by Generic Component child drivers when they need a refresh
+def componentRefresh(child) {
+    if (debugMode) log.debug "componentRefresh called for ${child.displayName}"
+    // Re-request state for this specific device
+    def objnam = objnamFromDni(child.deviceNetworkId)
+    if (!objnam) return
+    sendCommand([
+        command: "GetParamList",
+        objectList: [[objnam: objnam, keys: ["STATUS", "TEMP", "RPM", "WATTS", "GPM", "SALT", "SOURCE"]]]
+    ])
 }
 
 // ============================================================
