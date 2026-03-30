@@ -1,7 +1,7 @@
 definition(
     name: "Pentair IntelliCenter",
     namespace: "intellicenter",
-    author: "Custom Integration",
+    author: "jdthomas24",
     description: "Pentair IntelliCenter local integration for Hubitat",
     category: "Convenience",
     iconUrl: "",
