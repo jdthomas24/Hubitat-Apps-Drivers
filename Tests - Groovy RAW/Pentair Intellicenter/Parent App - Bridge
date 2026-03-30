@@ -84,8 +84,8 @@ def initialize() {
     bridge.updateSetting("portNumber", [value: intellicenterPort ?: 6680, type: "number"])
     bridge.updateSetting("debugMode",  [value: debugMode ?: false,        type: "bool"])
 
-    // Tell bridge to connect
-    bridge.connect()
+    // Initialize bridge — clears old schedules and reconnects cleanly
+    bridge.initialize()
 }
 
 def uninstalled() {
