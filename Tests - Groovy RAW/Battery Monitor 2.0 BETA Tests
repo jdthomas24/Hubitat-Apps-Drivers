@@ -462,19 +462,29 @@ def updateBattery(device, level) {
         data.justReplaced = false
     }
 
-    def days = (now() - safeTime(data.lastDate)) / (1000 * 60 * 60 * 24)
-    if (days > 0 && !data.justReplaced) {
-        def lastLevel   = data.lastLevel != null ? data.lastLevel : 100
-        def rawDrain    = (lastLevel - level) / days
-        def hours       = days * 24
-        def validSample = (rawDrain > 0 && rawDrain < 5) || (rawDrain == 0 && hours >= 24)
+    def days  = (now() - safeTime(data.lastDate)) / (1000 * 60 * 60 * 24)
+    def hours = days * 24
+
+    // Require at least 1 hour between samples before calculating drain.
+    // Readings taken minutes apart produce astronomically high rawDrain values
+    // (e.g. 1% drop over 0.003 days = 333%/day) which blow past the old
+    // rawDrain < 5 cap and get silently rejected, causing samples to stay at
+    // 0/5 indefinitely and falsely showing Poor health on the first read.
+    if (days > 0 && hours >= 1.0 && !data.justReplaced) {
+        def lastLevel    = data.lastLevel != null ? data.lastLevel : 100
+        def rawDrain     = (lastLevel - level) / days
+        // Clamp rather than reject — anything above 5%/day is noise from
+        // rapid testing or an erratic device, but samples should still accumulate.
+        def clampedDrain = Math.max(0.0, Math.min(rawDrain, 5.0))
+        def validSample  = (rawDrain > 0) || (rawDrain == 0 && hours >= 24)
 
         if (validSample) {
             def alpha      = 0.3
-            def prevSmooth = (data.samples && data.samples.size() > 0) ? data.samples[-1] : rawDrain
-            def smoothed   = alpha * rawDrain + (1 - alpha) * prevSmooth
+            def prevSmooth = (data.samples && data.samples.size() > 0) ? data.samples[-1] : clampedDrain
+            def smoothed   = alpha * clampedDrain + (1 - alpha) * prevSmooth
             data.samples << smoothed
             if (data.samples.size() > 10) data.samples.remove(0)
+            log.debug "updateBattery: ${device.displayName} sample added — rawDrain=${String.format('%.4f', rawDrain)} clamped=${String.format('%.4f', clampedDrain)} smoothed=${String.format('%.4f', smoothed)} samples=${data.samples.size()}"
         }
 
         if (data.samples && data.samples.size() > 0) {
@@ -482,6 +492,8 @@ def updateBattery(device, level) {
             data.drain = Math.min(avg, 3.0)
             updateTrend(device, data.drain)
         }
+    } else if (days > 0 && hours < 1.0) {
+        log.debug "updateBattery: ${device.displayName} — skipping sample, only ${String.format('%.1f', hours)}h elapsed (1h minimum required)"
     }
 
     data.lastLevel = level
@@ -1463,4 +1475,3 @@ def infoPage(Map params = [:]) {
         }
     }
 }
-
