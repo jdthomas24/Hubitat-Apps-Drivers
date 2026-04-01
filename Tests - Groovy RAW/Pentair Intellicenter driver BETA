@@ -37,10 +37,10 @@ def updated() {
 }
 
 def initialize() {
-    state.msgBuffer     = ""
-    state.objectMap     = [:]
-    state.pendingCmds   = [:]
-    state.connected     = false
+    state.msgBuffer   = ""
+    state.objectMap   = [:]
+    state.pendingCmds = [:]
+    state.connected   = false
 
     unschedule()
     // Watchdog every 2 minutes — WebSocket handles keepalive natively
@@ -71,7 +71,6 @@ def connect() {
         def uri = "ws://${ipAddress}:${portNumber ?: 6680}"
         if (debugMode) log.debug "Connecting via WebSocket to ${uri}"
         interfaces.webSocket.connect(uri)
-        // connected/disconnected confirmed via webSocketStatus callback
     } catch (e) {
         log.error "Connection failed: ${e.message}"
         state.connected = false
@@ -114,9 +113,7 @@ def reconnectIfNeeded() {
 // ===================== INCOMING DATA =======================
 // ============================================================
 def parse(String message) {
-    // WebSocket delivers complete frames — no buffering needed
     message = message.trim()
-
     if (message.startsWith("{")) {
         processMessage(message)
     } else {
@@ -253,6 +250,8 @@ def handleNotifyList(json) {
 
         if (!state.objectMap) state.objectMap = [:]
         if (!state.objectMap[name]) state.objectMap[name] = [:]
+        // Merge incoming params into stored state so partial updates
+        // always have access to the full object context (e.g. SUBTYP)
         params.each { k, v -> state.objectMap[name][k] = v }
 
         routeUpdate(name, params)
@@ -279,7 +278,6 @@ def processCircuit(String objnam, Map params) {
     def subtyp = params.SUBTYP ?: state.objectMap?.get(objnam)?.SUBTYP ?: ""
 
     // Allow real user circuits (C####), circuit groups (GRP####), and features (FTR####)
-    // Skip everything else: X#### virtual, _#### system
     def isUserCircuit = objnam.matches("C\\d+")
     def isGroup       = objnam.matches("GRP\\d+")
     def isFeature     = objnam.matches("FTR\\d+")
@@ -288,7 +286,7 @@ def processCircuit(String objnam, Map params) {
         return
     }
 
-    // Skip POOL and SPA subtype circuits — already represented as body devices
+    // Skip POOL and SPA subtype circuits — represented as body devices
     if (subtyp == "POOL" || subtyp == "SPA") {
         if (debugMode) log.debug "Skipping body circuit (handled as body): ${objnam} (${subtyp})"
         return
@@ -307,7 +305,9 @@ def processCircuit(String objnam, Map params) {
 }
 
 def processBody(String objnam, Map params) {
-    def label  = params.SNAME ?: state.objectMap?.get(objnam)?.SNAME ?: objnam
+    // Always resolve subtype from stored map so partial NotifyList updates work correctly
+    def subtyp = params.SUBTYP ?: state.objectMap?.get(objnam)?.SUBTYP ?: ""
+    def label  = params.SNAME  ?: state.objectMap?.get(objnam)?.SNAME  ?: objnam
     def status = params.STATUS
     def temp   = params.TEMP
     def hitmp  = params.HITMP
@@ -328,13 +328,16 @@ def processBody(String objnam, Map params) {
         tc?.sendEvent(name: "temperature", value: temp.toInteger(), unit: "°F")
     }
 
-    // FIX: Use LOTMP for SPA set point, HITMP for POOL set point
-    def subtyp = params.SUBTYP ?: state.objectMap?.get(objnam)?.SUBTYP ?: ""
-    def setpt  = (subtyp == "SPA") ? (params.LOTMP ?: lotmp) : (params.HITMP ?: hitmp)
+    // Set point — use LOTMP for SPA, HITMP for POOL
+    // Only update if the relevant key was actually included in this message
+    def setptKey = (subtyp == "SPA") ? "LOTMP" : "HITMP"
+    def setpt    = params[setptKey]
     if (setpt != null) {
         def spDni = "intellicenter-setpt-${objnam}"
-        def spc   = getOrCreateChild("Generic Component Temperature Sensor", spDni, "${label} Set Point")
-        spc?.sendEvent(name: "temperature", value: setpt.toInteger(), unit: "°F")
+        // Use custom set point driver so user can change the value
+        def spc   = getOrCreateChild("Pentair IntelliCenter Set Point", spDni, "${label} Set Point")
+        spc?.sendEvent(name: "temperature",      value: setpt.toInteger(), unit: "°F")
+        spc?.sendEvent(name: "heatingSetpoint",  value: setpt.toInteger(), unit: "°F")
     }
 
     // Heater mode
@@ -342,8 +345,8 @@ def processBody(String objnam, Map params) {
         def htDni = "intellicenter-heater-${objnam}"
         def htc   = getOrCreateChild("Generic Component Switch", htDni, "${label} Heater")
         if (htc) {
-            htc.sendEvent(name: "switch", value: (htmode == "OFF" ? "off" : "on"))
-            htc.sendEvent(name: "heaterMode", value: htmode)
+            htc.sendEvent(name: "switch",      value: (htmode == "OFF" ? "off" : "on"))
+            htc.sendEvent(name: "heaterMode",  value: htmode)
         }
     }
 
@@ -353,7 +356,7 @@ def processBody(String objnam, Map params) {
 def processPump(String objnam, Map params) {
     def label = params.SNAME ?: state.objectMap?.get(objnam)?.SNAME ?: objnam
     def rpm   = params.RPM
-    // Guard against malformed WATTS key seen in some firmware responses: {"":"WATTS"}
+    // Guard against malformed WATTS key seen in some firmware responses
     def watts = (params.WATTS && params.WATTS != "WATTS") ? params.WATTS : null
     def gpm   = params.GPM
 
@@ -365,7 +368,6 @@ def processPump(String objnam, Map params) {
         def c = getOrCreateChild("Generic Component Power Meter", "intellicenter-pump-watts-${objnam}", "${label} Watts")
         c?.sendEvent(name: "power", value: watts.toInteger(), unit: "W")
     }
-    // Only create GPM device if we have a non-zero value — avoids empty placeholder devices
     if (gpm != null && gpm.toInteger() > 0) {
         def c = getOrCreateChild("Generic Component Power Meter", "intellicenter-pump-gpm-${objnam}", "${label} GPM")
         c?.sendEvent(name: "power", value: gpm.toInteger(), unit: "GPM")
@@ -375,7 +377,6 @@ def processPump(String objnam, Map params) {
 }
 
 def processSensor(String objnam, Map params) {
-    // Skip POOL and SPA subtype sensors — identical to body temperatures already created
     def subtyp = params.SUBTYP ?: state.objectMap?.get(objnam)?.SUBTYP ?: ""
     if (subtyp == "POOL" || subtyp == "SPA") {
         if (debugMode) log.debug "Skipping body sensor (handled by body temp device): ${objnam} (${subtyp})"
@@ -406,6 +407,26 @@ def processChem(String objnam, Map params) {
 }
 
 // ============================================================
+// ===================== SET POINT COMMAND ===================
+// ============================================================
+// Called by the Pentair IntelliCenter Set Point child driver
+def setBodySetPoint(String childDni, Integer temp) {
+    def objnam = objnamFromDni(childDni)
+    if (!objnam) { log.warn "setBodySetPoint: no objnam for DNI ${childDni}"; return }
+
+    // Determine which key to set based on body subtype
+    def subtyp  = state.objectMap?.get(objnam)?.SUBTYP ?: ""
+    def setKey  = (subtyp == "SPA") ? "LOTMP" : "HITMP"
+
+    if (debugMode) log.debug "setBodySetPoint: ${objnam} ${setKey}=${temp}"
+
+    sendCommand([
+        command: "SetParamList",
+        objectList: [[objnam: objnam, params: [(setKey): temp.toString()]]]
+    ])
+}
+
+// ============================================================
 // ===================== CIRCUIT COMMANDS ====================
 // ============================================================
 def circuitOn(String childDni) {
@@ -417,7 +438,6 @@ def circuitOn(String childDni) {
         command: "SetParamList",
         objectList: [[objnam: objnam, params: [STATUS: "ON"]]]
     ])
-    // Optimistic update
     getChildDevice(childDni)?.sendEvent(name: "switch", value: "on")
 }
 
@@ -470,7 +490,7 @@ def componentRefresh(child) {
     if (!objnam) return
     sendCommand([
         command: "GetParamList",
-        objectList: [[objnam: objnam, keys: ["STATUS", "TEMP", "RPM", "WATTS", "GPM", "SALT", "SOURCE"]]]
+        objectList: [[objnam: objnam, keys: ["STATUS", "TEMP", "RPM", "WATTS", "GPM", "SALT", "SOURCE", "LOTMP", "HITMP"]]]
     ])
 }
 
@@ -495,3 +515,4 @@ def getOrCreateChild(String driver, String dni, String label) {
     }
     return child
 }
+
