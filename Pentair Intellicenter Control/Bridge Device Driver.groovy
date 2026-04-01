@@ -17,9 +17,10 @@ metadata {
     }
 
     preferences {
-        input "ipAddress",  "text",   title: "IntelliCenter IP",   required: true
-        input "portNumber", "number", title: "Port",               defaultValue: 6680
-        input "debugMode",  "bool",   title: "Debug Logging",      defaultValue: true
+        input "ipAddress",     "text",   title: "IntelliCenter IP",   required: true
+        input "portNumber",    "number", title: "Port",               defaultValue: 6680
+        input "debugMode",     "bool",   title: "Debug Logging",      defaultValue: true
+        input "endpointBase",  "text",   title: "App Endpoint Base",  required: false
     }
 }
 
@@ -319,6 +320,11 @@ def processBody(String objnam, Map params) {
     def dni  = "intellicenter-body-${objnam}"
     def body = getOrCreateChild("Pentair IntelliCenter Body", dni, label)
     if (!body) return
+
+    // Pass endpoint base URL so the tile can make local HTTP calls without a token
+    if (endpointBase) {
+        body.updateSetting("endpointBase", [value: endpointBase, type: "text"])
+    }
 
     if (status != null) {
         body.sendEvent(name: "switch",      value: (status == "ON" ? "on" : "off"))
