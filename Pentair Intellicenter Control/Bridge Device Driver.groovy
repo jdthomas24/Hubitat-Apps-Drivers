@@ -1,8 +1,8 @@
 metadata {
-    definition(
+   definition(
         name: "Pentair IntelliCenter Bridge",
         namespace: "intellicenter",
-        author: "jdthomas24",
+        author: "Custom Integration",
         description: "Bridge driver for Pentair IntelliCenter TCP connection"
     ) {
         capability "Initialize"
@@ -358,17 +358,13 @@ def processPump(String objnam, Map params) {
     def watts = (params.WATTS && params.WATTS != "WATTS") ? params.WATTS : null
     def gpm   = params.GPM
 
-    if (rpm != null) {
-        def c = getOrCreateChild("Generic Component Power Meter", "intellicenter-pump-rpm-${objnam}", "${label} RPM")
-        c?.sendEvent(name: "power", value: rpm.toInteger(), unit: "RPM")
-    }
-    if (watts != null) {
-        def c = getOrCreateChild("Generic Component Power Meter", "intellicenter-pump-watts-${objnam}", "${label} Watts")
-        c?.sendEvent(name: "power", value: watts.toInteger(), unit: "W")
-    }
-    if (gpm != null && gpm.toInteger() > 0) {
-        def c = getOrCreateChild("Generic Component Power Meter", "intellicenter-pump-gpm-${objnam}", "${label} GPM")
-        c?.sendEvent(name: "power", value: gpm.toInteger(), unit: "GPM")
+    // Single pump device using custom driver — shows RPM/Watts/GPM and exposes setSpeed command
+    def pumpDni = "intellicenter-pump-${objnam}"
+    def pump    = getOrCreateChild("Pentair IntelliCenter Pump", pumpDni, label)
+    if (pump) {
+        if (rpm   != null)                pump.sendEvent(name: "rpm",   value: rpm.toInteger(),   unit: "RPM")
+        if (watts != null)                pump.sendEvent(name: "watts", value: watts.toInteger(), unit: "W")
+        if (gpm   != null && gpm.toInteger() > 0) pump.sendEvent(name: "gpm", value: gpm.toInteger(), unit: "GPM")
     }
 
     if (debugMode) log.debug "Pump [${label}]: rpm=${rpm} watts=${watts} gpm=${gpm}"
@@ -418,6 +414,23 @@ def setBodySetPoint(String childDni, Integer temp) {
     sendCommand([
         command: "SetParamList",
         objectList: [[objnam: objnam, params: [LOTMP: temp.toString()]]]
+    ])
+}
+
+// ============================================================
+// ===================== PUMP SPEED COMMAND ==================
+// ============================================================
+// Called by the Pentair IntelliCenter Pump child driver
+def setPumpSpeed(String childDni, Integer rpm) {
+    def objnam = objnamFromDni(childDni)
+    if (!objnam) { log.warn "setPumpSpeed: no objnam for DNI ${childDni}"; return }
+
+    if (debugMode) log.debug "setPumpSpeed: ${objnam} RPM=${rpm}"
+
+    // RPM is set on the pump object directly for the active program
+    sendCommand([
+        command: "SetParamList",
+        objectList: [[objnam: objnam, params: [RPM: rpm.toString()]]]
     ])
 }
 
@@ -502,13 +515,16 @@ def objnamFromDni(String dni) {
 def getOrCreateChild(String driver, String dni, String label) {
     def child = getChildDevice(dni)
     if (!child) {
+        // Custom intellicenter drivers use "intellicenter" namespace; built-in Hubitat drivers use "hubitat"
+        def namespace = driver.startsWith("Pentair") ? "intellicenter" : "hubitat"
         try {
-            child = addChildDevice("hubitat", driver, dni, [label: label, isComponent: true])
-            if (debugMode) log.debug "Created child: ${label} (${dni})"
+            child = addChildDevice(namespace, driver, dni, [label: label, isComponent: true])
+            if (debugMode) log.debug "Created child: ${label} (${dni}) [${namespace}]"
         } catch (e) {
             log.warn "Could not create ${label}: ${e.message}"
         }
     }
     return child
+}
 }
 
