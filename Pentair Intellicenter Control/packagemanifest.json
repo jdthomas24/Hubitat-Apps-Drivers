@@ -22,6 +22,11 @@
       "name": "Heat Set Point Driver",
       "location": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/blob/main/Pentair%20Intellicenter%20Control/Heat%20Set%20Point%20Driver.groovy",
       "required": true
+    },
+    {
+      "name": "",
+      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/Pump%20Speed%20Driver.groovy",
+      "required": true
     }
   ]
 }
