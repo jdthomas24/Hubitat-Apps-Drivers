@@ -3,7 +3,7 @@ metadata {
         name: "Pentair IntelliCenter Body",
         namespace: "intellicenter",
         author: "jdthomas24",
-        description: "Combined pool/spa controller — on/off, current temp, set point, heater mode and source"
+        description: "Pool / Spa controller — on/off starts or stops the pump, with temp, set point and heat source control"
     ) {
         attribute "switch",          "string"
         attribute "temperature",     "number"
@@ -14,27 +14,33 @@ metadata {
         attribute "bodyStatus",      "string"
         attribute "pendingOn",       "string"
         attribute "tile",            "string"
-
-        attribute "heatLock", "string"   // "locked" or "unlocked"
+        attribute "heatLock",        "string"   // "locked" or "unlocked"
 
         command "refresh"
 
-        // ── Primary control ──────────────────────────────────
-        command "Turn On",          []   // Starts 10-second confirmation countdown — tap Confirm Turn On to complete
-        command "Confirm Turn On",  []   // Must be tapped within 10 seconds of Turn On or the request cancels
-        command "Turn Off",         []   // Immediately turns off — no confirmation required
+        // ── Pump On / Off ────────────────────────────────────────
+        // Turning On starts a 10-second confirmation window.
+        // This prevents accidental activation — tap Confirm to complete.
+        // Turning Off is immediate.
+        command "Turn On"           // Starts 10-second confirmation countdown
+        command "Confirm Turn On"   // Must tap within 10 seconds or request cancels
+        command "Turn Off"          // Immediate — no confirmation required
 
-        // ── Temperature ──────────────────────────────────────
-        command "Set Temperature",  [[name: "degrees*", type: "NUMBER", description: "Set point in °F (40–104)"]]
+        // ── Temperature set point ────────────────────────────────
+        command "Set Temperature",  [[name: "degrees*", type: "NUMBER", description: "Set point °F (40–104)"]]
 
-        // ── Heat source ──────────────────────────────────────
-        // Disabled when heat is locked — use Disable Heat / Enable Heat to control access
-        command "Set Heat Source",  [[name: "source*",  type: "ENUM",   description: "Heat source (locked out when heat is disabled)",
+        // ── Heat source ──────────────────────────────────────────
+        // Controls which heat source the body uses when running.
+        // Locked out when heat is disabled — use Enable Heat to restore.
+        command "Set Heat Source",  [[name: "source*", type: "ENUM",
+            description: "Heat source (locked when heat is disabled)",
             constraints: ["Off", "Heater", "Solar Only", "Solar Preferred", "Heat Pump", "Heat Pump Preferred"]]]
 
-        // ── Heat lockout ─────────────────────────────────────
-        command "Disable Heat"      // Locks out all heat source controls — pool/spa will still run normally
-        command "Enable Heat"       // Unlocks heat source controls
+        // ── Heat lockout ─────────────────────────────────────────
+        // Disable Heat prevents any heat source changes without stopping the pump.
+        // Useful for summer when you want the pump running but no heating.
+        command "Disable Heat"
+        command "Enable Heat"
     }
 
     preferences {
@@ -62,31 +68,40 @@ def updated() {
 }
 
 // ============================================================
-// ===================== ON / OFF WITH CONFIRMATION ==========
-// These are called by the app endpoint, not directly by users
+// ===================== PUMP ON / OFF =======================
+// on() — called by tile or app endpoint. Starts confirmation window.
+// confirmOn() — called by tile or app endpoint. Sends STATUS:ON to controller.
+// off() — called by tile or app endpoint. Sends STATUS:OFF to controller immediately.
 // ============================================================
 def on() {
-    if (device.currentValue("switch") == "on") return
+    if (device.currentValue("switch") == "on") {
+        if (debugMode) log.debug "on() called but body already on — ignoring"
+        return
+    }
     def timeout = (confirmTimeout ?: 10).toInteger()
     sendEvent(name: "pendingOn", value: "true")
     runIn(timeout, cancelOn)
+    if (debugMode) log.debug "on() — confirmation window open for ${timeout}s"
     debounceTile()
 }
 
 def confirmOn() {
-    if (device.currentValue("pendingOn") != "true") return
+    if (device.currentValue("pendingOn") != "true") {
+        log.warn "confirmOn() called but no pending request — ignoring"
+        return
+    }
     unschedule(cancelOn)
     sendEvent(name: "pendingOn",  value: "false")
     sendEvent(name: "switch",     value: "on")
     sendEvent(name: "bodyStatus", value: "On")
-    // Relay via app endpoint — no parent needed
-    def dni = device.deviceNetworkId
-    def base = endpointBase ?: ""
-    if (base) httpGet("${base}/body/${dni}/confirmbody") { }
+    // Relay STATUS:ON to controller via app → bridge
+    parent?.setBodyStatus(device.deviceNetworkId, "ON")
+    if (debugMode) log.debug "confirmOn() — STATUS:ON sent to controller"
     debounceTile()
 }
 
 def cancelOn() {
+    if (debugMode) log.debug "cancelOn() — confirmation window expired"
     sendEvent(name: "pendingOn", value: "false")
     debounceTile()
 }
@@ -96,21 +111,37 @@ def off() {
     sendEvent(name: "pendingOn", value: "false")
     sendEvent(name: "switch",     value: "off")
     sendEvent(name: "bodyStatus", value: "Off")
+    // Relay STATUS:OFF to controller via app → bridge
+    parent?.setBodyStatus(device.deviceNetworkId, "OFF")
+    if (debugMode) log.debug "off() — STATUS:OFF sent to controller"
     debounceTile()
 }
 
 // ============================================================
-// ===================== SET POINT ===========================
+// ===================== TEMPERATURE =========================
 // ============================================================
 def setHeatingSetpoint(temp) {
+    // Attribute update only — caller is responsible for also sending to controller
     sendEvent(name: "heatingSetpoint", value: temp.toInteger(), unit: "°F")
     debounceTile()
+}
+
+// Delta adjustments — called by app endpoints for tile +/− buttons
+def adjustSetPointUp() {
+    def current = (device.currentValue("heatingSetpoint") ?: 80).toInteger()
+    "Set Temperature"(current + 1)
+}
+
+def adjustSetPointDown() {
+    def current = (device.currentValue("heatingSetpoint") ?: 80).toInteger()
+    "Set Temperature"(current - 1)
 }
 
 // ============================================================
 // ===================== HEAT SOURCE =========================
 // ============================================================
 def setHeatSource(source) {
+    // Attribute update only — caller is responsible for also sending to controller
     sendEvent(name: "heatSource", value: source)
     debounceTile()
 }
@@ -131,7 +162,7 @@ def "Enable Heat"() {
 }
 
 // ============================================================
-// ===================== FRIENDLY COMMAND WRAPPERS ===========
+// ===================== COMMAND WRAPPERS ====================
 // ============================================================
 def "Turn On"()         { on() }
 def "Confirm Turn On"() { confirmOn() }
@@ -142,29 +173,27 @@ def "Set Temperature"(degrees) {
     def minT = (minSetPoint ?: 40).toInteger()
     def maxT = (maxSetPoint ?: 104).toInteger()
     if (temp < minT || temp > maxT) {
-        log.warn "Set point ${temp}°F out of range (${minT}–${maxT}°F) — ignoring"
+        log.warn "${device.displayName}: set point ${temp}°F out of range (${minT}–${maxT}°F) — ignoring"
         return
     }
-    def base = endpointBase ?: ""
-    def dni  = device.deviceNetworkId
-    if (base) {
-        httpGet("${base}/body/${dni}/setpoint/${temp}") { }
-    }
+    // Update attribute locally
     sendEvent(name: "heatingSetpoint", value: temp, unit: "°F")
+    // Send to controller via app → bridge
+    parent?.setBodySetPoint(device.deviceNetworkId, temp)
+    if (debugMode) log.debug "Set Temperature: ${temp}°F sent to controller"
     debounceTile()
 }
 
 def "Set Heat Source"(source) {
     if (device.currentValue("heatLock") == "locked") {
-        log.warn "${device.displayName} — heat is disabled, set heat source ignored. Use Enable Heat first."
+        log.warn "${device.displayName} — heat is disabled. Use Enable Heat first."
         return
     }
-    def base = endpointBase ?: ""
-    def dni  = device.deviceNetworkId
-    if (base) {
-        httpGet("${base}/body/${dni}/heatsource/${source.replaceAll(' ','_').toLowerCase()}") { }
-    }
+    // Update attribute locally
     sendEvent(name: "heatSource", value: source)
+    // Send to controller via app → bridge
+    parent?.setBodyHeatSource(device.deviceNetworkId, source)
+    if (debugMode) log.debug "Set Heat Source: ${source} sent to controller"
     debounceTile()
 }
 
@@ -185,6 +214,14 @@ def debounceTile() {
 
 // ============================================================
 // ===================== TILE RENDERER =======================
+// Renders an HTML dashboard tile with:
+//   • Arc gauge — current temp vs set point
+//   • Set point adjuster (+/−)
+//   • Heat source selector
+//   • On / Confirm / Off pump controls
+// All interactive controls fire fetch() calls to app endpoints.
+// The endpointBase preference must be set (happens automatically
+// when the app is saved / Done is clicked).
 // ============================================================
 def renderTile() {
     def sw       = device.currentValue("switch")           ?: "off"
@@ -195,18 +232,20 @@ def renderTile() {
     def htsrc    = device.currentValue("heatSource")       ?: "Off"
     def pending  = device.currentValue("pendingOn")        ?: "false"
     def heatLock = device.currentValue("heatLock")         ?: "unlocked"
-    def isOn       = (sw == "on")
-    def isPending  = (pending == "true")
-    def isLocked   = (heatLock == "locked")
-    def name     = device.displayName
-    def dni      = device.deviceNetworkId
-    def base     = endpointBase ?: ""
 
-    // URL builder
-    def url = { String cmd -> "${base}/body/${dni}/${cmd}" }
+    def isOn      = (sw == "on")
+    def isPending = (pending == "true")
+    def isLocked  = (heatLock == "locked")
+
+    def name = device.displayName
+    def dni  = device.deviceNetworkId
+    def base = endpointBase ?: ""
+
+    // ── URL helpers ──────────────────────────────────────────
+    def url    = { String cmd -> "${base}/body/${dni}/${cmd}" }
     def srcUrl = { String src -> "${base}/body/${dni}/heatsource/${src.replaceAll(' ','_').toLowerCase()}" }
 
-    // Arc geometry — 220° span, SVG 220x220, cx=110 cy=110 r=88
+    // ── Arc gauge geometry — 220° span, SVG 220x220, cx=110 cy=110 r=88 ──
     def minT     = (minSetPoint ?: 40).toDouble()
     def maxT     = (maxSetPoint ?: 104).toDouble()
     def arcStart = 125.0
@@ -237,30 +276,41 @@ def renderTile() {
     def tempPath  = arcPath(arcStart, tempAngle)
 
     def switchColor = isOn ? "#4ade80" : "#ef4444"
-    def switchLabel = isOn ? "● On"    : "● Off"
+    def switchLabel = isOn ? "● Pump Running" : "● Pump Off"
 
-    // Heat source buttons
+    // ── Heat source buttons ──────────────────────────────────
     def sources      = ["Off", "Heater", "Solar Only", "Solar Preferred", "Heat Pump", "Heat Pump Preferred"]
-    def sourceValues = ["OFF", "HEATER", "SOLAR ONLY", "SOLAR PREFERRED", "HEAT PUMP", "HEAT PUMP PREFERRED"]
-    def srcBtns = [sourceValues, sources].transpose().collect { val, lbl ->
-        def active   = (htsrc?.toUpperCase() == val) ? "ic-src-active" : ""
-        def fetchUrl = base ? "fetch('${srcUrl(val)}');" : ""
-        "<button class='ic-src ${active}' onclick=\"${fetchUrl}\">${lbl}</button>"
+    def srcBtns = sources.collect { lbl ->
+        def active    = (htsrc?.equalsIgnoreCase(lbl)) ? "ic-src-active" : ""
+        def disabled  = isLocked ? "ic-src-disabled" : ""
+        def fetchCall = (!isLocked && base) ? "fetch('${srcUrl(lbl)}');" : ""
+        "<button class='ic-src ${active} ${disabled}' onclick=\"${fetchCall}\" ${isLocked ? 'disabled' : ''}>${lbl}</button>"
     }.join("")
 
-    // Power button states
-    def btnOnBg      = isPending ? "#fbbf24" : (isOn ? "#166534" : "#15803d")
-    def btnOnColor   = isPending ? "#0a1628" : "#ffffff"
-    def btnOnLabel   = isPending ? "⏳ Waiting — Tap Confirm to Turn On" : (isOn ? "● Running — Tap to Restart" : "▶  Turn On")
+    // ── Heat lock banner (defined before html block) ─────────
+    def heatLockBanner = isLocked
+        ? "<div class='ic-heat-lock'>🔒 Heat Disabled — tap Enable Heat on device page to unlock</div>"
+        : ""
+
+    // ── No-base warning (shown if app hasn't been saved yet) ─
+    def noBase = !base
+        ? "<div style='color:#fbbf24;font-size:10px;text-align:center;margin-bottom:6px;'>⚠ Open app and click Done to enable controls</div>"
+        : ""
+
+    // ── Pump control button states ───────────────────────────
+    def btnOnBg    = isPending ? "#fbbf24" : (isOn ? "#166534" : "#15803d")
+    def btnOnColor = isPending ? "#0a1628" : "#ffffff"
+    def btnOnLabel = isPending
+        ? "⏳ Waiting — Tap Confirm below to start pump"
+        : (isOn ? "▶  Pump Running — Tap to Restart" : "▶  Turn Pump On")
     def btnOnFetch   = base ? "fetch('${url('on')}');"        : ""
-    def confirmDisp  = isPending ? "block"  : "none"
+    def confirmDisp  = isPending ? "block" : "none"
     def btnConfFetch = base ? "fetch('${url('confirmOn')}');" : ""
     def btnOffFetch  = base ? "fetch('${url('off')}');"       : ""
     def btnUpFetch   = base ? "fetch('${url('setpointup')}');"   : ""
     def btnDnFetch   = base ? "fetch('${url('setpointdown')}');" : ""
 
-    def noBase = !base ? "<div style='color:#fbbf24;font-size:10px;text-align:center;margin-bottom:6px;'>⚠ Open app and click Done to enable controls</div>" : ""
-
+    // ── HTML ─────────────────────────────────────────────────
     def html = """<style>
 .ic{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#112240;border-radius:20px;padding:16px 14px 14px;color:#fff;max-width:260px;margin:0 auto;box-sizing:border-box;}
 .ic *{box-sizing:border-box;}
@@ -285,14 +335,13 @@ def renderTile() {
 .ic-srcbtns{display:flex;flex-wrap:wrap;gap:4px;}
 .ic-src{padding:4px 8px;border-radius:7px;border:1.5px solid #2d4a6f;background:#0a1628;color:#64748b;font-size:9px;font-weight:600;cursor:pointer;}
 .ic-src-active{border-color:#38bdf8;color:#38bdf8;background:#0f3460;}
-.ic-pwrow{display:flex;gap:7px;margin-bottom:6px;}
-.ic-btn{flex:1;padding:10px 4px;border-radius:11px;border:none;font-size:12px;font-weight:700;cursor:pointer;}
-.ic-status{text-align:center;font-size:12px;font-weight:700;margin-top:6px;}
+.ic-src-disabled{opacity:0.35;cursor:not-allowed;}
 .ic-btn-on{width:100%;padding:14px;border-radius:12px;border:none;font-size:15px;font-weight:800;cursor:pointer;margin-bottom:8px;letter-spacing:.3px;box-shadow:0 4px 12px rgba(0,0,0,0.3);}
 .ic-btn-confirm{width:100%;padding:11px;border-radius:12px;border:2px solid #fbbf24;background:transparent;color:#fbbf24;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:8px;letter-spacing:.3px;}
 .ic-btn-off{width:100%;padding:10px;border-radius:12px;border:1.5px solid #374151;background:transparent;color:#6b7280;font-size:12px;font-weight:600;cursor:pointer;margin-bottom:6px;}
-.ic-src-disabled{opacity:0.35;cursor:not-allowed;}
+.ic-status{text-align:center;font-size:12px;font-weight:700;margin-top:6px;}
 .ic-heat-lock{background:#422006;border:1px solid #92400e;border-radius:8px;padding:6px 8px;font-size:9px;color:#fbbf24;margin-bottom:6px;text-align:center;}
+.ic-hint{font-size:9px;color:#475569;text-align:center;margin-top:4px;line-height:1.4;}
 </style>
 <div class='ic'>
   <div class='ic-title'>${name}</div>
@@ -314,7 +363,7 @@ def renderTile() {
   <div class='ic-row'>
     <div class='ic-box'><div class='ic-blbl'>Set Point</div><div class='ic-bval'>${Math.round(setpt)}°</div></div>
     <div class='ic-box'><div class='ic-blbl'>Max Temp</div><div class='ic-bval'>${Math.round(maxTemp)}°</div></div>
-    <div class='ic-box'><div class='ic-blbl'>Status</div><div class='ic-bval' style='color:${switchColor};'>${isOn ? "On" : "Off"}</div></div>
+    <div class='ic-box'><div class='ic-blbl'>Pump</div><div class='ic-bval' style='color:${switchColor};'>${isOn ? "On" : "Off"}</div></div>
   </div>
   <div class='ic-block'>
     <div class='ic-hdr'><span>Set Point</span><span style='color:#38bdf8;'>${Math.round(setpt)}°F</span></div>
@@ -330,10 +379,12 @@ def renderTile() {
     <div class='ic-srcbtns'>${srcBtns}</div>
   </div>
   <button class='ic-btn-on' style='background:${btnOnBg};color:${btnOnColor};' onclick="${btnOnFetch}">${btnOnLabel}</button>
-  <button class='ic-btn-confirm' style='display:${confirmDisp};' onclick="${btnConfFetch}">✓ Confirm Turn On</button>
-  <button class='ic-btn-off' onclick="${btnOffFetch}">■  Turn Off</button>
+  <button class='ic-btn-confirm' style='display:${confirmDisp};' onclick="${btnConfFetch}">✓ Confirm — Start Pump</button>
+  <button class='ic-btn-off' onclick="${btnOffFetch}">■  Turn Pump Off</button>
   <div class='ic-status' style='color:${switchColor};'>${switchLabel}</div>
+  <div class='ic-hint'>On/Off controls the pump. Heat source and set point are independent of pump state.</div>
 </div>"""
 
     sendEvent(name: "tile", value: html, displayed: false)
 }
+
