@@ -11,10 +11,10 @@ Controller and hub on the same network/subnet
 
 What It Creates
 Once connected, the integration automatically discovers and creates devices for:
-DeviceDescriptionPool / SpaOn/off switch for each body of waterPool Temp / Spa TempCurrent water temperaturePool Set Point / Spa Set PointTarget temperature with adjustable set pointPool Heater / Spa HeaterHeater on/off and modeCircuitsSwitch for each user circuit (Pool Light, Spa Light, Waterfall, etc.)FeaturesSwitch for each feature relay (Blower, Valves, etc.)VS RPMVariable speed pump RPMVS WattsVariable speed pump wattageAir SensorAir temperatureSolar SensorSolar temperature (if equipped)Salt ChlorinatorChlorinator on/off and salt level
+DeviceDescriptionPool / SpaCombined controller — on/off, current temp, set point, heater mode, heat sourceCircuitsSwitch for each user circuit (Pool Light, Spa Light, Waterfall, etc.)FeaturesSwitch for each feature relay (Air Blower, Motorized Valves, etc.)VS PumpVariable speed pump — RPM, watts, GPM, and speed controlAir SensorAir temperatureSolar SensorSolar temperature (if equipped)Salt ChlorinatorChlorinator on/off and salt level
 
 Installation
-Option A — Hubitat Package Manager (Recommended)
+Option A (Future Release) — Hubitat Package Manager
 
 Open Hubitat Package Manager
 Click Install
@@ -25,19 +25,25 @@ Follow the setup steps below
 
 Option B — Manual Install
 Install in this exact order — all drivers must exist before the app is set up.
-Step 1 — Install the Set Point Driver
+Step 1 — Install the Body Driver (new)
 
 Go to Drivers Code → New Driver
-Paste the contents of intellicenter-setpoint-driver.groovy
+Paste the contents of intellicenter-body-driver.groovy
 Click Save
 
-Step 2 — Install the Bridge Driver
+Step 2 — Install the Pump Driver (new)
+
+Go to Drivers Code → New Driver
+Paste the contents of intellicenter-pump-driver.groovy
+Click Save
+
+Step 3 — Install the Bridge Driver
 
 Go to Drivers Code → New Driver
 Paste the contents of intellicenter-bridge-driver.groovy
 Click Save
 
-Step 3 — Install the App
+Step 4 — Install the App
 
 Go to Apps Code → New App
 Paste the contents of intellicenter-app.groovy
@@ -57,20 +63,42 @@ Create a Bridge device in your device list
 Connect to your IntelliCenter
 Discover all equipment and create child devices
 
-Allow 10–15 seconds for all devices to appear after clicking Done.
+Allow 15–20 seconds for all devices to appear after clicking Done.
 
 Finding Your IntelliCenter IP
-The easiest way is to check your router's device list and look for a device named IntelliCenter or Pentair. You can also find it in the official Pentair IntelliCenter mobile app under Settings → Status → Network.
+Check your router's device list and look for a device named IntelliCenter or Pentair. You can also find it in the official Pentair IntelliCenter mobile app under Settings → Status → Network.
 
-Adjusting Set Points
-The Pool Set Point and Spa Set Point devices support reading and changing the target temperature directly from Hubitat:
+Pool and Spa Controller
+The Pool and Spa devices are combined controllers that appear under the IntelliCenter Bridge in your device list. Each device has:
+Current States (right side of device page):
 
-Open the set point device page
-Use the setHeatingSetpoint command and enter the desired temperature in °F
-The new set point is sent immediately to the controller
-The device will update automatically when the controller confirms the change
+Body Status — On / Off
+Temperature — current water temperature
+Heating Setpoint — active set point
+Max Set Temp — upper temperature limit
+Heater Mode — current heater mode
+Heat Source — active heat source
+A live visual tile showing the arc gauge, set point, and controls
 
-Set point limits (40–104°F by default) can be adjusted in the set point device preferences.
+Commands (left side of device page):
+
+Turn On — starts a 10 second confirmation countdown
+Confirm Turn On — must be tapped within 10 seconds to actually turn on, otherwise cancels automatically
+Turn Off — immediate, no confirmation required
+Set Temperature — enter a temperature in °F to change the set point
+Set Heat Source — choose from Off, Heater, Solar Only, Solar Preferred, Heat Pump, Heat Pump Preferred
+Refresh — request fresh data from the controller
+
+Dashboard Tile:
+Add the Pool or Spa device as an Attribute tile in your Hubitat dashboard and select the tile attribute. This renders a visual arc gauge showing current temp vs set point, with tap controls for set point, heat source, and on/off.
+
+Pump Control
+The VS pump appears as a single device showing RPM, watts, and GPM. To change pump speed:
+
+Open the pump device
+Use the setSpeed command and enter the target RPM (450–3450)
+The new speed is sent to the active pump program immediately
+
 
 Troubleshooting
 No devices appearing after setup
@@ -86,18 +114,18 @@ Open the Bridge device and click Initialize to force a reconnect
 Verify the IntelliCenter is powered on and reachable
 Confirm no firewall rules are blocking port 6680
 
+Pool or Spa device controls not working
+
+Go to Apps → Pentair IntelliCenter → click Done to refresh the endpoint configuration
+Open the Pool or Spa device → Preferences tab → confirm App Endpoint Base shows a URL like http://192.168.1.x/apps/api/123
+If it is blank, click Done in the app again
+
 A feature or circuit is missing
 
 Enable Debug Logging in the Bridge device preferences
 Click Initialize on the Bridge device and watch the logs
 Look for the missing device's object name (e.g. FTR01, C0003) in the log output
 If the object appears but is being skipped, note the OBJTYP and SUBTYP values and open a GitHub issue
-
-Set point not updating when changed from another app
-
-The integration subscribes to live push updates from the controller — set point changes made in the Pentair app or on the panel should reflect within a few seconds
-If the value appears stuck, click Refresh on the Bridge device to request a full state update
-If the set point child device was created before version 1.1.0, delete it manually and click Initialize on the Bridge — it will be recreated with the correct driver
 
 Duplicate devices appeared
 
@@ -115,8 +143,12 @@ Removing the Integration
 Go to Devices and delete the IntelliCenter Bridge device and all child devices
 Go to Apps and remove the Pentair IntelliCenter app instance
 Go to Drivers Code and delete Pentair IntelliCenter Bridge
-Go to Drivers Code and delete Pentair IntelliCenter Set Point
+Go to Drivers Code and delete Pentair IntelliCenter Body
+Go to Drivers Code and delete Pentair IntelliCenter Pump
 Go to Apps Code and delete Pentair IntelliCenter
+
+
+If upgrading from an earlier version, also delete Pentair IntelliCenter Set Point from Drivers Code — this driver has been retired and its functionality is now built into the Pool and Spa devices.
 
 
 Always delete devices before removing the app and driver code — Hubitat will not allow you to remove a driver that is still in use by a device.
@@ -125,7 +157,22 @@ Always delete devices before removing the app and driver code — Hubitat will n
 Notes
 
 The integration works entirely on your local network — no Pentair cloud account required
-Password-protected IntelliCenter controllers are not currently supported
 Compatible with Pentair IntelliCenter 1 (firmware 1.064+) and IntelliCenter 2 (firmware 3.006+)
-Pump GPM sensor is only created when the pump reports a non-zero GPM value
-Feature relays (e.g. blowers, motorized valves) are supported as of version 1.1.0
+Password-protected IntelliCenter controllers are not currently supported
+Pump GPM is only shown when the pump reports a non-zero GPM value
+Feature relays (blowers, motorized valves) are supported and appear as switch devices
+Currently in active development — not yet released to Hubitat Package Manager
+
+
+License
+This integration is provided as-is for personal use. Not affiliated with or endorsed by Pentair.
+
+Install Links
+Step 1 — Body Driver (install first):
+https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/intellicenter-body-driver.groovy
+Step 2 — Pump Driver:
+https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/intellicenter-pump-driver.groovy
+Step 3 — Bridge Driver:
+https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/intellicenter-bridge-driver.groovy
+Step 4 — Parent App (install last):
+https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/intellicenter-app.groovy
