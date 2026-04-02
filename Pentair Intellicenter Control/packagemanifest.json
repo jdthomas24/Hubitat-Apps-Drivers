@@ -15,17 +15,16 @@
   ],
   "drivers": [
     {
-      "name": "Bridge Device Driver",
-      "location": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/blob/main/Pentair%20Intellicenter%20Control/Bridge%20Device%20Driver.groovy",
+      "name": "Pool Body Driver",
+      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/Body%20Driver.groovy",
       "required": true
     },
     {
-      "name": "Heat Set Point Driver",
-      "location": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/blob/main/Pentair%20Intellicenter%20Control/Heat%20Set%20Point%20Driver.groovy",
-      "required": true
+      "name": "Device Bridge Driver",
+      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/Bridge%20Device%20Driver.groovy"
     },
     {
-      "name": "Pump Speed Driver",
+      "name": "Pump Control Driver",
       "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/Pump%20Speed%20Driver.groovy",
       "required": true
     }
