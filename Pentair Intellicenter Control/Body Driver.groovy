@@ -2,7 +2,7 @@ metadata {
     definition(
         name: "Pentair IntelliCenter Body",
         namespace: "intellicenter",
-        author: "Custom Integration",
+        author: "jdthomas24",
         description: "Combined pool/spa controller — on/off, current temp, set point, heater mode and source"
     ) {
         attribute "switch",          "string"
@@ -15,14 +15,26 @@ metadata {
         attribute "pendingOn",       "string"
         attribute "tile",            "string"
 
+        attribute "heatLock", "string"   // "locked" or "unlocked"
+
         command "refresh"
 
-        command "Turn On",          []
-        command "Confirm Turn On",  []
-        command "Turn Off",         []
+        // ── Primary control ──────────────────────────────────
+        command "Turn On",          []   // Starts 10-second confirmation countdown — tap Confirm Turn On to complete
+        command "Confirm Turn On",  []   // Must be tapped within 10 seconds of Turn On or the request cancels
+        command "Turn Off",         []   // Immediately turns off — no confirmation required
+
+        // ── Temperature ──────────────────────────────────────
         command "Set Temperature",  [[name: "degrees*", type: "NUMBER", description: "Set point in °F (40–104)"]]
-        command "Set Heat Source",  [[name: "source*",  type: "ENUM",   description: "Heat source",
+
+        // ── Heat source ──────────────────────────────────────
+        // Disabled when heat is locked — use Disable Heat / Enable Heat to control access
+        command "Set Heat Source",  [[name: "source*",  type: "ENUM",   description: "Heat source (locked out when heat is disabled)",
             constraints: ["Off", "Heater", "Solar Only", "Solar Preferred", "Heat Pump", "Heat Pump Preferred"]]]
+
+        // ── Heat lockout ─────────────────────────────────────
+        command "Disable Heat"      // Locks out all heat source controls — pool/spa will still run normally
+        command "Enable Heat"       // Unlocks heat source controls
     }
 
     preferences {
@@ -40,6 +52,7 @@ metadata {
 def installed() {
     log.info "IntelliCenter Body installed: ${device.displayName}"
     sendEvent(name: "pendingOn", value: "false")
+    sendEvent(name: "heatLock",  value: "unlocked")
     debounceTile()
 }
 
@@ -103,6 +116,21 @@ def setHeatSource(source) {
 }
 
 // ============================================================
+// ===================== HEAT LOCKOUT ========================
+// ============================================================
+def "Disable Heat"() {
+    log.info "${device.displayName} — heat disabled"
+    sendEvent(name: "heatLock", value: "locked")
+    debounceTile()
+}
+
+def "Enable Heat"() {
+    log.info "${device.displayName} — heat enabled"
+    sendEvent(name: "heatLock", value: "unlocked")
+    debounceTile()
+}
+
+// ============================================================
 // ===================== FRIENDLY COMMAND WRAPPERS ===========
 // ============================================================
 def "Turn On"()         { on() }
@@ -127,9 +155,12 @@ def "Set Temperature"(degrees) {
 }
 
 def "Set Heat Source"(source) {
+    if (device.currentValue("heatLock") == "locked") {
+        log.warn "${device.displayName} — heat is disabled, set heat source ignored. Use Enable Heat first."
+        return
+    }
     def base = endpointBase ?: ""
     def dni  = device.deviceNetworkId
-    def val  = source.toUpperCase()
     if (base) {
         httpGet("${base}/body/${dni}/heatsource/${source.replaceAll(' ','_').toLowerCase()}") { }
     }
@@ -156,18 +187,20 @@ def debounceTile() {
 // ===================== TILE RENDERER =======================
 // ============================================================
 def renderTile() {
-    def sw      = device.currentValue("switch")           ?: "off"
-    def temp    = (device.currentValue("temperature")     ?: 0).toDouble()
-    def setpt   = (device.currentValue("heatingSetpoint") ?: 0).toDouble()
-    def maxTemp = (device.currentValue("maxSetTemp")      ?: 104).toDouble()
-    def htmode  = device.currentValue("heaterMode")       ?: "—"
-    def htsrc   = device.currentValue("heatSource")       ?: "Off"
-    def pending = device.currentValue("pendingOn")        ?: "false"
-    def isOn      = (sw == "on")
-    def isPending = (pending == "true")
-    def name    = device.displayName
-    def dni     = device.deviceNetworkId
-    def base    = endpointBase ?: ""
+    def sw       = device.currentValue("switch")           ?: "off"
+    def temp     = (device.currentValue("temperature")     ?: 0).toDouble()
+    def setpt    = (device.currentValue("heatingSetpoint") ?: 0).toDouble()
+    def maxTemp  = (device.currentValue("maxSetTemp")      ?: 104).toDouble()
+    def htmode   = device.currentValue("heaterMode")       ?: "—"
+    def htsrc    = device.currentValue("heatSource")       ?: "Off"
+    def pending  = device.currentValue("pendingOn")        ?: "false"
+    def heatLock = device.currentValue("heatLock")         ?: "unlocked"
+    def isOn       = (sw == "on")
+    def isPending  = (pending == "true")
+    def isLocked   = (heatLock == "locked")
+    def name     = device.displayName
+    def dni      = device.deviceNetworkId
+    def base     = endpointBase ?: ""
 
     // URL builder
     def url = { String cmd -> "${base}/body/${dni}/${cmd}" }
@@ -216,10 +249,11 @@ def renderTile() {
     }.join("")
 
     // Power button states
-    def btnOnStyle   = isPending ? "background:#fbbf24;color:#0a1628;" : "background:#0f3460;color:#38bdf8;border:1.5px solid #38bdf8;"
-    def btnOnLabel   = isPending ? "Cancel" : "Turn On"
+    def btnOnBg      = isPending ? "#fbbf24" : (isOn ? "#166534" : "#15803d")
+    def btnOnColor   = isPending ? "#0a1628" : "#ffffff"
+    def btnOnLabel   = isPending ? "⏳ Waiting — Tap Confirm to Turn On" : (isOn ? "● Running — Tap to Restart" : "▶  Turn On")
     def btnOnFetch   = base ? "fetch('${url('on')}');"        : ""
-    def confirmDisp  = isPending ? "flex"   : "none"
+    def confirmDisp  = isPending ? "block"  : "none"
     def btnConfFetch = base ? "fetch('${url('confirmOn')}');" : ""
     def btnOffFetch  = base ? "fetch('${url('off')}');"       : ""
     def btnUpFetch   = base ? "fetch('${url('setpointup')}');"   : ""
@@ -253,7 +287,12 @@ def renderTile() {
 .ic-src-active{border-color:#38bdf8;color:#38bdf8;background:#0f3460;}
 .ic-pwrow{display:flex;gap:7px;margin-bottom:6px;}
 .ic-btn{flex:1;padding:10px 4px;border-radius:11px;border:none;font-size:12px;font-weight:700;cursor:pointer;}
-.ic-status{text-align:center;font-size:12px;font-weight:700;margin-top:2px;}
+.ic-status{text-align:center;font-size:12px;font-weight:700;margin-top:6px;}
+.ic-btn-on{width:100%;padding:14px;border-radius:12px;border:none;font-size:15px;font-weight:800;cursor:pointer;margin-bottom:8px;letter-spacing:.3px;box-shadow:0 4px 12px rgba(0,0,0,0.3);}
+.ic-btn-confirm{width:100%;padding:11px;border-radius:12px;border:2px solid #fbbf24;background:transparent;color:#fbbf24;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:8px;letter-spacing:.3px;}
+.ic-btn-off{width:100%;padding:10px;border-radius:12px;border:1.5px solid #374151;background:transparent;color:#6b7280;font-size:12px;font-weight:600;cursor:pointer;margin-bottom:6px;}
+.ic-src-disabled{opacity:0.35;cursor:not-allowed;}
+.ic-heat-lock{background:#422006;border:1px solid #92400e;border-radius:8px;padding:6px 8px;font-size:9px;color:#fbbf24;margin-bottom:6px;text-align:center;}
 </style>
 <div class='ic'>
   <div class='ic-title'>${name}</div>
@@ -287,13 +326,12 @@ def renderTile() {
   </div>
   <div class='ic-block'>
     <div class='ic-srclbl'>Heat Source</div>
+    ${heatLockBanner}
     <div class='ic-srcbtns'>${srcBtns}</div>
   </div>
-  <div class='ic-pwrow'>
-    <button class='ic-btn' style='${btnOnStyle}' onclick="${btnOnFetch}">${btnOnLabel}</button>
-    <button class='ic-btn' style='display:${confirmDisp};background:#fbbf24;color:#0a1628;' onclick="${btnConfFetch}">Confirm On</button>
-    <button class='ic-btn' style='background:#1e3a5f;color:#94a3b8;' onclick="${btnOffFetch}">Turn Off</button>
-  </div>
+  <button class='ic-btn-on' style='background:${btnOnBg};color:${btnOnColor};' onclick="${btnOnFetch}">${btnOnLabel}</button>
+  <button class='ic-btn-confirm' style='display:${confirmDisp};' onclick="${btnConfFetch}">✓ Confirm Turn On</button>
+  <button class='ic-btn-off' onclick="${btnOffFetch}">■  Turn Off</button>
   <div class='ic-status' style='color:${switchColor};'>${switchLabel}</div>
 </div>"""
 
