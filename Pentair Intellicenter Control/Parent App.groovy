@@ -8,14 +8,14 @@ definition(
     iconX2Url: "",
     version: "1.3.0"
 )
- 
+
 preferences {
     page(name: "mainPage")
 }
- 
+
 def mainPage() {
     dynamicPage(name: "mainPage", title: "IntelliCenter Setup", install: true, uninstall: true) {
- 
+
         section("<b>Controller</b>") {
             input "intellicenterIP",
                   "text",
@@ -28,7 +28,7 @@ def mainPage() {
                   defaultValue: 6680,
                   required: true
         }
- 
+
         section("<b>Options</b>") {
             input "debugMode",
                   "bool",
@@ -36,7 +36,7 @@ def mainPage() {
                   defaultValue: false
             label title: "App Name", required: false
         }
- 
+
         if (intellicenterIP) {
             section("<b>Status</b>") {
                 def bridge = getChildDevice("intellicenter-bridge-${app.id}")
@@ -50,7 +50,7 @@ def mainPage() {
         }
     }
 }
- 
+
 // ============================================================
 // ===================== MAPPINGS ============================
 // ============================================================
@@ -60,7 +60,7 @@ def mainPage() {
 // access is required or implied. The app ID in the URL is
 // the only gate; these endpoints are not reachable externally
 // unless the hub is explicitly port-forwarded (not recommended).
- 
+
 mappings {
     path("/body/:dni/on")                 { action: [GET: "endpointOn"] }
     path("/body/:dni/confirmOn")          { action: [GET: "endpointConfirmOn"] }
@@ -70,16 +70,16 @@ mappings {
     path("/body/:dni/setpointup")         { action: [GET: "endpointSetPointUp"] }
     path("/body/:dni/setpointdown")       { action: [GET: "endpointSetPointDown"] }
 }
- 
+
 // ── On / Off / Confirm ──────────────────────────────────────
- 
+
 def endpointOn() {
     def child = getChildDevice(params.dni)
     if (!child) { render status: 404, data: "Device not found"; return }
     child.on()
     render status: 200, data: "OK"
 }
- 
+
 def endpointConfirmOn() {
     def child = getChildDevice(params.dni)
     if (!child) { render status: 404, data: "Device not found"; return }
@@ -88,16 +88,16 @@ def endpointConfirmOn() {
     child.confirmOn()
     render status: 200, data: "OK"
 }
- 
+
 def endpointOff() {
     def child = getChildDevice(params.dni)
     if (!child) { render status: 404, data: "Device not found"; return }
     child.off()
     render status: 200, data: "OK"
 }
- 
+
 // ── Set Point ───────────────────────────────────────────────
- 
+
 def endpointSetPoint() {
     def child = getChildDevice(params.dni)
     if (!child) { render status: 404, data: "Device not found"; return }
@@ -107,23 +107,23 @@ def endpointSetPoint() {
     setBodySetPoint(params.dni, temp)
     render status: 200, data: "OK"
 }
- 
+
 def endpointSetPointUp() {
     def child = getChildDevice(params.dni)
     if (!child) { render status: 404, data: "Device not found"; return }
     child.adjustSetPointUp()
     render status: 200, data: "OK"
 }
- 
+
 def endpointSetPointDown() {
     def child = getChildDevice(params.dni)
     if (!child) { render status: 404, data: "Device not found"; return }
     child.adjustSetPointDown()
     render status: 200, data: "OK"
 }
- 
+
 // ── Heat Source ─────────────────────────────────────────────
- 
+
 def endpointHeatSource() {
     def child = getChildDevice(params.dni)
     if (!child) { render status: 404, data: "Device not found"; return }
@@ -138,7 +138,7 @@ def endpointHeatSource() {
     setBodyHeatSource(params.dni, source)
     render status: 200, data: "OK"
 }
- 
+
 // ============================================================
 // ===================== LIFECYCLE ===========================
 // ============================================================
@@ -146,16 +146,16 @@ def installed() {
     log.info "IntelliCenter app installed"
     initialize()
 }
- 
+
 def updated() {
     log.info "IntelliCenter app updated"
     initialize()
 }
- 
+
 def initialize() {
     def bridgeDni = "intellicenter-bridge-${app.id}"
     def bridge    = getChildDevice(bridgeDni)
- 
+
     if (!bridge) {
         log.info "Creating IntelliCenter bridge device"
         bridge = addChildDevice(
@@ -165,27 +165,27 @@ def initialize() {
             [label: "IntelliCenter Bridge", isComponent: false]
         )
     }
- 
+
     // Build the local endpoint base URL — no token needed.
     // Format: http://[hub-ip]/apps/api/[app-id]
     def hubIP        = location.hubs[0].localIP
     def endpointBase = "http://${hubIP}/apps/api/${app.id}"
- 
+
     bridge.updateSetting("ipAddress",     [value: intellicenterIP,           type: "text"])
     bridge.updateSetting("portNumber",    [value: intellicenterPort ?: 6680, type: "number"])
     bridge.updateSetting("debugMode",     [value: debugMode ?: false,        type: "bool"])
     // Bridge needs endpointBase so it can stamp it into body child devices as they are discovered
     bridge.updateSetting("endpointBase",  [value: endpointBase,              type: "text"])
- 
+
     // Small delay so updateSetting calls propagate before the bridge connects
     runIn(2, "initBridge")
 }
- 
+
 def initBridge() {
     def bridge = getChildDevice("intellicenter-bridge-${app.id}")
     bridge?.initialize()
 }
- 
+
 def uninstalled() {
     log.info "IntelliCenter app uninstalled"
     // Delete bridge children first (circuits, pumps, sensors)
@@ -198,14 +198,14 @@ def uninstalled() {
         try { deleteChildDevice(it.deviceNetworkId) } catch (e) { log.warn "Could not delete ${it.deviceNetworkId}: ${e.message}" }
     }
 }
- 
+
 // ============================================================
 // ===================== BODY DEVICE MANAGEMENT ==============
 // ============================================================
 // Body devices are created directly under the app (not the bridge)
 // to avoid Hubitat's grandchild device limitation and to keep
 // the app-endpoint relay chain direct (app ↔ body ↔ bridge).
- 
+
 def getOrCreateBodyDevice(String dni, String label) {
     def child = getChildDevice(dni)
     if (!child) {
@@ -224,33 +224,33 @@ def getOrCreateBodyDevice(String dni, String label) {
     child.updateSetting("endpointBase", [value: endpointBase, type: "text"])
     return child
 }
- 
+
 // ============================================================
 // ===================== BODY COMMAND RELAY ==================
 // ============================================================
 // Body devices call these on their parent (the app).
 // The app relays to the bridge, which sends to IntelliCenter.
- 
+
 def setBodyStatus(String bodyDni, String status) {
     def bridge = getChildDevice("intellicenter-bridge-${app.id}")
     bridge?.setBodyStatus(bodyDni, status)
 }
- 
+
 def setBodySetPoint(String bodyDni, Integer temp) {
     def bridge = getChildDevice("intellicenter-bridge-${app.id}")
     bridge?.setBodySetPoint(bodyDni, temp)
 }
- 
+
 def setBodyHeatSource(String bodyDni, String source) {
     def bridge = getChildDevice("intellicenter-bridge-${app.id}")
     bridge?.setBodyHeatSource(bodyDni, source)
 }
- 
+
 def componentRefresh(child) {
     def bridge = getChildDevice("intellicenter-bridge-${app.id}")
     bridge?.refreshBody(child.deviceNetworkId)
 }
- 
+
 // ============================================================
 // ===================== CIRCUIT COMMAND RELAY ===============
 // ============================================================
@@ -258,7 +258,7 @@ def childOn(String dni) {
     def bridge = getChildDevice("intellicenter-bridge-${app.id}")
     bridge?.circuitOn(dni)
 }
- 
+
 def childOff(String dni) {
     def bridge = getChildDevice("intellicenter-bridge-${app.id}")
     bridge?.circuitOff(dni)
