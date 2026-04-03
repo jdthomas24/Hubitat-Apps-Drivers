@@ -383,7 +383,16 @@ def processBody(String objnam, Map params) {
     if (htmode != null) {
         def modeMap = ["0":"Off","1":"Heater","2":"Solar Only","3":"Solar Preferred",
                        "4":"Heat Pump","5":"Heat Pump Preferred","OFF":"Off"]
-        body.sendEvent(name: "heaterMode", value: modeMap[htmode.toString()] ?: htmode)
+        def modeFriendly = modeMap[htmode.toString()] ?: htmode
+        body.sendEvent(name: "heaterMode", value: modeFriendly)
+
+        // When heating mode is Off, also clear heatSource so the tile reflects
+        // the true state even if HTSRC wasn't included in this push.
+        // HTMODE is the authoritative "is heating active" signal from the controller.
+        if (modeFriendly == "Off" && htsrc == null) {
+            body.sendEvent(name: "heatSource", value: "Off")
+            if (debugMode) log.debug "Body [${label}]: HTMODE=Off — clearing heatSource to Off"
+        }
     }
 
     if (htsrc != null) {
@@ -651,4 +660,3 @@ def getOrCreateChild(String driver, String dni, String label) {
     }
     return child
 }
-
