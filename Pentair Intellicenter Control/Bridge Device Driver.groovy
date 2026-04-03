@@ -18,10 +18,10 @@ metadata {
     }
 
     preferences {
-        input "ipAddress",    "text",   title: "IntelliCenter IP",  required: true
-        input "portNumber",   "number", title: "Port",              defaultValue: 6680
-        input "debugMode",    "bool",   title: "Debug Logging",     defaultValue: true
-        input "endpointBase", "text",   title: "App Endpoint Base", required: false
+        input "ipAddress",    "text",   title: "IntelliCenter IP Address",                             required: true
+        input "portNumber",   "number", title: "Port (IntelliCenter 1 = 6680 / IntelliCenter 2 = 6680 or 6681)", defaultValue: 6680
+        input "debugMode",    "bool",   title: "Debug Logging (auto-disables after 60 min)",           defaultValue: false
+        input "endpointBase", "text",   title: "App Endpoint Base (set automatically by app)",         required: false
     }
 }
 
@@ -30,6 +30,8 @@ metadata {
 // ============================================================
 def installed() {
     log.info "IntelliCenter Bridge installed"
+    // Initialize — if IP isn't set yet the connect() guard will handle it gracefully.
+    // The app will also call initialize() via runIn(2,"initBridge") after pushing settings.
     initialize()
 }
 
@@ -47,6 +49,12 @@ def initialize() {
     unschedule()
     // Watchdog every 2 minutes — reconnects if WebSocket has dropped
     schedule("0 0/2 * * * ?", reconnectIfNeeded)
+
+    // Auto-disable debug logging after 60 minutes to avoid log spam
+    if (debugMode) {
+        log.info "Debug logging enabled — will auto-disable in 60 minutes"
+        runIn(3600, disableDebugLogging)
+    }
 
     connect()
 }
@@ -73,14 +81,14 @@ def refresh() {
 // ============================================================
 def connect() {
     if (!ipAddress) {
-        log.warn "No IP address configured"
-        sendEvent(name: "connectionStatus", value: "Not Configured")
+        log.warn "No IP address configured — open the Pentair IntelliCenter app and click Done to apply settings"
+        sendEvent(name: "connectionStatus", value: "Not Configured — open app and click Done")
         return
     }
 
     try {
         def uri = "ws://${ipAddress}:${portNumber ?: 6680}"
-        if (debugMode) log.debug "Connecting via WebSocket to ${uri}"
+        log.info "Connecting to IntelliCenter at ${uri} (IC1 default port: 6680 / IC2 try: 6681 if connection fails)"
         interfaces.webSocket.connect(uri)
     } catch (e) {
         log.error "Connection failed: ${e.message}"
@@ -116,6 +124,11 @@ def reconnectIfNeeded() {
         log.info "Watchdog: reconnecting to IntelliCenter"
         connect()
     }
+}
+
+def disableDebugLogging() {
+    log.info "IntelliCenter Bridge: auto-disabling debug logging after 60 minutes"
+    device.updateSetting("debugMode", [value: false, type: "bool"])
 }
 
 // ============================================================
@@ -254,7 +267,7 @@ def subscribeToUpdates() {
 def handleParamList(json) {
     json?.objectList?.each { obj ->
         def name   = obj.objnam
-        def params = obj.params
+        def params = normaliseParams(obj.params)
         if (!name || !params) return
 
         if (!state.objectMap) state.objectMap = [:]
@@ -269,7 +282,7 @@ def handleParamList(json) {
 def handleNotifyList(json) {
     json?.objectList?.each { obj ->
         def name   = obj.objnam
-        def params = obj.params
+        def params = normaliseParams(obj.params)
         if (!name || !params) return
 
         if (!state.objectMap) state.objectMap = [:]
@@ -279,6 +292,27 @@ def handleNotifyList(json) {
 
         routeUpdate(name, params)
     }
+}
+
+// ── IC1 vs IC2 params normalisation ─────────────────────────
+// IC1 returns params as a Map:   { STATUS: "ON", TEMP: "82" }
+// IC2 may return params as a List: [{ key: "STATUS", value: "ON" }, ...]
+// Normalise both formats to a plain Map before processing.
+def normaliseParams(raw) {
+    if (raw == null) return null
+    // JsonSlurper returns LazyMap which is a Map — handle first
+    if (raw instanceof Map) return raw
+    // Some IC2 firmware versions return params as a List of {key, value} objects
+    if (raw instanceof List) {
+        def m = [:]
+        raw.each { entry ->
+            if (entry?.key != null) m[entry.key] = entry.value
+        }
+        return m.isEmpty() ? null : m
+    }
+    // Any other type — log and return null so it's visible if something unexpected arrives
+    log.warn "normaliseParams: unexpected params type ${raw?.getClass()?.simpleName} — skipping"
+    return null
 }
 
 def routeUpdate(String objnam, Map params) {
