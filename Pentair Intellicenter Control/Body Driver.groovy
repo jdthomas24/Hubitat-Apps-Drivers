@@ -15,20 +15,22 @@ metadata {
         attribute "tile",            "string"
         attribute "heatLock",        "string"
 
-        // ── The only commands a user needs to see ─────────────────
-        // Everything else is handled through the dashboard tile.
-        command "Pump On"      // Start the pump (no change to heat)
-        command "Pump Off"     // Stop the pump and heater completely
-        command "Heat Off"     // Stop heater only — pump keeps running
+        // ── The 4 commands a user ever needs ─────────────────────
+        // These appear prominently on the device page Commands tab.
+        // Language matches the tile exactly so there's no confusion.
+        command "Pump On"   // Start the pump (no change to heat)
+        command "Pump Off"  // Stop the pump AND the heater completely
+        command "Heat Off"  // Stop the heater only — pump keeps running
         command "refresh"
 
-        // ── Advanced — available for automations/Rules ─────────────
-        // Hidden from common commands view but still callable
-        command "Set Target Temp",   [[name: "degrees*", type: "NUMBER", description: "Target °F (40–104)"]]
-        command "Set Heat Source",   [[name: "source*",  type: "ENUM",
+        // ── Advanced — for automations and Rules only ─────────────
+        // Prefixed with "⚙ " so they sort last and look secondary.
+        // Still fully callable from Rules/automations.
+        command "⚙ Set Target Temp",  [[name: "degrees*", type: "NUMBER", description: "Target °F (40–104)"]]
+        command "⚙ Set Heat Source",  [[name: "source*",  type: "ENUM",
             constraints: ["Off", "Heater", "Solar Only", "Solar Preferred", "Heat Pump", "Heat Pump Preferred"]]]
-        command "Disable Heat"
-        command "Enable Heat"
+        command "⚙ Disable Heat"
+        command "⚙ Enable Heat"
     }
 
     preferences {
@@ -74,11 +76,14 @@ def off() {
 
 // ============================================================
 // ===================== HEAT OFF ============================
-// Stops the heater only. Pump keeps running.
+// Stops the heater. Pump keeps running.
+// Sends HTMODE=0 (disables active heating mode) to controller.
 // ============================================================
 def "Heat Off"() {
     if (debugMode) log.debug "${device.displayName}: Heat Off"
     sendEvent(name: "heatSource", value: "Off")
+    sendEvent(name: "heaterMode", value: "Off")
+    // setBodyHeatSource with "Off" sends HTMODE=0 + HTSRC=00000 to the controller
     parent?.setBodyHeatSource(device.deviceNetworkId, "Off")
     debounceTile()
 }
@@ -87,26 +92,24 @@ def "Heat Off"() {
 // ===================== TEMPERATURE =========================
 // ============================================================
 def setHeatingSetpoint(temp) {
-    // Local attribute update — callers handle controller write separately
     sendEvent(name: "heatingSetpoint", value: temp.toInteger(), unit: "°F")
     debounceTile()
 }
 
 def adjustSetPointUp() {
     def current = (device.currentValue("heatingSetpoint") ?: 80).toInteger()
-    "Set Target Temp"(current + 1)
+    "⚙ Set Target Temp"(current + 1)
 }
 
 def adjustSetPointDown() {
     def current = (device.currentValue("heatingSetpoint") ?: 80).toInteger()
-    "Set Target Temp"(current - 1)
+    "⚙ Set Target Temp"(current - 1)
 }
 
 // ============================================================
 // ===================== HEAT SOURCE =========================
 // ============================================================
 def setHeatSource(source) {
-    // Local attribute update — callers handle controller write separately
     sendEvent(name: "heatSource", value: source)
     debounceTile()
 }
@@ -114,13 +117,13 @@ def setHeatSource(source) {
 // ============================================================
 // ===================== HEAT LOCKOUT ========================
 // ============================================================
-def "Disable Heat"() {
+def "⚙ Disable Heat"() {
     log.info "${device.displayName} — heat disabled"
     sendEvent(name: "heatLock", value: "locked")
     debounceTile()
 }
 
-def "Enable Heat"() {
+def "⚙ Enable Heat"() {
     log.info "${device.displayName} — heat enabled"
     sendEvent(name: "heatLock", value: "unlocked")
     debounceTile()
@@ -132,7 +135,7 @@ def "Enable Heat"() {
 def "Pump On"()  { on() }
 def "Pump Off"() { off() }
 
-def "Set Target Temp"(degrees) {
+def "⚙ Set Target Temp"(degrees) {
     def temp = degrees.toInteger()
     def minT = (minSetPoint ?: 40).toInteger()
     def maxT = (maxSetPoint ?: 104).toInteger()
@@ -146,9 +149,9 @@ def "Set Target Temp"(degrees) {
     debounceTile()
 }
 
-def "Set Heat Source"(source) {
+def "⚙ Set Heat Source"(source) {
     if (device.currentValue("heatLock") == "locked") {
-        log.warn "${device.displayName} — heat is disabled. Use Enable Heat first."
+        log.warn "${device.displayName} — heat is disabled. Use ⚙ Enable Heat first."
         return
     }
     sendEvent(name: "heatSource", value: source)
@@ -174,26 +177,6 @@ def debounceTile() {
 
 // ============================================================
 // ===================== TILE RENDERER =======================
-//
-// Designed for a 5-year-old:
-//
-//  TOP — big temperature gauge, current vs target
-//
-//  HEAT SECTION:
-//    Step 1 — dial in target temp with big +/- buttons
-//    Step 2 — pick heat source (tap to highlight, no action yet)
-//    Step 3 — tap "🔥 Heat & Start Pump" — does everything at once
-//             (sets temp, sets source, starts pump)
-//    OR — tap "❄ Turn Heat Off" to stop heater, pump keeps going
-//
-//  PUMP SECTION:
-//    When OFF:  big green "▶ Start Pump (No Heat)" button
-//    When ON:   green status badge showing what it's doing
-//               + red "⏹ Stop Pump & Heat" button
-//
-// Heat source selector tapping ONLY highlights the selection.
-// It does NOT start the pump or send anything to the controller.
-// The "Heat & Start Pump" button is the only thing that sends.
 // ============================================================
 def renderTile() {
     def sw       = device.currentValue("switch")           ?: "off"
@@ -238,33 +221,32 @@ def renderTile() {
     def setptPath = arcPath(arcStart, setptAngle)
     def tempPath  = arcPath(arcStart, tempAngle)
 
-    // ── Fetch URLs ────────────────────────────────────────────
-    def btnUpFetch       = hasUrl ? "fetch('${url('setpointup')}');"   : ""
-    def btnDnFetch       = hasUrl ? "fetch('${url('setpointdown')}');" : ""
-    def heatStartFetch   = hasUrl ? "fetch('${url('on')}');"           : ""
-    def heatOffFetch     = hasUrl ? "fetch('${url('heatoff')}');"      : ""
-    def pumpOnFetch      = hasUrl ? "fetch('${url('on')}');"           : ""
-    def pumpOffFetch     = hasUrl ? "fetch('${url('off')}');"          : ""
+    // ── Fetch URLs ─────────────────────────────────────────────
+    def btnUpFetch   = hasUrl ? "fetch('${url('setpointup')}');"   : ""
+    def btnDnFetch   = hasUrl ? "fetch('${url('setpointdown')}');" : ""
+    def heatStartFetch = hasUrl ? "fetch('${url('on')}');"         : ""
+    def heatOffFetch   = hasUrl ? "fetch('${url('heatoff')}');"    : ""
+    def pumpOnFetch    = hasUrl ? "fetch('${url('on')}');"         : ""
+    def pumpOffFetch   = hasUrl ? "fetch('${url('off')}');"        : ""
 
-    // ── Heat source buttons ───────────────────────────────────
-    // Tapping a source button ONLY sends the heatsource command.
-    // It does NOT start the pump. User must then tap Heat & Start Pump.
+    // ── Heat source chips ──────────────────────────────────────
+    // Tapping selects the source on the controller only.
+    // Does NOT start the pump — user must tap Heat & Start Pump.
     def heatSources = ["Heater", "Solar Only", "Solar Preferred", "Heat Pump", "Heat Pump Preferred"]
     def srcBtns = heatSources.collect { lbl ->
         def active    = (htsrc?.equalsIgnoreCase(lbl)) ? "ic-src-active" : ""
         def disClass  = isLocked ? "ic-src-disabled" : ""
-        // Only sends heatsource — does NOT chain a pump start
         def fetchCall = (!isLocked && hasUrl) ? "fetch('${srcUrl(lbl)}');" : ""
         "<button class='ic-src ${active} ${disClass}' onclick=\"${fetchCall}\" ${isLocked ? 'disabled' : ''}>${lbl}</button>"
     }.join("")
 
-    // ── Heat section HTML ─────────────────────────────────────
+    // ── Heat section ───────────────────────────────────────────
     def heatSectionHtml
     if (isLocked) {
         heatSectionHtml = """
     <div class='ic-disabled-banner'>
       🔥 HEATING IS TURNED OFF
-      <div class='ic-disabled-sub'>Use "Enable Heat" command on device page to turn it back on</div>
+      <div class='ic-disabled-sub'>Use "⚙ Enable Heat" command on device page to restore</div>
     </div>"""
     } else {
         def heatBtnLabel = isHeating ? "🔥 Heating Active — Tap to Update" : "🔥 Heat &amp; Start Pump"
@@ -280,10 +262,10 @@ def renderTile() {
     <div class='ic-srcbtns'>${srcBtns}</div>
     <div class='ic-step' style='margin-top:10px;'>STEP 3 — Go!</div>
     <button class='${heatBtnClass}' onclick="${heatStartFetch}">${heatBtnLabel}</button>
-    <button class='ic-btn-heatoff' onclick="${heatOffFetch}">❄  Turn Heat Off  (pump keeps running)</button>"""
+    <button class='ic-btn-heatoff' onclick="${heatOffFetch}">❄  Heat Off  (pump keeps running)</button>"""
     }
 
-    // ── Pump section HTML ─────────────────────────────────────
+    // ── Pump section ───────────────────────────────────────────
     def pumpSectionHtml
     if (isOn) {
         def badge = isHeating
@@ -298,15 +280,14 @@ def renderTile() {
   <div class='ic-off-badge'>Everything is off</div>"""
     }
 
-    def noBase  = !base   ? "<div class='ic-warn'>⚠ Open app → click Done to activate controls</div>" : ""
-    def pumpClr = isOn    ? "#4ade80" : "#ef4444"
+    def noBase  = !base ? "<div class='ic-warn'>⚠ Open app → click Done to activate controls</div>" : ""
+    def pumpClr = isOn  ? "#4ade80" : "#ef4444"
 
     def html = """<style>
 .ic{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;border-radius:20px;padding:16px 14px 16px;color:#fff;max-width:260px;margin:0 auto;box-sizing:border-box;}
 .ic *{box-sizing:border-box;}
 .ic-title{font-size:16px;font-weight:800;text-align:center;margin-bottom:8px;color:#e2e8f0;letter-spacing:.3px;}
 .ic-warn{color:#fbbf24;font-size:10px;text-align:center;margin-bottom:6px;}
-/* gauge */
 .ic-gauge{position:relative;width:200px;height:128px;margin:0 auto 8px;}
 .ic-gauge svg{width:200px;height:200px;overflow:visible;}
 .ic-center{position:absolute;top:18px;left:50%;transform:translateX(-50%);text-align:center;pointer-events:none;white-space:nowrap;}
@@ -314,34 +295,26 @@ def renderTile() {
 .ic-bigtemp{font-size:42px;font-weight:800;line-height:1;color:#fff;}
 .ic-unit{font-size:11px;color:#94a3b8;}
 .ic-target{font-size:10px;color:#38bdf8;margin-top:2px;}
-/* stat row */
 .ic-row{display:flex;gap:6px;margin-bottom:10px;}
 .ic-box{flex:1;background:#1e3a5f;border-radius:10px;padding:7px 5px;text-align:center;}
 .ic-blbl{font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;}
 .ic-bval{font-size:13px;font-weight:700;color:#e2e8f0;}
-/* divider */
 .ic-div{border:none;border-top:1px solid #1e3a5f;margin:10px 0;}
-/* step labels */
 .ic-step{font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;}
-/* temp adjuster */
 .ic-adj-row{display:flex;align-items:center;gap:8px;margin-bottom:4px;}
 .ic-adj{width:44px;height:44px;border-radius:50%;border:none;background:#1e3a5f;color:#38bdf8;font-size:24px;font-weight:700;cursor:pointer;flex-shrink:0;line-height:1;}
 .ic-setval{flex:1;text-align:center;font-size:28px;font-weight:800;color:#38bdf8;}
-/* heat source chips */
 .ic-srcbtns{display:flex;flex-wrap:wrap;gap:5px;}
 .ic-src{padding:6px 10px;border-radius:8px;border:1.5px solid #1e3a5f;background:#0f172a;color:#64748b;font-size:10px;font-weight:600;cursor:pointer;}
 .ic-src-active{border-color:#f97316;color:#f97316;background:#1a0800;}
 .ic-src-disabled{opacity:0.3;cursor:not-allowed;}
-/* heat buttons */
 .ic-btn-heat{width:100%;padding:15px;border-radius:12px;border:none;background:#c2410c;color:#fff;font-size:15px;font-weight:800;cursor:pointer;margin-top:4px;box-shadow:0 4px 14px rgba(194,65,12,0.45);}
 .ic-btn-heat:active{background:#9a3412;}
 .ic-btn-heat-active{width:100%;padding:14px;border-radius:12px;border:2px solid #f97316;background:#1a0800;color:#f97316;font-size:14px;font-weight:800;cursor:pointer;margin-top:4px;}
 .ic-btn-heatoff{width:100%;padding:10px;border-radius:10px;border:1.5px solid #1e3a5f;background:transparent;color:#94a3b8;font-size:11px;font-weight:600;cursor:pointer;margin-top:6px;}
 .ic-btn-heatoff:active{border-color:#38bdf8;color:#38bdf8;}
-/* disabled banner */
 .ic-disabled-banner{background:#7f1d1d;border:2px solid #ef4444;border-radius:10px;padding:12px;text-align:center;font-size:14px;font-weight:900;color:#fca5a5;letter-spacing:1px;text-transform:uppercase;}
 .ic-disabled-sub{font-size:9px;font-weight:400;color:#f87171;margin-top:6px;letter-spacing:0;text-transform:none;line-height:1.4;}
-/* pump buttons */
 .ic-btn-pumponly{width:100%;padding:14px;border-radius:12px;border:2px solid #166534;background:#052e16;color:#4ade80;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:6px;}
 .ic-btn-pumponly:active{background:#14532d;}
 .ic-running-badge{width:100%;padding:11px;border-radius:12px;border:2px solid #16a34a;background:#052e16;color:#4ade80;font-size:12px;font-weight:800;text-align:center;margin-bottom:6px;line-height:1.3;}
@@ -354,9 +327,9 @@ def renderTile() {
   ${noBase}
   <div class='ic-gauge'>
     <svg viewBox='0 0 220 220'>
-      <path d='${trackPath}' stroke='#1e3a5f'  stroke-width='13' fill='none' stroke-linecap='round'/>
-      <path d='${setptPath}' stroke='#1d3460'  stroke-width='13' fill='none' stroke-linecap='round'/>
-      <path d='${tempPath}'  stroke='#1d6fbf'  stroke-width='13' fill='none' stroke-linecap='round'/>
+      <path d='${trackPath}' stroke='#1e3a5f' stroke-width='13' fill='none' stroke-linecap='round'/>
+      <path d='${setptPath}' stroke='#1d3460' stroke-width='13' fill='none' stroke-linecap='round'/>
+      <path d='${tempPath}'  stroke='#1d6fbf' stroke-width='13' fill='none' stroke-linecap='round'/>
       <circle cx='${dotX}' cy='${dotY}' r='7' fill='#38bdf8' stroke='#0f172a' stroke-width='3'/>
     </svg>
     <div class='ic-center'>
