@@ -3,7 +3,8 @@ metadata {
         name: "Pentair IntelliCenter Pump",
         namespace: "intellicenter",
         author: "jdthomas24",
-        description: "Variable speed pump — shows live RPM, watts and GPM, and allows speed control — v1.5.0"
+        description: "Variable speed pump — shows live RPM, watts and GPM, and allows speed control",
+        version: "1.5.0"
     ) {
         attribute "rpm",   "number"
         attribute "watts", "number"
@@ -63,6 +64,7 @@ def setSpeed(rpm) {
 def refresh() {
     parent?.componentRefresh(this)
 }
+
 
 
 
