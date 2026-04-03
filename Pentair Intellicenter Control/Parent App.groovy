@@ -90,9 +90,10 @@ def endpointOff() {
 def endpointHeatOff() {
     def child = getChildDevice(params.dni)
     if (!child) { render status: 404, data: "Device not found"; return }
-    // Stops heater only — pump keeps running
+    // "Heat Off" on the body driver calls parent?.setBodyHeatSource("Off")
+    // which reaches the bridge and sends HTMODE=0 + HTSRC=00000.
+    // No need to call setBodyHeatSource here separately.
     child."Heat Off"()
-    setBodyHeatSource(params.dni, "Off")
     render status: 200, data: "OK"
 }
 
