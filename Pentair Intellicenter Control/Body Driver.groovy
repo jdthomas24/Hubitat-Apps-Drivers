@@ -28,9 +28,6 @@ metadata {
         // Tile: "🔥 Heat & Start Pump" / "🔥 Heating Active — Tap to Update"
         command "🔥 Heat and Start Pump", [[name: "degrees*", type: "NUMBER", description: "Target temp °F — sets temp, heat source stays as last chosen, starts pump"]]
 
-        // Tile: "❄ Heat Off (pump keeps running)"
-        command "❄ Heat Off"          // Stops heater. Pump keeps running.
-
         // Tile: "▶ Start Pump Only (no heat)"
         command "▶ Start Pump Only"   // Starts pump, no change to heat
 
@@ -42,8 +39,15 @@ metadata {
         // ── Advanced — for automations / Rules only ────────────────
         command "⚙ Set Heat Source", [[name: "source*", type: "ENUM",
             constraints: ["Off", "Heater", "Solar Only", "Solar Preferred", "Heat Pump", "Heat Pump Preferred"]]]
-        command "⚙ Disable Heat"
-        command "⚙ Enable Heat"
+
+        // Heat Lock prevents any heat source changes — use to stop accidental
+        // heating activation. Pool/Spa pump still runs normally when locked.
+        // Unlock before trying to change heat settings.
+        command "⚙ Disable Heat Lock"  // LOCKS heat controls — prevents accidental heating
+        command "⚙ Enable Heat Lock"   // UNLOCKS heat controls — restores normal operation
+
+        // Heat Off without stopping pump — for advanced use / automations only
+        command "⚙ Heat Off Keep Pump Running"
     }
 
     preferences {
@@ -96,8 +100,9 @@ def "🔥 Heat and Start Pump"(degrees) {
     debounceTile()
 }
 
-// "❄ Heat Off" — stops the heater. Pump keeps running.
-def "❄ Heat Off"() {
+// "⚙ Heat Off Keep Pump Running" — stops heater, pump keeps running.
+// Advanced use only — available for automations.
+def "⚙ Heat Off Keep Pump Running"() {
     if (debugMode) log.debug "${device.displayName}: Heat Off"
     sendEvent(name: "heatSource", value: "Off")
     sendEvent(name: "heaterMode", value: "Off")
@@ -166,7 +171,7 @@ def adjustSetPointDown() {
 // ============================================================
 def "⚙ Set Heat Source"(source) {
     if (device.currentValue("heatLock") == "locked") {
-        log.warn "${device.displayName} — heat is disabled. Use ⚙ Enable Heat first."
+        log.warn "${device.displayName} — Heat Lock is active. Use '⚙ Enable Heat Lock' command to restore."
         return
     }
     sendEvent(name: "heatSource", value: source)
@@ -175,14 +180,14 @@ def "⚙ Set Heat Source"(source) {
     debounceTile()
 }
 
-def "⚙ Disable Heat"() {
-    log.info "${device.displayName} — heat disabled"
+def "⚙ Disable Heat Lock"() {
+    log.info "${device.displayName} — Heat Lock ENABLED (heat controls locked)"
     sendEvent(name: "heatLock", value: "locked")
     debounceTile()
 }
 
-def "⚙ Enable Heat"() {
-    log.info "${device.displayName} — heat enabled"
+def "⚙ Enable Heat Lock"() {
+    log.info "${device.displayName} — Heat Lock DISABLED (heat controls unlocked)"
     sendEvent(name: "heatLock", value: "unlocked")
     debounceTile()
 }
@@ -280,8 +285,8 @@ def renderTile() {
     if (isLocked) {
         heatSectionHtml = """
     <div class='ic-disabled-banner'>
-      🔥 HEATING IS TURNED OFF
-      <div class='ic-disabled-sub'>Use "⚙ Enable Heat" on the device Commands page to restore</div>
+      🔒 HEAT LOCK IS ON
+      <div class='ic-disabled-sub'>Go to device Commands page and tap "⚙ Enable Heat Lock" to restore heating</div>
     </div>"""
     } else {
         // Tile button label matches device page command exactly
