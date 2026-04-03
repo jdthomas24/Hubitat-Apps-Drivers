@@ -412,6 +412,10 @@ def processBody(String objnam, Map params) {
     }
 
     if (debugMode) log.debug "Body [${label}] (${subtyp}): status=${status} temp=${temp} setpt=${lotmp} maxTemp=${hitmp} htmode=${htmode} htsrc=${htsrc}"
+
+    // Always re-render the tile after any attribute update from the controller.
+    // sendEvent() alone does not trigger renderTile — debounceTile() must be called.
+    body.debounceTile()
 }
 
 def processPump(String objnam, Map params) {
