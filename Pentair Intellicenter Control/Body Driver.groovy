@@ -9,7 +9,8 @@ metadata {
         name: "Pentair IntelliCenter Body",
         namespace: "intellicenter",
         author: "jdthomas24",
-        description: "Pool / Spa controller — pump, temperature and heat control\nVersion: 1.5.0"
+        description: "Pool / Spa controller — pump, temperature and heat control",
+        version: "1.5.0"
     ) {
         attribute "switch",          "string"
         attribute "temperature",     "number"
