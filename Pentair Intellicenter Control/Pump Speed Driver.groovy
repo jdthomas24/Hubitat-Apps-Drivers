@@ -30,6 +30,16 @@ def installed() {
 
 def updated() {
     log.info "IntelliCenter Pump updated: ${device.displayName}"
+    unschedule(disableDebugLogging)
+    if (debugMode) {
+        log.info "${device.displayName}: debug logging enabled — will auto-disable in 60 minutes"
+        runIn(3600, disableDebugLogging)
+    }
+}
+
+def disableDebugLogging() {
+    log.info "${device.displayName}: auto-disabling debug logging after 60 minutes"
+    device.updateSetting("debugMode", [value: false, type: "bool"])
 }
 
 // ============================================================
@@ -64,7 +74,3 @@ def setSpeed(rpm) {
 def refresh() {
     parent?.componentRefresh(this)
 }
-
-
-
-
