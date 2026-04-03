@@ -61,12 +61,13 @@ def mainPage() {
 // not reachable externally unless the hub is port-forwarded.
 
 mappings {
-    path("/body/:dni/on")                 { action: [GET: "endpointOn"] }
-    path("/body/:dni/off")                { action: [GET: "endpointOff"] }
-    path("/body/:dni/setpoint/:temp")     { action: [GET: "endpointSetPoint"] }
-    path("/body/:dni/heatsource/:source") { action: [GET: "endpointHeatSource"] }
-    path("/body/:dni/setpointup")         { action: [GET: "endpointSetPointUp"] }
-    path("/body/:dni/setpointdown")       { action: [GET: "endpointSetPointDown"] }
+    path("/body/:dni/on")                        { action: [GET: "endpointOn"] }
+    path("/body/:dni/off")                       { action: [GET: "endpointOff"] }
+    path("/body/:dni/heatoff")                   { action: [GET: "endpointHeatOff"] }
+    path("/body/:dni/setpoint/:temp")            { action: [GET: "endpointSetPoint"] }
+    path("/body/:dni/heatsource/:source")        { action: [GET: "endpointHeatSource"] }
+    path("/body/:dni/setpointup")                { action: [GET: "endpointSetPointUp"] }
+    path("/body/:dni/setpointdown")              { action: [GET: "endpointSetPointDown"] }
 }
 
 // ── On / Off ────────────────────────────────────────────────
@@ -83,6 +84,15 @@ def endpointOff() {
     def child = getChildDevice(params.dni)
     if (!child) { render status: 404, data: "Device not found"; return }
     child.off()
+    render status: 200, data: "OK"
+}
+
+def endpointHeatOff() {
+    def child = getChildDevice(params.dni)
+    if (!child) { render status: 404, data: "Device not found"; return }
+    // Stops heater only — pump keeps running
+    child."Heat Off"()
+    setBodyHeatSource(params.dni, "Off")
     render status: 200, data: "OK"
 }
 
