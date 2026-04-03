@@ -602,7 +602,7 @@ def sendCommand(Map payload) {
 // ============================================================
 def componentRefresh(child) {
     if (!child?.deviceNetworkId) {
-        log.warn "componentRefresh: child or DNI is null — skipping"
+        if (debugMode) log.debug "componentRefresh: child or DNI not yet available — skipping (normal during install)"
         return
     }
     if (debugMode) log.debug "componentRefresh: ${child.displayName}"
@@ -651,3 +651,4 @@ def getOrCreateChild(String driver, String dni, String label) {
     }
     return child
 }
+
