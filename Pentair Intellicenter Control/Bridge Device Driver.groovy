@@ -301,14 +301,24 @@ def processCircuit(String objnam, Map params) {
     }
 
     // POOL and SPA subtypes are managed as body devices.
-    // Also check bodyObjnams — SUBTYP may be absent on partial NotifyList
-    // updates arriving before the body's own object has been fully populated.
+    // Three-layer guard to catch all timing scenarios:
+    //  1. SUBTYP is present in this update
+    //  2. bodyObjnams already registered (body processed first)
+    //  3. A body child device with this objnam already exists
     if (subtyp == "POOL" || subtyp == "SPA") {
-        if (debugMode) log.debug "Skipping body circuit (subtyp match): ${objnam} (${subtyp})"
+        if (debugMode) log.debug "Skipping body circuit (subtyp): ${objnam} (${subtyp})"
         return
     }
     if (state.bodyObjnams?.contains(objnam)) {
-        if (debugMode) log.debug "Skipping body circuit (objnam match): ${objnam}"
+        if (debugMode) log.debug "Skipping body circuit (bodyObjnams): ${objnam}"
+        return
+    }
+    // Check if a body device for this objnam already exists under the bridge
+    if (getChildDevice("intellicenter-body-${objnam}")) {
+        if (debugMode) log.debug "Skipping body circuit (body device exists): ${objnam}"
+        // Ensure it's tracked for future updates
+        if (!state.bodyObjnams) state.bodyObjnams = []
+        if (!state.bodyObjnams.contains(objnam)) state.bodyObjnams << objnam
         return
     }
 
@@ -621,3 +631,4 @@ def getOrCreateChild(String driver, String dni, String label) {
     }
     return child
 }
+
