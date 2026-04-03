@@ -69,6 +69,7 @@ mappings {
     path("/body/:dni/setpointup")                { action: [GET: "endpointSetPointUp"] }
     path("/body/:dni/setpointdown")              { action: [GET: "endpointSetPointDown"] }
     path("/body/:dni/heatandstart/:temp")        { action: [GET: "endpointHeatAndStart"] }
+    path("/body/:dni/heatandstart/:temp/:source") { action: [GET: "endpointHeatAndStartWithSource"] }
 }
 
 // ── On / Off ────────────────────────────────────────────────
@@ -88,7 +89,26 @@ def endpointHeatAndStart() {
         child.setHeatingSetpoint(temp)
         setBodySetPoint(params.dni, temp)
     }
-    // Start pump — heat source stays as previously set on controller
+    // Start pump
+    child.on()
+    render status: 200, data: "OK"
+}
+
+def endpointHeatAndStartWithSource() {
+    def child = getChildDevice(params.dni)
+    if (!child) { render status: 404, data: "Device not found"; return }
+    def temp = params.temp?.toInteger()
+    if (temp) {
+        child.setHeatingSetpoint(temp)
+        setBodySetPoint(params.dni, temp)
+    }
+    // Re-send the heat source so the controller re-activates heating
+    // (needed when controller cleared HTMODE externally)
+    def source = params.source?.replaceAll("_"," ")?.split(" ")?.collect{it.capitalize()}?.join(" ")
+    if (source && source != "Off") {
+        child.setHeatSource(source)
+        setBodyHeatSource(params.dni, source)
+    }
     child.on()
     render status: 200, data: "OK"
 }
