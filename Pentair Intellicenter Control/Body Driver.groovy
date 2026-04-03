@@ -1,9 +1,15 @@
+// ============================================================
+// Pentair IntelliCenter Body Driver
+// Version: 1.5.0
+// All files in this integration share this version number.
+// ============================================================
+
 metadata {
     definition(
         name: "Pentair IntelliCenter Body",
         namespace: "intellicenter",
         author: "jdthomas24",
-        description: "Pool / Spa controller — pump, temperature and heat control"
+        description: "Pool / Spa controller — v1.5.0"
     ) {
         attribute "switch",          "string"
         attribute "temperature",     "number"
@@ -15,19 +21,25 @@ metadata {
         attribute "tile",            "string"
         attribute "heatLock",        "string"
 
-        // ── The 4 commands a user ever needs ─────────────────────
-        // These appear prominently on the device page Commands tab.
-        // Language matches the tile exactly so there's no confusion.
-        command "Pump On"   // Start the pump (no change to heat)
-        command "Pump Off"  // Stop the pump AND the heater completely
-        command "Heat Off"  // Stop the heater only — pump keeps running
+        // ── Main controls — labels match the tile buttons exactly ──
+        // A user sees the same words on the device page and the tile.
+
+        // Tile: "🔥 Heat & Start Pump" / "🔥 Heating Active — Tap to Update"
+        command "🔥 Heat and Start Pump", [[name: "degrees*", type: "NUMBER", description: "Target temp °F — sets temp, heat source stays as last chosen, starts pump"]]
+
+        // Tile: "❄ Heat Off (pump keeps running)"
+        command "❄ Heat Off"          // Stops heater. Pump keeps running.
+
+        // Tile: "▶ Start Pump Only (no heat)"
+        command "▶ Start Pump Only"   // Starts pump, no change to heat
+
+        // Tile: "⏹ Stop Pump & Heat"
+        command "⏹ Stop Pump and Heat" // Stops everything
+
         command "refresh"
 
-        // ── Advanced — for automations and Rules only ─────────────
-        // Prefixed with "⚙ " so they sort last and look secondary.
-        // Still fully callable from Rules/automations.
-        command "⚙ Set Target Temp",  [[name: "degrees*", type: "NUMBER", description: "Target °F (40–104)"]]
-        command "⚙ Set Heat Source",  [[name: "source*",  type: "ENUM",
+        // ── Advanced — for automations / Rules only ────────────────
+        command "⚙ Set Heat Source", [[name: "source*", type: "ENUM",
             constraints: ["Off", "Heater", "Solar Only", "Solar Preferred", "Heat Pump", "Heat Pump Preferred"]]]
         command "⚙ Disable Heat"
         command "⚙ Enable Heat"
@@ -45,29 +57,65 @@ metadata {
 // ===================== LIFECYCLE ===========================
 // ============================================================
 def installed() {
-    log.info "IntelliCenter Body installed: ${device.displayName}"
+    log.info "IntelliCenter Body v1.5.0 installed: ${device.displayName}"
     sendEvent(name: "heatLock", value: "unlocked")
     debounceTile()
 }
 
 def updated() {
-    log.info "IntelliCenter Body updated: ${device.displayName}"
+    log.info "IntelliCenter Body v1.5.0 updated: ${device.displayName}"
     debounceTile()
 }
 
 // ============================================================
-// ===================== PUMP ON / OFF =======================
+// ===================== MAIN COMMANDS =======================
+// These match the tile buttons exactly — same label, same action.
 // ============================================================
-def on() {
-    if (debugMode) log.debug "${device.displayName}: Pump On"
+
+// "🔥 Heat and Start Pump" — sets target temp, keeps current heat
+// source, and starts the pump. One tap does everything.
+def "🔥 Heat and Start Pump"(degrees) {
+    def temp = degrees.toInteger()
+    def minT = (minSetPoint ?: 40).toInteger()
+    def maxT = (maxSetPoint ?: 104).toInteger()
+    if (temp < minT || temp > maxT) {
+        log.warn "${device.displayName}: ${temp}°F out of range (${minT}–${maxT}°F) — ignoring"
+        return
+    }
+    if (debugMode) log.debug "${device.displayName}: Heat and Start Pump — target ${temp}°F"
+    // Set target temp
+    sendEvent(name: "heatingSetpoint", value: temp, unit: "°F")
+    parent?.setBodySetPoint(device.deviceNetworkId, temp)
+    // Start pump if not already on
+    if (device.currentValue("switch") != "on") {
+        sendEvent(name: "switch",     value: "on")
+        sendEvent(name: "bodyStatus", value: "On")
+        parent?.setBodyStatus(device.deviceNetworkId, "ON")
+    }
+    debounceTile()
+}
+
+// "❄ Heat Off" — stops the heater. Pump keeps running.
+def "❄ Heat Off"() {
+    if (debugMode) log.debug "${device.displayName}: Heat Off"
+    sendEvent(name: "heatSource", value: "Off")
+    sendEvent(name: "heaterMode", value: "Off")
+    parent?.setBodyHeatSource(device.deviceNetworkId, "Off")
+    debounceTile()
+}
+
+// "▶ Start Pump Only" — starts pump, no change to heat settings.
+def "▶ Start Pump Only"() {
+    if (debugMode) log.debug "${device.displayName}: Start Pump Only"
     sendEvent(name: "switch",     value: "on")
     sendEvent(name: "bodyStatus", value: "On")
     parent?.setBodyStatus(device.deviceNetworkId, "ON")
     debounceTile()
 }
 
-def off() {
-    if (debugMode) log.debug "${device.displayName}: Pump Off"
+// "⏹ Stop Pump and Heat" — stops everything.
+def "⏹ Stop Pump and Heat"() {
+    if (debugMode) log.debug "${device.displayName}: Stop Pump and Heat"
     sendEvent(name: "switch",     value: "off")
     sendEvent(name: "bodyStatus", value: "Off")
     parent?.setBodyStatus(device.deviceNetworkId, "OFF")
@@ -75,48 +123,57 @@ def off() {
 }
 
 // ============================================================
-// ===================== HEAT OFF ============================
-// Stops the heater. Pump keeps running.
-// Sends HTMODE=0 (disables active heating mode) to controller.
+// ===================== INTERNAL METHODS ====================
+// Called by the bridge to update state from controller pushes,
+// and by tile endpoint handlers. NOT called directly by users.
 // ============================================================
-def "Heat Off"() {
-    if (debugMode) log.debug "${device.displayName}: Heat Off"
-    sendEvent(name: "heatSource", value: "Off")
-    sendEvent(name: "heaterMode", value: "Off")
-    // setBodyHeatSource with "Off" sends HTMODE=0 + HTSRC=00000 to the controller
-    parent?.setBodyHeatSource(device.deviceNetworkId, "Off")
+def on()  { "▶ Start Pump Only"() }
+def off() { "⏹ Stop Pump and Heat"() }
+
+def setHeatingSetpoint(temp) {
+    // Local attribute update only — used by bridge to push controller state
+    sendEvent(name: "heatingSetpoint", value: temp.toInteger(), unit: "°F")
     debounceTile()
 }
 
-// ============================================================
-// ===================== TEMPERATURE =========================
-// ============================================================
-def setHeatingSetpoint(temp) {
-    sendEvent(name: "heatingSetpoint", value: temp.toInteger(), unit: "°F")
+def setHeatSource(source) {
+    // Local attribute update only — used by bridge/endpoint to push controller state
+    sendEvent(name: "heatSource", value: source)
     debounceTile()
 }
 
 def adjustSetPointUp() {
     def current = (device.currentValue("heatingSetpoint") ?: 80).toInteger()
-    "⚙ Set Target Temp"(current + 1)
+    def maxT    = (maxSetPoint ?: 104).toInteger()
+    def next    = Math.min(current + 1, maxT)
+    sendEvent(name: "heatingSetpoint", value: next, unit: "°F")
+    parent?.setBodySetPoint(device.deviceNetworkId, next)
+    debounceTile()
 }
 
 def adjustSetPointDown() {
     def current = (device.currentValue("heatingSetpoint") ?: 80).toInteger()
-    "⚙ Set Target Temp"(current - 1)
-}
-
-// ============================================================
-// ===================== HEAT SOURCE =========================
-// ============================================================
-def setHeatSource(source) {
-    sendEvent(name: "heatSource", value: source)
+    def minT    = (minSetPoint ?: 40).toInteger()
+    def next    = Math.max(current - 1, minT)
+    sendEvent(name: "heatingSetpoint", value: next, unit: "°F")
+    parent?.setBodySetPoint(device.deviceNetworkId, next)
     debounceTile()
 }
 
 // ============================================================
-// ===================== HEAT LOCKOUT ========================
+// ===================== ADVANCED COMMANDS ===================
 // ============================================================
+def "⚙ Set Heat Source"(source) {
+    if (device.currentValue("heatLock") == "locked") {
+        log.warn "${device.displayName} — heat is disabled. Use ⚙ Enable Heat first."
+        return
+    }
+    sendEvent(name: "heatSource", value: source)
+    parent?.setBodyHeatSource(device.deviceNetworkId, source)
+    if (debugMode) log.debug "${device.displayName}: heat source '${source}' sent"
+    debounceTile()
+}
+
 def "⚙ Disable Heat"() {
     log.info "${device.displayName} — heat disabled"
     sendEvent(name: "heatLock", value: "locked")
@@ -130,40 +187,17 @@ def "⚙ Enable Heat"() {
 }
 
 // ============================================================
-// ===================== COMMAND WRAPPERS ====================
-// ============================================================
-def "Pump On"()  { on() }
-def "Pump Off"() { off() }
-
-def "⚙ Set Target Temp"(degrees) {
-    def temp = degrees.toInteger()
-    def minT = (minSetPoint ?: 40).toInteger()
-    def maxT = (maxSetPoint ?: 104).toInteger()
-    if (temp < minT || temp > maxT) {
-        log.warn "${device.displayName}: ${temp}°F out of range (${minT}–${maxT}°F) — ignoring"
-        return
-    }
-    sendEvent(name: "heatingSetpoint", value: temp, unit: "°F")
-    parent?.setBodySetPoint(device.deviceNetworkId, temp)
-    if (debugMode) log.debug "${device.displayName}: target temp ${temp}°F sent"
-    debounceTile()
-}
-
-def "⚙ Set Heat Source"(source) {
-    if (device.currentValue("heatLock") == "locked") {
-        log.warn "${device.displayName} — heat is disabled. Use ⚙ Enable Heat first."
-        return
-    }
-    sendEvent(name: "heatSource", value: source)
-    parent?.setBodyHeatSource(device.deviceNetworkId, source)
-    if (debugMode) log.debug "${device.displayName}: heat source '${source}' sent"
-    debounceTile()
-}
-
-// ============================================================
 // ===================== REFRESH =============================
+// Requests a fresh state snapshot for this body from the
+// controller. Guarded against being called before the device
+// is fully wired to its parent (bridge).
 // ============================================================
 def refresh() {
+    if (!device?.deviceNetworkId) {
+        log.warn "${device?.displayName ?: 'Body'}: refresh skipped — device not fully initialised"
+        return
+    }
+    if (debugMode) log.debug "${device.displayName}: refresh requested"
     parent?.componentRefresh(this)
 }
 
@@ -222,16 +256,16 @@ def renderTile() {
     def tempPath  = arcPath(arcStart, tempAngle)
 
     // ── Fetch URLs ─────────────────────────────────────────────
-    def btnUpFetch   = hasUrl ? "fetch('${url('setpointup')}');"   : ""
-    def btnDnFetch   = hasUrl ? "fetch('${url('setpointdown')}');" : ""
-    def heatStartFetch = hasUrl ? "fetch('${url('on')}');"         : ""
-    def heatOffFetch   = hasUrl ? "fetch('${url('heatoff')}');"    : ""
-    def pumpOnFetch    = hasUrl ? "fetch('${url('on')}');"         : ""
-    def pumpOffFetch   = hasUrl ? "fetch('${url('off')}');"        : ""
+    def btnUpFetch     = hasUrl ? "fetch('${url('setpointup')}');"   : ""
+    def btnDnFetch     = hasUrl ? "fetch('${url('setpointdown')}');" : ""
+    def heatStartFetch = hasUrl ? "fetch('${url('heatandstart/' + Math.round(setpt).toInteger())}');" : ""
+    def heatOffFetch   = hasUrl ? "fetch('${url('heatoff')}');"      : ""
+    def pumpOnFetch    = hasUrl ? "fetch('${url('on')}');"           : ""
+    def pumpOffFetch   = hasUrl ? "fetch('${url('off')}');"          : ""
 
     // ── Heat source chips ──────────────────────────────────────
-    // Tapping selects the source on the controller only.
-    // Does NOT start the pump — user must tap Heat & Start Pump.
+    // Tapping a chip sends the heatsource change to the controller.
+    // It does NOT start the pump — use "Heat & Start Pump" for that.
     def heatSources = ["Heater", "Solar Only", "Solar Preferred", "Heat Pump", "Heat Pump Preferred"]
     def srcBtns = heatSources.collect { lbl ->
         def active    = (htsrc?.equalsIgnoreCase(lbl)) ? "ic-src-active" : ""
@@ -246,9 +280,10 @@ def renderTile() {
         heatSectionHtml = """
     <div class='ic-disabled-banner'>
       🔥 HEATING IS TURNED OFF
-      <div class='ic-disabled-sub'>Use "⚙ Enable Heat" command on device page to restore</div>
+      <div class='ic-disabled-sub'>Use "⚙ Enable Heat" on the device Commands page to restore</div>
     </div>"""
     } else {
+        // Tile button label matches device page command exactly
         def heatBtnLabel = isHeating ? "🔥 Heating Active — Tap to Update" : "🔥 Heat &amp; Start Pump"
         def heatBtnClass = isHeating ? "ic-btn-heat-active" : "ic-btn-heat"
         heatSectionHtml = """
