@@ -7,7 +7,8 @@ definition(
     importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Battery%20Monitor%202.0/Raw%20Code/BatteryMonitor2.0.groovy",
     iconUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Tests%20-%20Groovy%20RAW/Battery%20Monitor%202.0%20BETA%20Tests",
     iconX2Url: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Battery%20Monitor%202.0/Raw%20Code/BatteryMonitor2.0.groovy",
-    version: "2.4.0 beta 26"
+    version: "2.4.0",
+    doNotFocus: true
 )
 
 def installed() {
@@ -80,9 +81,6 @@ def mainPage() {
                 title: "Battery Monitor 2.0",
                 install: true, uninstall: true) {
 
-        section("") {
-            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {}; window.scrollTo(0,0); document.addEventListener('DOMContentLoaded', function() { window.scrollTo(0,0); });</script>"
-        }
 
         def hasCustomName = settings?.customAppName?.trim()
         section("<b>App Display Name (optional)</b>", hideable: true, hidden: hasCustomName) {
@@ -337,9 +335,9 @@ def scheduledSummary() {
     def body = "${prefix}🔋 Battery Summary\n"
 
     def staleDevices = devList.findAll { isStale(it) }.collect {
-        def last  = getLastActivityTime(it)
-        def hours = last ? ((now() - last) / (1000 * 60 * 60)).toInteger() : 0
-        [device: it, name: it.displayName, hours: hours]
+        def last    = getLastActivityTime(it)
+        def timeAgo = last ? formatTimeAgo(last) : "unknown"
+        [device: it, name: it.displayName, timeAgo: timeAgo]
     }
 
     categories.each { cat, data ->
@@ -378,7 +376,7 @@ def scheduledSummary() {
             staleDevices.each { d ->
                 def info    = getCatalogBatteryInfo(d.device)
                 def infoStr = info ? " (${info})" : ""
-                body += "• ${d.name}${infoStr} — no activity for ${d.hours}h\n"
+                body += "• ${d.name}${infoStr} — no activity for ${d.timeAgo}\n"
             }
         } else {
             body += "None\n"
@@ -473,7 +471,6 @@ def updateBattery(device, level) {
             def smoothed   = alpha * clampedDrain + (1 - alpha) * prevSmooth
             data.samples << smoothed
             if (data.samples.size() > 10) data.samples.remove(0)
-
         }
 
         if (data.samples && data.samples.size() > 0) {
@@ -526,13 +523,12 @@ def detectReplacement(device, newLevel, oldLevel) {
 def updateTrend(device, drain) {
     if (!device || drain == null) return
 
-    def adjustedDrain = drain
     def devType = device?.getData()?.deviceType?.toLowerCase() ?: ""
-    if (devType.contains("lock") || devType.contains("sensor") || devType.contains("contact") ||
-        devType.contains("smoke") || devType.contains("carbonmonoxide")) {
-        adjustedDrain = adjustedDrain * 0.5
-    }
+    def isHighReporter = devType.contains("lock") || devType.contains("sensor") ||
+                         devType.contains("contact") || devType.contains("smoke") ||
+                         devType.contains("carbonmonoxide")
 
+    def adjustedDrain = isHighReporter ? drain * 0.5 : drain
     if (adjustedDrain > 5) adjustedDrain = 0.3
 
     def hist = state.history[device.id]
@@ -541,9 +537,14 @@ def updateTrend(device, drain) {
         if (avg > 3) adjustedDrain = Math.min(adjustedDrain, 1.0)
     }
 
-    if (adjustedDrain <= 0.3)     state.trend[device.id] = "Stable"
-    else if (adjustedDrain < 0.8) state.trend[device.id] = "Moderate"
-    else                          state.trend[device.id] = "Heavy Drain"
+    // Relax thresholds for high-reporter device types so normal
+    // lock/sensor drain does not falsely trigger Heavy Drain
+    def stableThreshold   = isHighReporter ? 0.6 : 0.3
+    def moderateThreshold = isHighReporter ? 1.5 : 0.8
+
+    if (adjustedDrain <= stableThreshold)       state.trend[device.id] = "Stable"
+    else if (adjustedDrain < moderateThreshold) state.trend[device.id] = "Moderate"
+    else                                        state.trend[device.id] = "Heavy Drain"
 }
 
 // ============================================================
@@ -650,7 +651,15 @@ def formatTimeAgo(ts) {
     ts = safeTime(ts)
     def diffMs = now() - ts
     def mins   = (diffMs / (1000 * 60)).toInteger()
-    return mins < 60 ? "${mins}m ago" : "${(mins / 60).toInteger()}h ago"
+    def hours  = (diffMs / (1000 * 60 * 60)).toInteger()
+    def days   = (diffMs / (1000 * 60 * 60 * 24)).toInteger()
+    def weeks  = (days / 7).toInteger()
+    def months = (days / 30).toInteger()
+    if (months >= 1) return "${months}mo ago"
+    if (weeks  >= 1) return "${weeks}w ago"
+    if (days   >= 1) return "${days}d ago"
+    if (hours  >= 1) return "${hours}h ago"
+    return "${mins}m ago"
 }
 
 // ============================================================
@@ -727,9 +736,6 @@ def logReplacement(device, newLevel, manual = false) {
 def summaryPage() {
     dynamicPage(name: "summaryPage", title: "Battery Summary", install: false) {
 
-        section("") {
-            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {}; window.scrollTo(0,0); document.addEventListener('DOMContentLoaded', function() { window.scrollTo(0,0); });</script>"
-        }
 
         if (!state.history || !autoDevices || autoDevices.size() == 0) {
             section("Setup Required") {
@@ -844,8 +850,7 @@ def summaryPage() {
                 def staleTag = ""
                 if (stale && lastActivity) {
                     try {
-                        def hours = ((now() - safeTime(lastActivity)) / (1000 * 60 * 60)).toInteger()
-                        staleTag = " ⚠️ Stale (${hours}h)"
+                        staleTag = " ⚠️ Stale (${formatTimeAgo(safeTime(lastActivity))})"
                     } catch (e) {
                         log.warn "summaryPage: Error building stale tag for ${device.displayName}: ${e.message}"
                     }
@@ -879,10 +884,6 @@ def summaryPage() {
 
             table += "</table>"
 
-            // FIX: Wrap table in a horizontally scrollable container.
-            // Without this, wide tables clip off-screen in portrait mode on mobile.
-            // overflow-x:auto enables horizontal scroll; -webkit-overflow-scrolling:touch
-            // ensures smooth momentum scrolling in the Hubitat iOS app.
             paragraph "<div style='overflow-x:auto; -webkit-overflow-scrolling:touch;'>${table}</div>"
         }
     }
@@ -894,9 +895,6 @@ def summaryPage() {
 def trendsPage() {
     dynamicPage(name: "trendsPage", title: "Battery Trends", install: false) {
 
-        section("") {
-            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {}; window.scrollTo(0,0); document.addEventListener('DOMContentLoaded', function() { window.scrollTo(0,0); });</script>"
-        }
 
         section("") {
             href "forceScanPage", title: "🔄 Force Scan Now", description: "Tap to immediately read battery levels from all monitored devices"
@@ -957,7 +955,6 @@ def trendsPage() {
 
             table += "</table>"
 
-            // FIX: Horizontally scrollable wrapper for portrait mode on mobile.
             paragraph "<div style='overflow-x:auto; -webkit-overflow-scrolling:touch;'>${table}</div>"
         }
     }
@@ -969,9 +966,6 @@ def trendsPage() {
 def historyPage() {
     dynamicPage(name: "historyPage", title: "Battery Replacement History", install: false) {
 
-        section("") {
-            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {}; window.scrollTo(0,0); document.addEventListener('DOMContentLoaded', function() { window.scrollTo(0,0); });</script>"
-        }
 
         section("") {
             if (!state.replacements || state.replacements.size() == 0) {
@@ -1007,7 +1001,6 @@ def historyPage() {
 
             table += "</table>"
 
-            // FIX: Horizontally scrollable wrapper for portrait mode on mobile.
             paragraph "<div style='overflow-x:auto; -webkit-overflow-scrolling:touch;'>${table}</div>"
             paragraph "<b>Legend:</b> <span style='color:green;'>A</span> = Automatic, <span style='color:blue;'>M</span> = Manual"
         }
@@ -1026,9 +1019,6 @@ def deleteHistoryPage() {
     app.updateSetting("confirmEntryDelete", [value: false, type: "bool"])
 
     dynamicPage(name: "deleteHistoryPage", title: "Delete a History Entry", install: false) {
-        section("") {
-            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {}; window.scrollTo(0,0); document.addEventListener('DOMContentLoaded', function() { window.scrollTo(0,0); });</script>"
-        }
         if (!state.replacements || state.replacements.size() == 0) {
             section() { paragraph "No replacement history to delete." }
         } else {
@@ -1060,9 +1050,6 @@ def deleteHistoryPage() {
 // ============================================================
 def deleteHistoryConfirmPage() {
     dynamicPage(name: "deleteHistoryConfirmPage", title: "Delete Entry", install: false) {
-        section("") {
-            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {}; window.scrollTo(0,0); document.addEventListener('DOMContentLoaded', function() { window.scrollTo(0,0); });</script>"
-        }
         section("<b>Result</b>") {
             if (!confirmEntryDelete) {
                 paragraph "⚠️ Deletion cancelled — confirm checkbox was not checked."
@@ -1097,9 +1084,6 @@ def manualReplacementPage() {
     app.updateSetting("replaceConfirmManual", [value: false, type: "bool"])
 
     dynamicPage(name: "manualReplacementPage", title: "Manual Battery Replacement", install: false) {
-        section("") {
-            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {}; window.scrollTo(0,0); document.addEventListener('DOMContentLoaded', function() { window.scrollTo(0,0); });</script>"
-        }
         section("<b>Select Devices</b>") {
             if (!devList || devList.size() == 0) {
                 paragraph "⚠ No battery devices available. Please select devices on the main page first."
@@ -1131,9 +1115,6 @@ def manualReplacementConfirmPage() {
     def devList = autoDevices ?: []
 
     dynamicPage(name: "manualReplacementConfirmPage", title: "Confirm Replacement", install: false) {
-        section("") {
-            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {}; window.scrollTo(0,0); document.addEventListener('DOMContentLoaded', function() { window.scrollTo(0,0); });</script>"
-        }
         section("<b>Replacement Registered</b>") {
             if (replaceDevicesManual && replaceConfirmManual) {
                 def successCount = 0
@@ -1191,9 +1172,6 @@ def manualReplacementConfirmPage() {
 // ============================================================
 def sendNotificationPage() {
     dynamicPage(name: "sendNotificationPage", title: "Send Notification", install: false) {
-        section("") {
-            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {}; window.scrollTo(0,0); document.addEventListener('DOMContentLoaded', function() { window.scrollTo(0,0); });</script>"
-        }
 
         def devList      = autoDevices ?: []
         def hasDevices   = devList.size() > 0
@@ -1257,9 +1235,6 @@ def forceScanPage() {
     log.debug "Manual battery scan triggered by user"
 
     dynamicPage(name: "forceScanPage", title: "Force Scan", install: false) {
-        section("") {
-            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {}; window.scrollTo(0,0); document.addEventListener('DOMContentLoaded', function() { window.scrollTo(0,0); });</script>"
-        }
         section("<b>Scan Complete</b>") {
             def devList = autoDevices ?: []
             def count   = devList.size()
@@ -1278,9 +1253,6 @@ def forceScanPage() {
 def batteryCatalogPage() {
     dynamicPage(name: "batteryCatalogPage", title: "🔋 Battery Catalog", install: false) {
 
-        section("") {
-            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {}; window.scrollTo(0,0); document.addEventListener('DOMContentLoaded', function() { window.scrollTo(0,0); });</script>"
-        }
 
         def devList = (autoDevices ?: []).sort { a, b -> a.displayName.trim() <=> b.displayName.trim() }
 
@@ -1290,15 +1262,19 @@ def batteryCatalogPage() {
         }
 
         def standardTypes = [
-            "AA":     ["1", "2", "3", "4", "6", "8"],
-            "AAA":    ["1", "2", "3", "4", "6", "8"],
-            "CR2":    ["1", "2"],
-            "CR2016": ["1", "2"],
-            "CR2032": ["1", "2"],
-            "CR2430": ["1", "2"],
-            "CR2450": ["1"],
-            "CR123A": ["1", "2"],
-            "9V":     ["1"]
+            "AA":       ["1", "2", "3", "4", "6", "8"],
+            "AAA":      ["1", "2", "3", "4", "6", "8"],
+            "CR2":      ["1", "2"],
+            "CR1632":   ["1"],
+            "CR2016":   ["1", "2"],
+            "CR2032":   ["1", "2"],
+            "CR2430":   ["1", "2"],
+            "CR2450":   ["1", "2"],
+            "CR2477":   ["1"],
+            "CR123A":   ["1", "2"],
+            "9V":       ["1"],
+            "ER14250":  ["1", "2"],
+            "LS14250":  ["1", "2"]
         ]
         def rechargeableTypes = [
             "Rechargeable AA":  ["1", "2", "3", "4", "6", "8"],
@@ -1364,13 +1340,6 @@ def batteryCatalogPage() {
 def infoPage(Map params = [:]) {
     dynamicPage(name: "infoPage", title: "App Guide & Reference", install: false) {
 
-        section("") {
-            paragraph rawHtml: true, "<script>focusOnFirstEmptyTextInput = function() {}; window.scrollTo(0,0); document.addEventListener('DOMContentLoaded', function() { window.scrollTo(0,0); });</script>"
-        }
-
-        section("") {
-            paragraph rawHtml: true, "<div style='background-color:#e8f0fe; padding:6px 10px; border-radius:4px; font-weight:bold;'>📊 Understanding Your Data</div>"
-        }
 
         section("<b>🔑 Color & Icon Legend</b>") {
             paragraph rawHtml: true, "<div style='background-color:#f8f8f8; border:1px solid #dddddd; border-radius:6px; padding:10px; margin-bottom:4px;'>Battery level colors reflect current charge percentage. " +
@@ -1498,4 +1467,3 @@ def infoPage(Map params = [:]) {
         }
     }
 }
-
