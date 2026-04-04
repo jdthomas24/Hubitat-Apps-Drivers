@@ -9,7 +9,7 @@ metadata {
         namespace: "intellicenter",
         author: "jdthomas24",
         description: "Variable speed pump — RPM, watts, GPM and water temperature display",
-        version: "1.5.0"
+        version: "1.5.1"
     ) {
         attribute "rpm",         "number"
         attribute "watts",       "number"
