@@ -410,6 +410,16 @@ def processBody(String objnam, Map params) {
 
     if (debugMode) log.debug "Body [${label}] (${subtyp}): status=${status} temp=${temp} setpt=${lotmp} htmode=${htmode} htsrc=${htsrc}"
 
+    // Push water temperature to all pump devices so their tiles stay current
+    if (temp != null) {
+        getChildDevices()
+            .findAll { it.deviceNetworkId.startsWith("intellicenter-pump-") }
+            .each { pump ->
+                pump.sendEvent(name: "temperature", value: temp.toInteger(), unit: "°F")
+                pump.debounceTile()
+            }
+    }
+
     body.debounceTile()
 }
 
@@ -428,6 +438,7 @@ def processPump(String objnam, Map params) {
         if (gpm   != null && gpm.toInteger() > 0) pump.sendEvent(name: "gpm",   value: gpm.toInteger(),   unit: "GPM")
     }
     if (debugMode) log.debug "Pump [${label}]: rpm=${rpm} watts=${watts} gpm=${gpm}"
+    if (pump) pump.debounceTile()
 }
 
 def processSensor(String objnam, Map params) {
