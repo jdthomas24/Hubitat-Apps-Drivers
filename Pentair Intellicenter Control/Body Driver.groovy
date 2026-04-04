@@ -1,6 +1,6 @@
 // ============================================================
 // Pentair IntelliCenter Body Driver
-// Version: 1.5.1
+// Version: 1.5.0
 // All files in this integration share this version number.
 // ============================================================
 
@@ -10,7 +10,7 @@ metadata {
         namespace: "intellicenter",
         author: "jdthomas24",
         description: "Pool / Spa controller — pump, temperature and heat control",
-        version: "1.5.0"
+        version: "1.5.1"
     ) {
         attribute "switch",          "string"
         attribute "temperature",     "number"
@@ -21,6 +21,9 @@ metadata {
         attribute "bodyStatus",      "string"
         attribute "tile",            "string"
         attribute "heatLock",        "string"
+        attribute "pumpRpm",         "number"
+        attribute "pumpWatts",       "number"
+        attribute "pumpGpm",         "number"
 
         // ── Main controls — labels match the tile buttons exactly ──
         // A user sees the same words on the device page and the tile.
@@ -242,6 +245,9 @@ def debounceTile() {
 // ============================================================
 def renderTile() {
     def sw       = device.currentValue("switch")           ?: "off"
+    def pumpRpm   = device.currentValue("pumpRpm")
+    def pumpWatts = device.currentValue("pumpWatts")
+    def pumpGpm   = device.currentValue("pumpGpm")
     def temp     = (device.currentValue("temperature")     ?: 0).toDouble()
     def setpt    = (device.currentValue("heatingSetpoint") ?: 0).toDouble()
     def maxTemp  = (device.currentValue("maxSetTemp")      ?: 104).toDouble()
@@ -417,6 +423,11 @@ def renderTile() {
     <div class='ic-box'><div class='ic-blbl'>Target</div><div class='ic-bval'>${Math.round(setpt)}°</div></div>
     <div class='ic-box'><div class='ic-blbl'>Max</div><div class='ic-bval'>${Math.round(maxTemp)}°</div></div>
     <div class='ic-box'><div class='ic-blbl'>Pump</div><div class='ic-bval' style='color:${pumpClr};'>${isOn ? "On" : "Off"}</div></div>
+  </div>
+  <div class='ic-row'>
+    <div class='ic-box'><div class='ic-blbl'>RPM</div><div class='ic-bval'>${pumpRpm ?: "—"}</div></div>
+    <div class='ic-box'><div class='ic-blbl'>Watts</div><div class='ic-bval'>${pumpWatts ?: "—"}</div></div>
+    <div class='ic-box'><div class='ic-blbl'>GPM</div><div class='ic-bval'>${pumpGpm ?: "—"}</div></div>
   </div>
   <hr class='ic-div'>
   ${heatSectionHtml}
