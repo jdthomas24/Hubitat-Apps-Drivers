@@ -26,7 +26,7 @@ metadata {
     preferences {
         input "ipAddress",    "text",   title: "IntelliCenter IP Address",                                                      required: true
         input "portNumber",   "number", title: "Port (IntelliCenter 1 = 6680 / IC2 try 6681)",                                  defaultValue: 6680
-        input "pollInterval", "number", title: "State Poll Interval in seconds (default: 300) — fallback sync in case ping/push misses a change", defaultValue: 300
+        input "pollInterval", "number", title: "State Poll Interval in seconds (default: 30) — syncs HE with changes made in the Pentair app or panel. Increase to reduce traffic.", defaultValue: 30
         input "debugMode",    "bool",   title: "Debug Logging (auto-disables after 60 min)",                                    defaultValue: false
         input "endpointBase", "text",   title: "App Endpoint Base (set automatically by app)",                                  required: false
     }
@@ -92,7 +92,6 @@ def connect() {
 }
 
 def disconnect() {
-    unschedule(sendPing)
     unschedule(pollState)
     try { interfaces.webSocket.close() } catch (e) { }
     state.connected = false
@@ -106,49 +105,16 @@ def webSocketStatus(String message) {
         log.info "WebSocket open — IntelliCenter connected"
         state.connected = true
         state.msgBuffer = ""
-        state.missedPings = 0
         sendEvent(name: "connectionStatus", value: "Connected")
         runIn(1, requestEquipment)
-        // Start ping keepalive — keeps connection alive and NotifyList push flowing
-        schedule("0/2 * * * * ?", sendPing)
-        if (debugMode) log.debug "Ping keepalive started"
     } else if (message.contains("failure") || message.contains("error") || message.contains("clos")) {
         log.warn "WebSocket disconnected: ${message}"
         state.connected = false
         sendEvent(name: "connectionStatus", value: "Disconnected")
-        unschedule(sendPing)
         unschedule(pollState)
     }
 }
 
-
-// ============================================================
-// ===================== PING KEEPALIVE ======================
-// Sends a ping every 2 seconds to keep the WebSocket alive
-// and ensure the controller continues pushing NotifyList
-// state change events. If 5 consecutive pings are missed,
-// the connection is considered dead and reconnect is forced.
-// ============================================================
-def sendPing() {
-    if (!state.connected) return
-    try {
-        interfaces.webSocket.sendMessage("ping")
-        state.missedPings = (state.missedPings ?: 0) + 1
-        if (state.missedPings > 5) {
-            log.warn "IntelliCenter not responding to pings — forcing reconnect"
-            state.connected = false
-            sendEvent(name: "connectionStatus", value: "Disconnected")
-            unschedule(sendPing)
-            unschedule(pollState)
-            runIn(2, connect)
-        }
-    } catch (e) {
-        log.error "Ping failed: ${e.message}"
-        state.connected = false
-        sendEvent(name: "connectionStatus", value: "Disconnected")
-        unschedule(sendPing)
-    }
-}
 
 def reconnectIfNeeded() {
     if (!state.connected) {
@@ -179,7 +145,7 @@ def pollState() {
     ])
     runIn(2, pollBodies)
     // Reschedule next poll
-    runIn((pollInterval ?: 300).toInteger(), pollState)
+    runIn((pollInterval ?: 30).toInteger(), pollState)
 }
 
 def pollBodies() {
@@ -206,11 +172,6 @@ def pollPumps() {
 // ============================================================
 def parse(String message) {
     message = message.trim()
-    if (message == "pong") {
-        // Controller is alive — reset missed ping counter
-        state.missedPings = 0
-        return
-    }
     if (message.startsWith("{")) {
         processMessage(message)
     } else {
@@ -331,7 +292,7 @@ def subscribeToUpdates() {
         objectList: [[objnam: "ALL", keys: ["STATUS", "TEMP", "RPM", "WATTS", "GPM", "SALT", "SOURCE", "LOTMP", "HITMP", "HTMODE", "HTSRC"]]]
     ])
     // Schedule first poll — subsequent polls are self-scheduled via runIn in pollState()
-    def interval = (pollInterval ?: 300).toInteger()
+    def interval = (pollInterval ?: 30).toInteger()
     runIn(interval, pollState)
     log.info "State polling scheduled — every ${interval} seconds"
 }
