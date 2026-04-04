@@ -2,6 +2,14 @@
 // Pentair IntelliCenter Body Driver
 // Version: 1.5.1
 // All files in this integration share this version number.
+//
+// CHANGES FROM 1.5.1:
+//   - Added capability "Switch", "Thermostat", "TemperatureMeasurement"
+//     so Hubitat shows a proper pool/thermostat icon instead of "?"
+//   - renderTile() fully rewritten with all CSS inlined via style=""
+//     attributes — no <style> block. Hubitat's dashboard sanitizer
+//     strips <style> blocks, which was preventing the tile from
+//     rendering any visual output.
 // ============================================================
 
 metadata {
@@ -12,9 +20,18 @@ metadata {
         description: "Pool / Spa controller — pump, temperature and heat control",
         version: "1.5.1"
     ) {
-        attribute "switch",          "string"
-        attribute "temperature",     "number"
-        attribute "heatingSetpoint", "number"
+        // ── Standard capabilities ─────────────────────────────
+        // These give Hubitat enough context to show a thermostat
+        // icon on the device page instead of a "?" placeholder.
+        // They also make the device selectable in standard apps
+        // (Google Home, Alexa, Rule Machine) that filter by cap.
+        capability "Switch"
+        capability "Thermostat"
+        capability "TemperatureMeasurement"
+        capability "Refresh"
+
+        // ── Custom attributes ─────────────────────────────────
+        attribute "heatingSetpoint", "number"   // already in Thermostat cap but kept for clarity
         attribute "maxSetTemp",      "number"
         attribute "heaterMode",      "string"
         attribute "heatSource",      "string"
@@ -22,31 +39,17 @@ metadata {
         attribute "tile",            "string"
         attribute "heatLock",        "string"
 
-        // ── Main controls — labels match the tile buttons exactly ──
-        // A user sees the same words on the device page and the tile.
-
-        // Tile: "🔥 Heat & Start Pump" / "🔥 Heating Active — Tap to Update"
+        // ── Main controls — labels match tile buttons exactly ──
         command "🔥 Heat and Start Pump", [[name: "degrees*", type: "NUMBER", description: "Target temp °F"]]
-
-        // Tile: "▶ Start Pump Only (no heat)"
-        command "▶ Start Pump Only"   // Starts pump, no change to heat
-
-        // Tile: "⏹ Stop Pump & Heat"
-        command "⏹ Stop Pump and Heat" // Stops everything
-
+        command "▶ Start Pump Only"
+        command "⏹ Stop Pump and Heat"
         command "refresh"
 
-        // ── Advanced — for automations / Rules only ────────────────
+        // ── Advanced ──────────────────────────────────────────
         command "⚙ Set Heat Source", [[name: "source*", type: "ENUM",
             constraints: ["Off", "Heater", "Solar Only", "Solar Preferred", "Heat Pump", "Heat Pump Preferred"]]]
-
-        // Heat Lock prevents any heat source changes — use to stop accidental
-        // heating activation. Pool/Spa pump still runs normally when locked.
-        // Unlock before trying to change heat settings.
-        command "⚙ Disable Heat Lock"  // LOCKS heat controls — prevents accidental heating
-        command "⚙ Enable Heat Lock"   // UNLOCKS heat controls — restores normal operation
-
-        // Heat Off without stopping pump — for advanced use / automations only
+        command "⚙ Disable Heat Lock"
+        command "⚙ Enable Heat Lock"
         command "⚙ Heat Off, Keep Pump On"
     }
 
@@ -62,13 +65,16 @@ metadata {
 // ===================== LIFECYCLE ===========================
 // ============================================================
 def installed() {
-    log.info "IntelliCenter Body v1.5.1 installed: ${device.displayName}"
+    log.info "IntelliCenter Body v1.5.2 installed: ${device.displayName}"
     sendEvent(name: "heatLock", value: "unlocked")
+    // Thermostat capability requires thermostatMode — set a safe default
+    sendEvent(name: "thermostatMode",         value: "off")
+    sendEvent(name: "thermostatOperatingState", value: "idle")
     renderTile()
 }
 
 def updated() {
-    log.info "IntelliCenter Body v1.5.1 updated: ${device.displayName}"
+    log.info "IntelliCenter Body v1.5.2 updated: ${device.displayName}"
     unschedule(disableDebugLogging)
     if (debugMode) {
         log.info "${device.displayName}: debug logging enabled — will auto-disable in 60 minutes"
@@ -83,13 +89,32 @@ def disableDebugLogging() {
 }
 
 // ============================================================
-// ===================== MAIN COMMANDS =======================
-// These match the tile buttons exactly — same label, same action.
+// ===================== THERMOSTAT CAPABILITY STUBS =========
+// Hubitat's Thermostat capability requires these commands.
+// They are stubs — pool/spa heat is controlled via the custom
+// commands below, not through the generic thermostat interface.
 // ============================================================
+def setThermostatMode(mode) {
+    // No-op: use "⚙ Set Heat Source" for heat control
+    if (debugMode) log.debug "${device.displayName}: setThermostatMode(${mode}) — stub, use custom commands"
+}
+def setThermostatFanMode(mode) {
+    if (debugMode) log.debug "${device.displayName}: setThermostatFanMode(${mode}) — stub"
+}
+def setCoolingSetpoint(temp) {
+    if (debugMode) log.debug "${device.displayName}: setCoolingSetpoint(${temp}) — stub (no cooling)"
+}
+def heat()  { "🔥 Heat and Start Pump"(device.currentValue("heatingSetpoint") ?: 80) }
+def cool()  { /* no cooling */ }
+def auto()  { /* no auto mode */ }
+def emergencyHeat() { /* no emergency heat */ }
+def fanAuto()  { /* no fan */ }
+def fanCirculate() { /* no fan */ }
+def fanOn()  { /* no fan */ }
 
-// "🔥 Heat and Start Pump" — sets target temp, re-sends current heat
-// source (activating HTMODE), and starts the pump. One tap does everything.
-// Mirrors exactly what the tile button does via the HTTP endpoint.
+// ============================================================
+// ===================== MAIN COMMANDS =======================
+// ============================================================
 def "🔥 Heat and Start Pump"(degrees) {
     def temp = degrees.toInteger()
     def minT = (minSetPoint ?: 40).toInteger()
@@ -100,37 +125,34 @@ def "🔥 Heat and Start Pump"(degrees) {
     }
     if (debugMode) log.debug "${device.displayName}: Heat and Start Pump — target ${temp}°F"
 
-    // 1. Set target temperature
     sendEvent(name: "heatingSetpoint", value: temp, unit: "°F")
     parent?.setBodySetPoint(device.deviceNetworkId, temp)
 
-    // 2. Re-send current heat source so controller activates HTMODE.
-    //    Without this, HTSRC is selected but heating stays off.
     def source = device.currentValue("heatSource") ?: "Heater"
     if (source == "Off" || source == "—") source = "Heater"
     sendEvent(name: "heatSource", value: source)
     parent?.setBodyHeatSource(device.deviceNetworkId, source)
     if (debugMode) log.debug "${device.displayName}: heat source '${source}' sent with HTMODE"
 
-    // 3. Start pump
-    sendEvent(name: "switch",     value: "on")
-    sendEvent(name: "bodyStatus", value: "On")
+    sendEvent(name: "switch",                    value: "on")
+    sendEvent(name: "bodyStatus",                value: "On")
+    sendEvent(name: "thermostatMode",            value: "heat")
+    sendEvent(name: "thermostatOperatingState",  value: "heating")
     parent?.setBodyStatus(device.deviceNetworkId, "ON")
 
     debounceTile()
 }
 
-// "⚙ Heat Off, Keep Pump On" — stops heater, pump keeps running.
-// Advanced use only — available for automations.
 def "⚙ Heat Off, Keep Pump On"() {
     if (debugMode) log.debug "${device.displayName}: Heat Off"
-    sendEvent(name: "heatSource", value: "Off")
-    sendEvent(name: "heaterMode", value: "Off")
+    sendEvent(name: "heatSource",               value: "Off")
+    sendEvent(name: "heaterMode",               value: "Off")
+    sendEvent(name: "thermostatMode",           value: "off")
+    sendEvent(name: "thermostatOperatingState", value: "idle")
     parent?.setBodyHeatSource(device.deviceNetworkId, "Off")
     debounceTile()
 }
 
-// "▶ Start Pump Only" — starts pump, no change to heat settings.
 def "▶ Start Pump Only"() {
     if (debugMode) log.debug "${device.displayName}: Start Pump Only"
     sendEvent(name: "switch",     value: "on")
@@ -139,31 +161,28 @@ def "▶ Start Pump Only"() {
     debounceTile()
 }
 
-// "⏹ Stop Pump and Heat" — stops everything.
 def "⏹ Stop Pump and Heat"() {
     if (debugMode) log.debug "${device.displayName}: Stop Pump and Heat"
-    sendEvent(name: "switch",     value: "off")
-    sendEvent(name: "bodyStatus", value: "Off")
+    sendEvent(name: "switch",                    value: "off")
+    sendEvent(name: "bodyStatus",                value: "Off")
+    sendEvent(name: "thermostatMode",            value: "off")
+    sendEvent(name: "thermostatOperatingState",  value: "idle")
     parent?.setBodyStatus(device.deviceNetworkId, "OFF")
     debounceTile()
 }
 
 // ============================================================
 // ===================== INTERNAL METHODS ====================
-// Called by the bridge to update state from controller pushes,
-// and by tile endpoint handlers. NOT called directly by users.
 // ============================================================
 def on()  { "▶ Start Pump Only"() }
 def off() { "⏹ Stop Pump and Heat"() }
 
 def setHeatingSetpoint(temp) {
-    // Local attribute update only — used by bridge to push controller state
     sendEvent(name: "heatingSetpoint", value: temp.toInteger(), unit: "°F")
     debounceTile()
 }
 
 def setHeatSource(source) {
-    // Local attribute update only — used by bridge/endpoint to push controller state
     sendEvent(name: "heatSource", value: source)
     debounceTile()
 }
@@ -201,14 +220,12 @@ def "⚙ Set Heat Source"(source) {
 }
 
 def "⚙ Disable Heat Lock"() {
-    // Disable Heat Lock = REMOVE the lock = heating controls are now FREE to use
     log.info "${device.displayName} — Heat Lock removed (heating controls unlocked)"
     sendEvent(name: "heatLock", value: "unlocked")
     debounceTile()
 }
 
 def "⚙ Enable Heat Lock"() {
-    // Enable Heat Lock = APPLY the lock = heating controls are now BLOCKED
     log.info "${device.displayName} — Heat Lock applied (heating controls locked)"
     sendEvent(name: "heatLock", value: "locked")
     debounceTile()
@@ -216,9 +233,6 @@ def "⚙ Enable Heat Lock"() {
 
 // ============================================================
 // ===================== REFRESH =============================
-// Requests a fresh state snapshot for this body from the
-// controller. Guarded against being called before the device
-// is fully wired to its parent (bridge).
 // ============================================================
 def refresh() {
     if (!device?.deviceNetworkId) {
@@ -239,6 +253,10 @@ def debounceTile() {
 
 // ============================================================
 // ===================== TILE RENDERER =======================
+// v1.5.2: All CSS is inline style="" — no <style> block.
+// Hubitat's dashboard tile sanitizer strips <style> blocks,
+// so class-based rules never reached the browser. Every rule
+// is now attached directly to the element that needs it.
 // ============================================================
 def renderTile() {
     def sw       = device.currentValue("switch")           ?: "off"
@@ -251,9 +269,6 @@ def renderTile() {
 
     def isOn      = (sw == "on")
     def isLocked  = (heatLock == "locked")
-    // isHeating uses heaterMode (HTMODE from controller) as primary truth.
-    // heatSource (HTSRC) is the selected source but stays set even when heat is off.
-    // Only HTMODE going to "Off" reliably means heating is inactive.
     def isHeating = isOn && htmode != "Off" && htmode != "—" && htmode != "0" && htsrc != "Off"
 
     def name   = device.displayName
@@ -264,7 +279,7 @@ def renderTile() {
     def url    = { String cmd -> "${base}/body/${dni}/${cmd}" }
     def srcUrl = { String src -> "${base}/body/${dni}/heatsource/${src.replaceAll(' ','_').toLowerCase()}" }
 
-    // ── Arc gauge ─────────────────────────────────────────────
+    // ── Arc gauge math ────────────────────────────────────────
     def minT      = (minSetPoint ?: 40).toDouble()
     def maxT      = (maxSetPoint ?: 104).toDouble()
     def arcStart  = 125.0; def arcEnd = 415.0; def arcRange = arcEnd - arcStart
@@ -289,54 +304,54 @@ def renderTile() {
     // ── Fetch URLs ─────────────────────────────────────────────
     def btnUpFetch     = hasUrl ? "fetch('${url('setpointup')}');"   : ""
     def btnDnFetch     = hasUrl ? "fetch('${url('setpointdown')}');" : ""
-    // Heat & Start: single endpoint sends setpoint + re-sends current heat source + starts pump.
-    // Using the source-aware endpoint ensures the controller re-activates heating
-    // even if HTMODE was cleared externally (e.g. turned off via Pentair app).
     def currentSrcSlug = (htsrc && htsrc != "Off" && htsrc != "—")
         ? htsrc.replaceAll(' ','_').toLowerCase()
         : 'heater'
     def heatStartFetch = hasUrl
         ? "fetch('${url('heatandstart/' + Math.round(setpt).toInteger() + '/' + currentSrcSlug)}');"
         : ""
-    def heatOffFetch   = hasUrl ? "fetch('${url('heatoff')}');"      : ""
-    def pumpOnFetch    = hasUrl ? "fetch('${url('on')}');"           : ""
-    def pumpOffFetch   = hasUrl ? "fetch('${url('off')}');"          : ""
+    def heatOffFetch = hasUrl ? "fetch('${url('heatoff')}');"  : ""
+    def pumpOnFetch  = hasUrl ? "fetch('${url('on')}');"       : ""
+    def pumpOffFetch = hasUrl ? "fetch('${url('off')}');"      : ""
 
-    // ── Heat source chips ──────────────────────────────────────
-    // Tapping a chip sends the heatsource change to the controller.
-    // It does NOT start the pump — use "Heat & Start Pump" for that.
+    // ── Heat source chip row ───────────────────────────────────
     def heatSources = ["Heater", "Solar Only", "Solar Preferred", "Heat Pump", "Heat Pump Preferred"]
     def srcBtns = heatSources.collect { lbl ->
-        def active    = (htsrc?.equalsIgnoreCase(lbl)) ? "ic-src-active" : ""
-        def disClass  = isLocked ? "ic-src-disabled" : ""
+        def isActive = htsrc?.equalsIgnoreCase(lbl)
+        def btnStyle = isLocked
+            ? "padding:6px 10px;border-radius:8px;border:1.5px solid #1e3a5f;background:#0f172a;color:#64748b;font-size:10px;font-weight:600;cursor:not-allowed;opacity:.3;"
+            : isActive
+                ? "padding:6px 10px;border-radius:8px;border:1.5px solid #f97316;background:#1a0800;color:#f97316;font-size:10px;font-weight:600;cursor:pointer;"
+                : "padding:6px 10px;border-radius:8px;border:1.5px solid #1e3a5f;background:#0f172a;color:#64748b;font-size:10px;font-weight:600;cursor:pointer;"
         def fetchCall = (!isLocked && hasUrl) ? "fetch('${srcUrl(lbl)}');" : ""
-        "<button class='ic-src ${active} ${disClass}' onclick=\"${fetchCall}\" ${isLocked ? 'disabled' : ''}>${lbl}</button>"
+        "<button style='${btnStyle}' onclick=\"${fetchCall}\" ${isLocked ? 'disabled' : ''}>${lbl}</button>"
     }.join("")
 
     // ── Heat section ───────────────────────────────────────────
     def heatSectionHtml
     if (isLocked) {
         heatSectionHtml = """
-    <div class='ic-disabled-banner'>
-      🔒 HEAT LOCK IS ON
-      <div class='ic-disabled-sub'>Go to device Commands page and tap "⚙ Enable Heat Lock" to restore heating</div>
-    </div>"""
+<div style='background:#7f1d1d;border:2px solid #ef4444;border-radius:10px;padding:12px;text-align:center;font-size:14px;font-weight:900;color:#fca5a5;letter-spacing:1px;text-transform:uppercase;'>
+  🔒 HEAT LOCK IS ON
+  <div style='font-size:9px;font-weight:400;color:#f87171;margin-top:6px;letter-spacing:0;text-transform:none;line-height:1.4;'>Go to device Commands page and tap "⚙ Enable Heat Lock" to restore heating</div>
+</div>"""
     } else {
-        // Tile button label matches device page command exactly
         def heatBtnLabel = isHeating ? "🔥 Heating Active — Tap to Update" : "🔥 Heat &amp; Start Pump"
-        def heatBtnClass = isHeating ? "ic-btn-heat-active" : "ic-btn-heat"
+        def heatBtnStyle = isHeating
+            ? "width:100%;padding:14px;border-radius:12px;border:2px solid #f97316;background:#1a0800;color:#f97316;font-size:14px;font-weight:800;cursor:pointer;margin-top:4px;"
+            : "width:100%;padding:15px;border-radius:12px;border:none;background:#c2410c;color:#fff;font-size:15px;font-weight:800;cursor:pointer;margin-top:4px;box-shadow:0 4px 14px rgba(194,65,12,.45);"
         heatSectionHtml = """
-    <div class='ic-step'>STEP 1 — Set target temperature</div>
-    <div class='ic-adj-row'>
-      <button class='ic-adj' onclick="${btnDnFetch}">−</button>
-      <div class='ic-setval'>${Math.round(setpt)}°F</div>
-      <button class='ic-adj' onclick="${btnUpFetch}">+</button>
-    </div>
-    <div class='ic-step' style='margin-top:10px;'>STEP 2 — Choose heat source</div>
-    <div class='ic-srcbtns'>${srcBtns}</div>
-    <div class='ic-step' style='margin-top:10px;'>STEP 3 — Go!</div>
-    <button class='${heatBtnClass}' onclick="${heatStartFetch}">${heatBtnLabel}</button>
-    <button class='ic-btn-heatoff' onclick="${heatOffFetch}">❄  Heat Off  (pump keeps running)</button>"""
+<div style='font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;'>STEP 1 — Set target temperature</div>
+<div style='display:flex;align-items:center;gap:8px;margin-bottom:4px;'>
+  <button style='width:44px;height:44px;border-radius:50%;border:none;background:#1e3a5f;color:#38bdf8;font-size:24px;font-weight:700;cursor:pointer;flex-shrink:0;line-height:1;' onclick="${btnDnFetch}">−</button>
+  <div style='flex:1;text-align:center;font-size:28px;font-weight:800;color:#38bdf8;'>${Math.round(setpt)}°F</div>
+  <button style='width:44px;height:44px;border-radius:50%;border:none;background:#1e3a5f;color:#38bdf8;font-size:24px;font-weight:700;cursor:pointer;flex-shrink:0;line-height:1;' onclick="${btnUpFetch}">+</button>
+</div>
+<div style='font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.8px;margin-top:10px;margin-bottom:6px;'>STEP 2 — Choose heat source</div>
+<div style='display:flex;flex-wrap:wrap;gap:5px;'>${srcBtns}</div>
+<div style='font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.8px;margin-top:10px;margin-bottom:6px;'>STEP 3 — Go!</div>
+<button style='${heatBtnStyle}' onclick="${heatStartFetch}">${heatBtnLabel}</button>
+<button style='width:100%;padding:10px;border-radius:10px;border:1.5px solid #1e3a5f;background:transparent;color:#94a3b8;font-size:11px;font-weight:600;cursor:pointer;margin-top:6px;' onclick="${heatOffFetch}">❄  Heat Off  (pump keeps running)</button>"""
     }
 
     // ── Pump section ───────────────────────────────────────────
@@ -346,83 +361,54 @@ def renderTile() {
             ? "🔥 Pump running — heating to ${Math.round(setpt)}°F"
             : "🏊 Pump running — no heat"
         pumpSectionHtml = """
-  <div class='ic-running-badge'>${badge}</div>
-  <button class='ic-btn-stop' onclick="${pumpOffFetch}">⏹  Stop Pump &amp; Heat</button>"""
+<div style='width:100%;padding:11px;border-radius:12px;border:2px solid #16a34a;background:#052e16;color:#4ade80;font-size:12px;font-weight:800;text-align:center;margin-bottom:6px;line-height:1.3;box-sizing:border-box;'>${badge}</div>
+<button style='width:100%;padding:14px;border-radius:12px;border:none;background:#991b1b;color:#fff;font-size:15px;font-weight:800;cursor:pointer;box-shadow:0 4px 14px rgba(153,27,27,.4);' onclick="${pumpOffFetch}">⏹  Stop Pump &amp; Heat</button>"""
     } else {
         pumpSectionHtml = """
-  <button class='ic-btn-pumponly' onclick="${pumpOnFetch}">▶  Start Pump Only  (no heat)</button>
-  <div class='ic-off-badge'>Everything is off</div>"""
+<button style='width:100%;padding:14px;border-radius:12px;border:2px solid #166534;background:#052e16;color:#4ade80;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:6px;' onclick="${pumpOnFetch}">▶  Start Pump Only  (no heat)</button>
+<div style='text-align:center;font-size:11px;color:#475569;margin-top:8px;padding:4px;'>Everything is off</div>"""
     }
 
-    def noBase  = !base ? "<div class='ic-warn'>⚠ Open app → click Done to activate controls</div>" : ""
+    def noBase  = !base ? "<div style='color:#fbbf24;font-size:10px;text-align:center;margin-bottom:6px;'>⚠ Open app → click Done to activate controls</div>" : ""
     def pumpClr = isOn  ? "#4ade80" : "#ef4444"
 
-    def html = """<style>
-.ic{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;border-radius:20px;padding:16px 14px 16px;color:#fff;max-width:260px;margin:0 auto;box-sizing:border-box;}
-.ic *{box-sizing:border-box;}
-.ic-title{font-size:16px;font-weight:800;text-align:center;margin-bottom:8px;color:#e2e8f0;letter-spacing:.3px;}
-.ic-warn{color:#fbbf24;font-size:10px;text-align:center;margin-bottom:6px;}
-.ic-gauge{position:relative;width:200px;height:128px;margin:0 auto 8px;}
-.ic-gauge svg{width:200px;height:200px;overflow:visible;}
-.ic-center{position:absolute;top:18px;left:50%;transform:translateX(-50%);text-align:center;pointer-events:none;white-space:nowrap;}
-.ic-htmode{font-size:9px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;}
-.ic-bigtemp{font-size:42px;font-weight:800;line-height:1;color:#fff;}
-.ic-unit{font-size:11px;color:#94a3b8;}
-.ic-target{font-size:10px;color:#38bdf8;margin-top:2px;}
-.ic-row{display:flex;gap:6px;margin-bottom:10px;}
-.ic-box{flex:1;background:#1e3a5f;border-radius:10px;padding:7px 5px;text-align:center;}
-.ic-blbl{font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;}
-.ic-bval{font-size:13px;font-weight:700;color:#e2e8f0;}
-.ic-div{border:none;border-top:1px solid #1e3a5f;margin:10px 0;}
-.ic-step{font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;}
-.ic-adj-row{display:flex;align-items:center;gap:8px;margin-bottom:4px;}
-.ic-adj{width:44px;height:44px;border-radius:50%;border:none;background:#1e3a5f;color:#38bdf8;font-size:24px;font-weight:700;cursor:pointer;flex-shrink:0;line-height:1;}
-.ic-setval{flex:1;text-align:center;font-size:28px;font-weight:800;color:#38bdf8;}
-.ic-srcbtns{display:flex;flex-wrap:wrap;gap:5px;}
-.ic-src{padding:6px 10px;border-radius:8px;border:1.5px solid #1e3a5f;background:#0f172a;color:#64748b;font-size:10px;font-weight:600;cursor:pointer;}
-.ic-src-active{border-color:#f97316;color:#f97316;background:#1a0800;}
-.ic-src-disabled{opacity:0.3;cursor:not-allowed;}
-.ic-btn-heat{width:100%;padding:15px;border-radius:12px;border:none;background:#c2410c;color:#fff;font-size:15px;font-weight:800;cursor:pointer;margin-top:4px;box-shadow:0 4px 14px rgba(194,65,12,0.45);}
-.ic-btn-heat:active{background:#9a3412;}
-.ic-btn-heat-active{width:100%;padding:14px;border-radius:12px;border:2px solid #f97316;background:#1a0800;color:#f97316;font-size:14px;font-weight:800;cursor:pointer;margin-top:4px;}
-.ic-btn-heatoff{width:100%;padding:10px;border-radius:10px;border:1.5px solid #1e3a5f;background:transparent;color:#94a3b8;font-size:11px;font-weight:600;cursor:pointer;margin-top:6px;}
-.ic-btn-heatoff:active{border-color:#38bdf8;color:#38bdf8;}
-.ic-disabled-banner{background:#7f1d1d;border:2px solid #ef4444;border-radius:10px;padding:12px;text-align:center;font-size:14px;font-weight:900;color:#fca5a5;letter-spacing:1px;text-transform:uppercase;}
-.ic-disabled-sub{font-size:9px;font-weight:400;color:#f87171;margin-top:6px;letter-spacing:0;text-transform:none;line-height:1.4;}
-.ic-btn-pumponly{width:100%;padding:14px;border-radius:12px;border:2px solid #166534;background:#052e16;color:#4ade80;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:6px;}
-.ic-btn-pumponly:active{background:#14532d;}
-.ic-running-badge{width:100%;padding:11px;border-radius:12px;border:2px solid #16a34a;background:#052e16;color:#4ade80;font-size:12px;font-weight:800;text-align:center;margin-bottom:6px;line-height:1.3;}
-.ic-btn-stop{width:100%;padding:14px;border-radius:12px;border:none;background:#991b1b;color:#fff;font-size:15px;font-weight:800;cursor:pointer;box-shadow:0 4px 14px rgba(153,27,27,0.4);}
-.ic-btn-stop:active{background:#7f1d1d;}
-.ic-off-badge{text-align:center;font-size:11px;color:#475569;margin-top:8px;padding:4px;}
-</style>
-<div class='ic'>
-  <div class='ic-title'>${name}</div>
-  ${noBase}
-  <div class='ic-gauge'>
-    <svg viewBox='0 0 220 220'>
-      <path d='${trackPath}' stroke='#1e3a5f' stroke-width='13' fill='none' stroke-linecap='round'/>
-      <path d='${setptPath}' stroke='#1d3460' stroke-width='13' fill='none' stroke-linecap='round'/>
-      <path d='${tempPath}'  stroke='#1d6fbf' stroke-width='13' fill='none' stroke-linecap='round'/>
-      <circle cx='${dotX}' cy='${dotY}' r='7' fill='#38bdf8' stroke='#0f172a' stroke-width='3'/>
-    </svg>
-    <div class='ic-center'>
-      <div class='ic-htmode'>${htmode}</div>
-      <div class='ic-bigtemp'>${Math.round(temp)}</div>
-      <div class='ic-unit'>°F current</div>
-      <div class='ic-target'>Target ${Math.round(setpt)}°F</div>
-    </div>
+    def html = """<div style='font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0f172a;border-radius:20px;padding:16px 14px;color:#fff;max-width:260px;margin:0 auto;box-sizing:border-box;'>
+<div style='font-size:16px;font-weight:800;text-align:center;margin-bottom:8px;color:#e2e8f0;letter-spacing:.3px;'>${name}</div>
+${noBase}
+<div style='position:relative;width:200px;height:128px;margin:0 auto 8px;'>
+  <svg style='width:200px;height:200px;overflow:visible;' viewBox='0 0 220 220'>
+    <path d='${trackPath}' stroke='#1e3a5f' stroke-width='13' fill='none' stroke-linecap='round'/>
+    <path d='${setptPath}' stroke='#1d3460' stroke-width='13' fill='none' stroke-linecap='round'/>
+    <path d='${tempPath}'  stroke='#1d6fbf' stroke-width='13' fill='none' stroke-linecap='round'/>
+    <circle cx='${dotX}' cy='${dotY}' r='7' fill='#38bdf8' stroke='#0f172a' stroke-width='3'/>
+  </svg>
+  <div style='position:absolute;top:18px;left:50%;transform:translateX(-50%);text-align:center;pointer-events:none;white-space:nowrap;'>
+    <div style='font-size:9px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;'>${htmode}</div>
+    <div style='font-size:42px;font-weight:800;line-height:1;color:#fff;'>${Math.round(temp)}</div>
+    <div style='font-size:11px;color:#94a3b8;'>°F current</div>
+    <div style='font-size:10px;color:#38bdf8;margin-top:2px;'>Target ${Math.round(setpt)}°F</div>
   </div>
-  <div class='ic-row'>
-    <div class='ic-box'><div class='ic-blbl'>Target</div><div class='ic-bval'>${Math.round(setpt)}°</div></div>
-    <div class='ic-box'><div class='ic-blbl'>Max</div><div class='ic-bval'>${Math.round(maxTemp)}°</div></div>
-    <div class='ic-box'><div class='ic-blbl'>Pump</div><div class='ic-bval' style='color:${pumpClr};'>${isOn ? "On" : "Off"}</div></div>
+</div>
+<div style='display:flex;gap:6px;margin-bottom:10px;'>
+  <div style='flex:1;background:#1e3a5f;border-radius:10px;padding:7px 5px;text-align:center;'>
+    <div style='font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;'>Target</div>
+    <div style='font-size:13px;font-weight:700;color:#e2e8f0;'>${Math.round(setpt)}°</div>
   </div>
-  <hr class='ic-div'>
-  ${heatSectionHtml}
-  <hr class='ic-div'>
-  ${pumpSectionHtml}
+  <div style='flex:1;background:#1e3a5f;border-radius:10px;padding:7px 5px;text-align:center;'>
+    <div style='font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;'>Max</div>
+    <div style='font-size:13px;font-weight:700;color:#e2e8f0;'>${Math.round(maxTemp)}°</div>
+  </div>
+  <div style='flex:1;background:#1e3a5f;border-radius:10px;padding:7px 5px;text-align:center;'>
+    <div style='font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;'>Pump</div>
+    <div style='font-size:13px;font-weight:700;color:${pumpClr};'>${isOn ? "On" : "Off"}</div>
+  </div>
+</div>
+<hr style='border:none;border-top:1px solid #1e3a5f;margin:10px 0;'/>
+${heatSectionHtml}
+<hr style='border:none;border-top:1px solid #1e3a5f;margin:10px 0;'/>
+${pumpSectionHtml}
 </div>"""
 
     sendEvent(name: "tile", value: html, displayed: false)
 }
+
