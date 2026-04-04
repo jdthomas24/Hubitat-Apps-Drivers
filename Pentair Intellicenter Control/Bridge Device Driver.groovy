@@ -107,10 +107,6 @@ def webSocketStatus(String message) {
         state.msgBuffer = ""
         sendEvent(name: "connectionStatus", value: "Connected")
         runIn(1, requestEquipment)
-        // Start polling to catch external state changes (Pentair app, panel)
-        // pollState() reschedules itself via runIn so no cron needed
-        runIn((pollInterval ?: 60).toInteger(), pollState)
-        log.info "State polling started — every ${pollInterval ?: 60} seconds"
     } else if (message.contains("failure") || message.contains("error") || message.contains("clos")) {
         log.warn "WebSocket disconnected: ${message}"
         state.connected = false
@@ -294,6 +290,10 @@ def subscribeToUpdates() {
         condition: "OBJTYP=CIRCUIT,BODY,PUMP,SENSE,CHEM",
         objectList: [[objnam: "ALL", keys: ["STATUS", "TEMP", "RPM", "WATTS", "GPM", "SALT", "SOURCE", "LOTMP", "HITMP", "HTMODE", "HTSRC"]]]
     ])
+    // Schedule first poll — subsequent polls are self-scheduled via runIn in pollState()
+    def interval = (pollInterval ?: 60).toInteger()
+    runIn(interval, pollState)
+    log.info "State polling scheduled — every ${interval} seconds"
 }
 
 // ============================================================
