@@ -648,5 +648,3 @@ def getOrCreateChild(String driver, String dni, String label, Boolean isComponen
     }
     return child
 }
-
-}
