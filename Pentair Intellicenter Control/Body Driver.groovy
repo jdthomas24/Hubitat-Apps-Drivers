@@ -219,6 +219,7 @@ def renderTile() {
     def statLbl = isHeating ? "Heating"  : (isOn ? "Running"  : "Off")
     def lock    = isLocked  ? " (LOCKED)" : ""
     def pumpTxt = isOn ? "On" : "Off"
+    def heatClr = (htmode != "Off" && htmode != "0") ? "#f97316" : "#64748b"
     def tNow    = Math.round(temp).toInteger()
     def tSet    = Math.round(setpt).toInteger()
 
@@ -230,8 +231,9 @@ def renderTile() {
         "<td style=\"text-align:center;width:50%;\"><div style=\"font-size:9px;color:#64748b;\">NOW</div><div style=\"font-size:30px;font-weight:800;color:#fff;\">${tNow}&#176;</div></td>" +
         "<td style=\"text-align:center;width:50%;\"><div style=\"font-size:9px;color:#64748b;\">TARGET</div><div style=\"font-size:30px;font-weight:800;color:#38bdf8;\">${tSet}&#176;</div></td>" +
         "</tr></table></div>" +
-        "<div style=\"font-size:10px;color:#94a3b8;\">Pump <b style=\"color:${pumpClr};\">${pumpTxt}</b>  |  ${htsrc}  |  ${htmode}</div>" +
+        "<div style=\"font-size:10px;color:#94a3b8;\">Pump <b style=\"color:${pumpClr};\">${pumpTxt}</b>  |  Src: ${htsrc}  |  Heat: <b style=\"color:${heatClr};\">${htmode}</b></div>" +
         "</div>"
 
     sendEvent(name: "tile", value: html, displayed: false)
 }
+
