@@ -11,27 +11,22 @@ Controller and hub on the same network/subnet
 
 What It Creates
 Once connected, the integration automatically discovers and creates devices for:
-DeviceDescriptionPool / SpaCombined controller — on/off, current temp, set point, heater mode, heat sourceCircuitsSwitch for each user circuit (Pool Light, Spa Light, Waterfall, etc.)FeaturesSwitch for each feature relay (Air Blower, Motorized Valves, etc.)VS PumpVariable speed pump — RPM, watts, GPM, and speed controlAir SensorAir temperatureSolar SensorSolar temperature (if equipped)Salt ChlorinatorChlorinator on/off and salt level
+DeviceDescriptionPool / SpaCombined controller — on/off, current temp, set point, heater mode, heat sourceCircuitsSwitch for each user circuit (Pool Light, Spa Light, Waterfall, etc.)FeaturesSwitch for each feature relay (Air Blower, Motorized Valves, etc.)VS PumpVariable speed pump — RPM and water temperature display, speed controlAir SensorAir temperatureSolar SensorSolar temperature (if equipped)Salt ChlorinatorChlorinator on/off and salt level
 
 Installation
 Option A (Future Release) — Hubitat Package Manager
 
-Open Hubitat Package Manager
-Click Install
-Search for Pentair IntelliCenter
-Select the package and click Next → Install
-Follow the setup steps below
-
+Not yet available. Coming in a future release.
 
 Option B — Manual Install
 Install in this exact order — all drivers must exist before the app is set up.
-Step 1 — Install the Body Driver (new)
+Step 1 — Install the Body Driver
 
 Go to Drivers Code → New Driver
 Paste the contents of intellicenter-body-driver.groovy
 Click Save
 
-Step 2 — Install the Pump Driver (new)
+Step 2 — Install the Pump Driver
 
 Go to Drivers Code → New Driver
 Paste the contents of intellicenter-pump-driver.groovy
@@ -63,7 +58,9 @@ Create a Bridge device in your device list
 Connect to your IntelliCenter
 Discover all equipment and create child devices
 
+
 Allow 15–20 seconds for all devices to appear after clicking Done.
+
 
 Finding Your IntelliCenter IP
 Check your router's device list and look for a device named IntelliCenter or Pentair. You can also find it in the official Pentair IntelliCenter mobile app under Settings → Status → Network.
@@ -76,29 +73,53 @@ Body Status — On / Off
 Temperature — current water temperature
 Heating Setpoint — active set point
 Max Set Temp — upper temperature limit
-Heater Mode — current heater mode
+Heater Mode — current heater mode (e.g. Heater, Solar Only)
 Heat Source — active heat source
-A live visual tile showing the arc gauge, set point, and controls
+Heat Lock — locked / unlocked (prevents accidental heat activation)
+A live visual tile on the device page showing current temp, target temp, and controls
 
 Commands (left side of device page):
 
-Turn On — starts a 10 second confirmation countdown
-Confirm Turn On — must be tapped within 10 seconds to actually turn on, otherwise cancels automatically
-Turn Off — immediate, no confirmation required
-Set Temperature — enter a temperature in °F to change the set point
-Set Heat Source — choose from Off, Heater, Solar Only, Solar Preferred, Heat Pump, Heat Pump Preferred
+▶ Start Pump Only — starts pump, no heat change
+⏹ Stop Pump and Heat — stops everything
+🔥 Heat and Start Pump — set target temp, activate heat source, start pump in one tap
+⚙ Heat Off, Keep Pump On — turns heat off while leaving pump running
+⚙ Set Heat Source — choose from Off, Heater, Solar Only, Solar Preferred, Heat Pump, Heat Pump Preferred
+⚙ Enable / Disable Heat Lock — locks heat controls to prevent accidental changes
 Refresh — request fresh data from the controller
 
 Dashboard Tile:
-Add the Pool or Spa device as an Attribute tile in your Hubitat dashboard and select the tile attribute. This renders a visual arc gauge showing current temp vs set point, with tap controls for set point, heat source, and on/off.
+Add the Pool or Spa device as an Attribute tile in your Hubitat dashboard and select the tile attribute. This renders a compact status card showing:
 
-Pump Control
-The VS pump appears as a single device showing RPM, watts, and GPM. To change pump speed:
+Current water temperature vs target set point
+Pump on/off status (green = on, red = off)
+Heat source
+Heat mode status (green = active, red = off)
+
+
+Note: The dashboard tile is display-only. Use the device page or automations for controls.
+
+
+Pump
+The VS pump appears as a single device showing RPM and water temperature. To change pump speed:
 
 Open the pump device
 Use the setSpeed command and enter the target RPM (450–3450)
 The new speed is sent to the active pump program immediately
 
+Dashboard Tile:
+Add the VS pump as an Attribute tile and select the tile attribute. This renders a card showing running status, RPM, and water temperature.
+
+Note: Watts and GPM are attributes in the driver but may not be reported by all pump models or firmware versions. RPM and water temperature are the most reliable values.
+
+
+State Sync
+The integration uses a two-layer approach to keep Hubitat in sync with the controller:
+
+Ping keepalive — sends a ping to the controller every 2 seconds and listens for push notifications (NotifyList) of state changes
+Fallback poll — re-requests all circuit, body, and pump states on a configurable interval (default: 300 seconds)
+
+If you change something via the Pentair app or physical panel, Hubitat should reflect the change within the poll interval. You can reduce the State Poll Interval in the Bridge device preferences (e.g. to 30 seconds) for faster sync at the cost of slightly more traffic.
 
 Troubleshooting
 No devices appearing after setup
@@ -132,10 +153,16 @@ Duplicate devices appeared
 This can happen on first install if the app is initialized more than once
 Manually delete any duplicate devices from the Devices page — they will not be recreated
 
-Devices not updating
+Devices not updating when changed via Pentair app or panel
 
-The integration uses live push updates from the controller — no polling needed
-If values appear stuck, click Refresh on the Bridge device to request a full state update
+The integration sends a ping every 2 seconds to keep push notifications flowing
+If values appear stuck, reduce the State Poll Interval in the Bridge device preferences to 30 seconds
+Click Refresh on the Bridge device to force an immediate full state update
+
+Dashboard tile shows "Please Select an Attribute"
+
+Go to the device page and tap Refresh to generate the tile value
+Edit the dashboard tile, switch the attribute to something else, save, then switch back to tile and save again — this forces the dashboard to re-bind
 
 
 Removing the Integration
@@ -148,18 +175,16 @@ Go to Drivers Code and delete Pentair IntelliCenter Pump
 Go to Apps Code and delete Pentair IntelliCenter
 
 
-If upgrading from an earlier version, also delete Pentair IntelliCenter Set Point from Drivers Code — this driver has been retired and its functionality is now built into the Pool and Spa devices.
-
-
 Always delete devices before removing the app and driver code — Hubitat will not allow you to remove a driver that is still in use by a device.
 
 
 Notes
 
 The integration works entirely on your local network — no Pentair cloud account required
-Compatible with Pentair IntelliCenter 1 (firmware 1.064+) and IntelliCenter 2 (firmware 3.006+)
+Compatible with IntelliCenter 1 (firmware 1.064+) and IntelliCenter 2 (firmware 3.006+)
 Password-protected IntelliCenter controllers are not currently supported
 Pump GPM is only shown when the pump reports a non-zero GPM value
+Pump wattage may not be reported correctly by all firmware versions due to a known controller packet format issue
 Feature relays (blowers, motorized valves) are supported and appear as switch devices
 Currently in active development — not yet released to Hubitat Package Manager
 
@@ -169,10 +194,10 @@ This integration is provided as-is for personal use. Not affiliated with or endo
 
 Install Links
 Step 1 — Body Driver (install first):
-https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/intellicenter-body-driver.groovy
+https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/Body%20Driver.groovy
 Step 2 — Pump Driver:
-https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/intellicenter-pump-driver.groovy
+https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/Pump%20Speed%20Driver.groovy
 Step 3 — Bridge Driver:
-https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/intellicenter-bridge-driver.groovy
+https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/Bridge%20Device%20Driver.groovy
 Step 4 — Parent App (install last):
-https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/intellicenter-app.groovy
+https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/Parent%20App.groovy
