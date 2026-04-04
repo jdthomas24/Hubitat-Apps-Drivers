@@ -24,13 +24,10 @@ metadata {
         attribute "tile",            "string"
         attribute "heatLock",        "string"
 
-        // ── Main controls — labels match the tile buttons exactly ──
         command "🔥 Heat and Start Pump", [[name: "degrees*", type: "NUMBER", description: "Target temp °F"]]
         command "▶ Start Pump Only"
         command "⏹ Stop Pump and Heat"
         command "refresh"
-
-        // ── Advanced — for automations / Rules only ────────────────
         command "⚙ Set Heat Source", [[name: "source*", type: "ENUM",
             constraints: ["Off", "Heater", "Solar Only", "Solar Preferred", "Heat Pump", "Heat Pump Preferred"]]]
         command "⚙ Disable Heat Lock"
@@ -82,20 +79,16 @@ def "🔥 Heat and Start Pump"(degrees) {
         return
     }
     if (debugMode) log.debug "${device.displayName}: Heat and Start Pump — target ${temp}°F"
-
     sendEvent(name: "heatingSetpoint", value: temp, unit: "°F")
     parent?.setBodySetPoint(device.deviceNetworkId, temp)
-
     def source = device.currentValue("heatSource") ?: "Heater"
     if (source == "Off" || source == "—") source = "Heater"
     sendEvent(name: "heatSource", value: source)
     parent?.setBodyHeatSource(device.deviceNetworkId, source)
     if (debugMode) log.debug "${device.displayName}: heat source '${source}' sent with HTMODE"
-
     sendEvent(name: "switch",     value: "on")
     sendEvent(name: "bodyStatus", value: "On")
     parent?.setBodyStatus(device.deviceNetworkId, "ON")
-
     debounceTile()
 }
 
@@ -205,93 +198,41 @@ def debounceTile() {
 
 // ============================================================
 // ===================== TILE RENDERER =======================
-// NOTE: All CSS is inline style="" — no <style> block.
-// Hubitat's dashboard tile sanitizer strips <style> blocks,
-// which prevented the tile from rendering. Inline styles are
-// passed through untouched.
-// ============================================================
-// ============================================================
-// ===================== TILE RENDERER =======================
-// No SVG, no position:absolute, no transform — dashboard safe.
-// Arc gauge replaced with plain temp block. All controls kept.
+// Compact — under 1024 chars to fit Hubitat dashboard limit.
+// No SVG, no onclick, no flex. Display only.
 // ============================================================
 def renderTile() {
     def sw       = device.currentValue("switch")           ?: "off"
     def temp     = (device.currentValue("temperature")     ?: 0).toDouble()
     def setpt    = (device.currentValue("heatingSetpoint") ?: 0).toDouble()
-    def maxTemp  = (device.currentValue("maxSetTemp")      ?: 104).toDouble()
-    def htmode   = device.currentValue("heaterMode")       ?: "—"
+    def htmode   = device.currentValue("heaterMode")       ?: "Off"
     def htsrc    = device.currentValue("heatSource")       ?: "Off"
     def heatLock = device.currentValue("heatLock")         ?: "unlocked"
 
     def isOn      = (sw == "on")
+    def isHeating = isOn && htmode != "Off" && htmode != "0" && htsrc != "Off"
     def isLocked  = (heatLock == "locked")
-    def isHeating = isOn && htmode != "Off" && htmode != "—" && htmode != "0" && htsrc != "Off"
 
-    def name   = device.displayName
-    def dni    = device.deviceNetworkId
-    def base   = endpointBase ?: ""
-    def hasUrl = base ? true : false
+    def name    = device.displayName
+    def pumpClr = isOn      ? "#4ade80" : "#ef4444"
+    def statClr = isHeating ? "#f97316" : (isOn ? "#4ade80" : "#64748b")
+    def statLbl = isHeating ? "Heating"  : (isOn ? "Running"  : "Off")
+    def lock    = isLocked  ? " (LOCKED)" : ""
+    def pumpTxt = isOn ? "On" : "Off"
+    def tNow    = Math.round(temp).toInteger()
+    def tSet    = Math.round(setpt).toInteger()
 
-    def url    = { String cmd -> "${base}/body/${dni}/${cmd}" }
-    def srcUrl = { String src -> "${base}/body/${dni}/heatsource/${src.replaceAll(' ','_').toLowerCase()}" }
-
-    // ── Fetch URLs ─────────────────────────────────────────────
-    def btnUpFetch     = hasUrl ? "fetch('${url('setpointup')}');"   : ""
-    def btnDnFetch     = hasUrl ? "fetch('${url('setpointdown')}');" : ""
-    def currentSrcSlug = (htsrc && htsrc != "Off" && htsrc != "—")
-        ? htsrc.replaceAll(' ','_').toLowerCase()
-        : 'heater'
-    def heatStartFetch = hasUrl
-        ? "fetch('${url('heatandstart/' + Math.round(setpt).toInteger() + '/' + currentSrcSlug)}');"
-        : ""
-    def heatOffFetch = hasUrl ? "fetch('${url('heatoff')}');"  : ""
-    def pumpOnFetch  = hasUrl ? "fetch('${url('on')}');"       : ""
-    def pumpOffFetch = hasUrl ? "fetch('${url('off')}');"      : ""
-
-    // ── Heat source chips ──────────────────────────────────────
-    def heatSources = ["Heater", "Solar Only", "Solar Preferred", "Heat Pump", "Heat Pump Preferred"]
-    def srcBtns = heatSources.collect { lbl ->
-        def isActive  = htsrc?.equalsIgnoreCase(lbl)
-        def btnStyle  = isLocked
-            ? "padding:6px 10px;border-radius:8px;border:1.5px solid #1e3a5f;background:#0f172a;color:#64748b;font-size:10px;font-weight:600;cursor:not-allowed;opacity:.3;"
-            : isActive
-                ? "padding:6px 10px;border-radius:8px;border:1.5px solid #f97316;background:#1a0800;color:#f97316;font-size:10px;font-weight:600;cursor:pointer;"
-                : "padding:6px 10px;border-radius:8px;border:1.5px solid #1e3a5f;background:#0f172a;color:#64748b;font-size:10px;font-weight:600;cursor:pointer;"
-        def fetchCall = (!isLocked && hasUrl) ? "fetch('${srcUrl(lbl)}');" : ""
-        "<button style='${btnStyle}' onclick=\"${fetchCall}\" ${isLocked ? 'disabled' : ''}>${lbl}</button>"
-    }.join("")
-
-    // ── Heat section ───────────────────────────────────────────
-    def heatSectionHtml
-    if (isLocked) {
-        heatSectionHtml = "<div style='background:#7f1d1d;border:2px solid #ef4444;border-radius:10px;padding:12px;text-align:center;font-size:14px;font-weight:900;color:#fca5a5;letter-spacing:1px;text-transform:uppercase;'>🔒 HEAT LOCK IS ON<div style='font-size:9px;font-weight:400;color:#f87171;margin-top:6px;letter-spacing:0;text-transform:none;line-height:1.4;'>Go to device Commands page and tap \"⚙ Enable Heat Lock\" to restore heating</div></div>"
-    } else {
-        def heatBtnLabel = isHeating ? "🔥 Heating Active — Tap to Update" : "🔥 Heat &amp; Start Pump"
-        def heatBtnStyle = isHeating
-            ? "width:100%;padding:14px;border-radius:12px;border:2px solid #f97316;background:#1a0800;color:#f97316;font-size:14px;font-weight:800;cursor:pointer;margin-top:4px;box-sizing:border-box;"
-            : "width:100%;padding:15px;border-radius:12px;border:none;background:#c2410c;color:#fff;font-size:15px;font-weight:800;cursor:pointer;margin-top:4px;box-sizing:border-box;"
-        heatSectionHtml = "<div style='font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;'>STEP 1 — Set target temperature</div><div style='display:flex;align-items:center;gap:8px;margin-bottom:4px;'><button style='width:44px;height:44px;border-radius:50%;border:none;background:#1e3a5f;color:#38bdf8;font-size:24px;font-weight:700;cursor:pointer;flex-shrink:0;line-height:1;' onclick=\"${btnDnFetch}\">−</button><div style='flex:1;text-align:center;font-size:28px;font-weight:800;color:#38bdf8;'>${Math.round(setpt)}°F</div><button style='width:44px;height:44px;border-radius:50%;border:none;background:#1e3a5f;color:#38bdf8;font-size:24px;font-weight:700;cursor:pointer;flex-shrink:0;line-height:1;' onclick=\"${btnUpFetch}\">+</button></div><div style='font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.8px;margin-top:10px;margin-bottom:6px;'>STEP 2 — Choose heat source</div><div style='display:flex;flex-wrap:wrap;gap:5px;'>${srcBtns}</div><div style='font-size:9px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.8px;margin-top:10px;margin-bottom:6px;'>STEP 3 — Go!</div><button style='${heatBtnStyle}' onclick=\"${heatStartFetch}\">${heatBtnLabel}</button><button style='width:100%;padding:10px;border-radius:10px;border:1.5px solid #1e3a5f;background:transparent;color:#94a3b8;font-size:11px;font-weight:600;cursor:pointer;margin-top:6px;box-sizing:border-box;' onclick=\"${heatOffFetch}\">❄  Heat Off  (pump keeps running)</button>"
-    }
-
-    // ── Pump section ───────────────────────────────────────────
-    def pumpClr = isOn ? "#4ade80" : "#ef4444"
-    def pumpSectionHtml
-    if (isOn) {
-        def badge = isHeating ? "🔥 Pump running — heating to ${Math.round(setpt)}°F" : "🏊 Pump running — no heat"
-        pumpSectionHtml = "<div style='width:100%;padding:11px;border-radius:12px;border:2px solid #16a34a;background:#052e16;color:#4ade80;font-size:12px;font-weight:800;text-align:center;margin-bottom:6px;line-height:1.3;box-sizing:border-box;'>${badge}</div><button style='width:100%;padding:14px;border-radius:12px;border:none;background:#991b1b;color:#fff;font-size:15px;font-weight:800;cursor:pointer;box-sizing:border-box;' onclick=\"${pumpOffFetch}\">⏹  Stop Pump &amp; Heat</button>"
-    } else {
-        pumpSectionHtml = "<button style='width:100%;padding:14px;border-radius:12px;border:2px solid #166534;background:#052e16;color:#4ade80;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:6px;box-sizing:border-box;' onclick=\"${pumpOnFetch}\">▶  Start Pump Only  (no heat)</button><div style='text-align:center;font-size:11px;color:#475569;margin-top:8px;padding:4px;'>Everything is off</div>"
-    }
-
-    def noBase        = !base ? "<div style='color:#fbbf24;font-size:10px;text-align:center;margin-bottom:6px;'>⚠ Open app → click Done to activate controls</div>" : ""
-    def tempStatusClr = isHeating ? "#f97316" : (isOn ? "#4ade80" : "#64748b")
-    def tempStatusLbl = isHeating ? "● Heating" : (isOn ? "● Running" : "● Off")
-
-    // ── Temp block replaces SVG arc gauge ──────────────────────
-    def tempBlock = "<div style='background:#1e3a5f;border-radius:14px;padding:14px;text-align:center;margin-bottom:10px;'><div style='font-size:11px;font-weight:700;color:${tempStatusClr};margin-bottom:8px;'>${tempStatusLbl}</div><div style='display:flex;gap:6px;'><div style='flex:1;'><div style='font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;'>Current</div><div style='font-size:36px;font-weight:800;color:#fff;line-height:1;'>${Math.round(temp)}°</div></div><div style='width:1px;background:#0f172a;margin:4px 0;'></div><div style='flex:1;'><div style='font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;'>Target</div><div style='font-size:36px;font-weight:800;color:#38bdf8;line-height:1;'>${Math.round(setpt)}°</div></div></div><div style='font-size:9px;color:#475569;margin-top:8px;'>${htmode} · Max ${Math.round(maxTemp)}°F</div></div>"
-
-    def html = "<div style='font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;background:#0f172a;border-radius:20px;padding:16px 14px;color:#fff;box-sizing:border-box;'><div style='font-size:16px;font-weight:800;text-align:center;margin-bottom:8px;color:#e2e8f0;letter-spacing:.3px;'>${name}</div>${noBase}${tempBlock}<hr style='border:none;border-top:1px solid #1e3a5f;margin:10px 0;'/>${heatSectionHtml}<hr style='border:none;border-top:1px solid #1e3a5f;margin:10px 0;'/>${pumpSectionHtml}</div>"
+    def html = "<div style=\"font-family:sans-serif;background:#0f172a;border-radius:16px;padding:12px;color:#fff;text-align:center;\">" +
+        "<div style=\"font-weight:800;color:#e2e8f0;margin-bottom:4px;\">${name}${lock}</div>" +
+        "<div style=\"color:${statClr};font-size:11px;margin-bottom:8px;\">&#9679; ${statLbl}</div>" +
+        "<div style=\"background:#1e3a5f;border-radius:8px;padding:8px;margin-bottom:6px;\">" +
+        "<div style=\"font-size:9px;color:#64748b;\">NOW / TARGET</div>" +
+        "<span style=\"font-size:32px;font-weight:800;color:#fff;\">${tNow}F</span>" +
+        " / " +
+        "<span style=\"font-size:32px;font-weight:800;color:#38bdf8;\">${tSet}F</span>" +
+        "</div>" +
+        "<div style=\"font-size:10px;color:#94a3b8;\">Pump <b style=\"color:${pumpClr};\">${pumpTxt}</b> | ${htsrc} | ${htmode}</div>" +
+        "</div>"
 
     sendEvent(name: "tile", value: html, displayed: false)
 }
