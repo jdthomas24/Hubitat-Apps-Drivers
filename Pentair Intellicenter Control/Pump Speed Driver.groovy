@@ -103,6 +103,10 @@ def renderTile() {
     def statusLabel = isRunning ? "● Running" : "● Off"
     def name = device.displayName
 
+    // Keep switch attribute in sync with RPM so dashboard switch tiles
+    // and automations see the correct on/off state
+    sendEvent(name: "switch", value: isRunning ? "on" : "off")
+
     def html = "<div style='font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;background:#0f172a;border-radius:20px;padding:16px 14px;color:#fff;margin:0 auto;box-sizing:border-box;'>" +
         "<div style='font-size:14px;font-weight:800;text-align:center;margin-bottom:4px;color:#e2e8f0;'>${name}</div>" +
         "<div style='text-align:center;font-size:11px;font-weight:700;margin-bottom:12px;color:${statusColor};'>${statusLabel}</div>" +
