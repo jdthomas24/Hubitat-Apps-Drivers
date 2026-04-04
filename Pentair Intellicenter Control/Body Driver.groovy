@@ -230,7 +230,7 @@ def renderTile() {
         "<td style=\"text-align:center;width:50%;\"><div style=\"font-size:9px;color:#64748b;\">NOW</div><div style=\"font-size:30px;font-weight:800;color:#fff;\">${tNow}&#176;</div></td>" +
         "<td style=\"text-align:center;width:50%;\"><div style=\"font-size:9px;color:#64748b;\">TARGET</div><div style=\"font-size:30px;font-weight:800;color:#38bdf8;\">${tSet}&#176;</div></td>" +
         "</tr></table></div>" +
-        "<div style=\"font-size:10px;color:#94a3b8;\">Pump <b style=\"color:${pumpClr};\">${pumpTxt}</b> &amp;nbsp;|&amp;nbsp; ${htsrc} &amp;nbsp;|&amp;nbsp; ${htmode}</div>" +
+        "<div style=\"font-size:10px;color:#94a3b8;\">Pump <b style=\"color:${pumpClr};\">${pumpTxt}</b>  |  ${htsrc}  |  ${htmode}</div>" +
         "</div>"
 
     sendEvent(name: "tile", value: html, displayed: false)
