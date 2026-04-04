@@ -11,7 +11,7 @@ metadata {
         description: "Variable speed pump — RPM, watts, GPM and water temperature display",
         version: "1.5.1"
     ) {
-        capability "Sensor"
+        capability "Switch"
 
         attribute "rpm",         "number"
         attribute "watts",       "number"
@@ -76,6 +76,11 @@ def refresh() {
     renderTile()
 }
 
+// Stubs required by capability "Switch" — pump on/off is controlled
+// by the pool body, not directly here.
+def on()  { if (debugMode) log.debug "${device.displayName}: on() stub — use body device to control pump" }
+def off() { if (debugMode) log.debug "${device.displayName}: off() stub — use body device to control pump" }
+
 // ============================================================
 // ===================== TILE DEBOUNCE =======================
 // ============================================================
@@ -98,7 +103,7 @@ def renderTile() {
     def statusLabel = isRunning ? "● Running" : "● Off"
     def name = device.displayName
 
-    def html = "<div style='font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;background:#0f172a;border-radius:20px;padding:16px 14px;color:#fff;max-width:220px;margin:0 auto;box-sizing:border-box;'>" +
+    def html = "<div style='font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;background:#0f172a;border-radius:20px;padding:16px 14px;color:#fff;margin:0 auto;box-sizing:border-box;'>" +
         "<div style='font-size:14px;font-weight:800;text-align:center;margin-bottom:4px;color:#e2e8f0;'>${name}</div>" +
         "<div style='text-align:center;font-size:11px;font-weight:700;margin-bottom:12px;color:${statusColor};'>${statusLabel}</div>" +
         "<div style='text-align:center;margin-bottom:12px;'>" +
