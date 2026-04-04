@@ -43,9 +43,6 @@ metadata {
     }
 }
 
-// ============================================================
-// ===================== LIFECYCLE ===========================
-// ============================================================
 def installed() {
     log.info "IntelliCenter Body v1.5.1 installed: ${device.displayName}"
     sendEvent(name: "heatLock", value: "unlocked")
@@ -67,9 +64,6 @@ def disableDebugLogging() {
     device.updateSetting("debugMode", [value: false, type: "bool"])
 }
 
-// ============================================================
-// ===================== MAIN COMMANDS =======================
-// ============================================================
 def "🔥 Heat and Start Pump"(degrees) {
     def temp = degrees.toInteger()
     def minT = (minSetPoint ?: 40).toInteger()
@@ -116,9 +110,6 @@ def "⏹ Stop Pump and Heat"() {
     debounceTile()
 }
 
-// ============================================================
-// ===================== INTERNAL METHODS ====================
-// ============================================================
 def on()  { "▶ Start Pump Only"() }
 def off() { "⏹ Stop Pump and Heat"() }
 
@@ -150,9 +141,6 @@ def adjustSetPointDown() {
     debounceTile()
 }
 
-// ============================================================
-// ===================== ADVANCED COMMANDS ===================
-// ============================================================
 def "⚙ Set Heat Source"(source) {
     if (device.currentValue("heatLock") == "locked") {
         log.warn "${device.displayName} — Heat Lock is active. Use '⚙ Enable Heat Lock' command to restore."
@@ -176,9 +164,6 @@ def "⚙ Enable Heat Lock"() {
     debounceTile()
 }
 
-// ============================================================
-// ===================== REFRESH =============================
-// ============================================================
 def refresh() {
     if (!device?.deviceNetworkId) {
         log.warn "${device?.displayName ?: 'Body'}: refresh skipped — device not fully initialised"
@@ -188,9 +173,6 @@ def refresh() {
     parent?.componentRefresh(this)
 }
 
-// ============================================================
-// ===================== TILE DEBOUNCE =======================
-// ============================================================
 def debounceTile() {
     unschedule(renderTile)
     runIn(3, renderTile)
@@ -223,12 +205,12 @@ def renderTile() {
     def tNow    = Math.round(temp).toInteger()
     def tSet    = Math.round(setpt).toInteger()
 
-    def html = "<div style=\"font-family:sans-serif;background:#0f172a;border-radius:16px;padding:12px;color:#fff;text-align:center;\">" +
-        "<div style=\"font-weight:800;color:#e2e8f0;margin-bottom:4px;\">${name}${lock}</div>" +
-        "<div style=\"background:#1e3a5f;border-radius:8px;padding:12px;margin-bottom:8px;\">" +
+    def html = "<div style=\"font-family:sans-serif;background:#0f172a;border-radius:16px;padding:10px;color:#fff;text-align:center;width:100%;height:100%;margin:auto;box-sizing:border-box;\">" +
+        "<div style=\"font-size:15px;font-weight:800;color:#e2e8f0;margin-bottom:4px;\">${name}${lock}</div>" +
+        "<div style=\"background:#1e3a5f;border-radius:8px;padding:8px;margin-bottom:6px;\">" +
         "<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>" +
-        "<td style=\"text-align:center;width:50%;\"><div style=\"font-size:9px;color:#64748b;\">NOW</div><div style=\"font-size:38px;font-weight:800;color:#fff;\">${tNow}&#176;</div></td>" +
-        "<td style=\"text-align:center;width:50%;\"><div style=\"font-size:9px;color:#64748b;\">TARGET</div><div style=\"font-size:38px;font-weight:800;color:#38bdf8;\">${tSet}&#176;</div></td>" +
+        "<td style=\"text-align:center;width:50%;\"><div style=\"font-size:9px;color:#64748b;\">NOW</div><div style=\"font-size:28px;font-weight:800;color:#fff;\">${tNow}&#176;</div></td>" +
+        "<td style=\"text-align:center;width:50%;\"><div style=\"font-size:9px;color:#64748b;\">TARGET</div><div style=\"font-size:28px;font-weight:800;color:#38bdf8;\">${tSet}&#176;</div></td>" +
         "</tr></table></div>" +
         "<div style=\"font-size:10px;color:#94a3b8;\">Pump: <b style=\"color:${pumpClr};\">${pumpTxt}</b>  |  Src: ${htsrc}  |  Heat: <b style=\"color:${heatClr};\">${htmode}</b></div>" +
         "</div>"
