@@ -1,14 +1,21 @@
+// ============================================================
+// Pentair IntelliCenter Pump Driver
+// Version: 1.5.0
+// ============================================================
+
 metadata {
     definition(
         name: "Pentair IntelliCenter Pump",
         namespace: "intellicenter",
         author: "jdthomas24",
-        description: "Variable speed pump — shows live RPM, watts and GPM, and allows speed control",
+        description: "Variable speed pump — RPM, watts, GPM and water temperature display",
         version: "1.5.0"
     ) {
-        attribute "rpm",   "number"
-        attribute "watts", "number"
-        attribute "gpm",   "number"
+        attribute "rpm",         "number"
+        attribute "watts",       "number"
+        attribute "gpm",         "number"
+        attribute "temperature", "number"   // water temp pushed from associated body
+        attribute "tile",        "string"   // dashboard HTML tile
 
         command "setSpeed", [[name: "rpm*", type: "NUMBER", description: "Target RPM (450–3450)"]]
         command "refresh"
@@ -26,6 +33,7 @@ metadata {
 // ============================================================
 def installed() {
     log.info "IntelliCenter Pump installed: ${device.displayName}"
+    debounceTile()
 }
 
 def updated() {
@@ -35,6 +43,7 @@ def updated() {
         log.info "${device.displayName}: debug logging enabled — will auto-disable in 60 minutes"
         runIn(3600, disableDebugLogging)
     }
+    debounceTile()
 }
 
 def disableDebugLogging() {
@@ -45,13 +54,6 @@ def disableDebugLogging() {
 // ============================================================
 // ===================== COMMANDS ============================
 // ============================================================
-
-/**
- * setSpeed — sends a new RPM target to the active pump program.
- * RPM is validated against the configured min/max before sending.
- * The pump card in Hubitat will update with the new RPM once the
- * controller confirms the change via a NotifyList push.
- */
 def setSpeed(rpm) {
     def target = rpm.toInteger()
     def minR   = (minRPM ?: 450).toInteger()
@@ -61,16 +63,72 @@ def setSpeed(rpm) {
         log.warn "${device.displayName}: RPM ${target} out of range (${minR}–${maxR}) — ignoring"
         return
     }
-
     if (debugMode) log.debug "setSpeed: ${target} RPM"
-
-    // Optimistic local update so the UI reflects the change immediately
     sendEvent(name: "rpm", value: target, unit: "RPM")
-
-    // Relay to bridge via parent (bridge is parent of pump devices)
     parent?.setPumpSpeed(device.deviceNetworkId, target)
 }
 
 def refresh() {
     parent?.componentRefresh(this)
+}
+
+// ============================================================
+// ===================== TILE DEBOUNCE =======================
+// ============================================================
+def debounceTile() {
+    unschedule(renderTile)
+    runIn(3, renderTile)
+}
+
+// ============================================================
+// ===================== TILE RENDERER =======================
+// Add this device to a dashboard as an Attribute tile
+// and select the "tile" attribute to display the card.
+// ============================================================
+def renderTile() {
+    def rpm   = device.currentValue("rpm")
+    def watts = device.currentValue("watts")
+    def gpm   = device.currentValue("gpm")
+    def temp  = device.currentValue("temperature")
+
+    def rpmVal   = rpm   != null ? "${rpm} RPM"   : "— RPM"
+    def wattsVal = watts != null ? "${watts} W"   : "— W"
+    def gpmVal   = gpm   != null ? "${gpm} GPM"   : "— GPM"
+    def tempVal  = temp  != null ? "${temp}°F"    : "—°F"
+
+    // Simple running indicator based on RPM
+    def isRunning = rpm != null && rpm.toInteger() > 0
+    def statusColor = isRunning ? "#4ade80" : "#64748b"
+    def statusLabel = isRunning ? "● Running" : "● Off"
+
+    def name = device.displayName
+
+    def html = """<style>
+.pu{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;border-radius:20px;padding:16px 14px;color:#fff;max-width:220px;margin:0 auto;box-sizing:border-box;}
+.pu *{box-sizing:border-box;}
+.pu-title{font-size:14px;font-weight:800;text-align:center;margin-bottom:4px;color:#e2e8f0;}
+.pu-status{text-align:center;font-size:11px;font-weight:700;margin-bottom:12px;}
+.pu-rpm{text-align:center;margin-bottom:12px;}
+.pu-rpm-val{font-size:42px;font-weight:800;color:#38bdf8;line-height:1;}
+.pu-rpm-lbl{font-size:11px;color:#64748b;margin-top:2px;text-transform:uppercase;letter-spacing:.5px;}
+.pu-row{display:flex;gap:6px;}
+.pu-box{flex:1;background:#1e3a5f;border-radius:10px;padding:8px 6px;text-align:center;}
+.pu-blbl{font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;}
+.pu-bval{font-size:14px;font-weight:700;color:#e2e8f0;}
+</style>
+<div class='pu'>
+  <div class='pu-title'>${name}</div>
+  <div class='pu-status' style='color:${statusColor};'>${statusLabel}</div>
+  <div class='pu-rpm'>
+    <div class='pu-rpm-val'>${rpm ?: '—'}</div>
+    <div class='pu-rpm-lbl'>RPM</div>
+  </div>
+  <div class='pu-row'>
+    <div class='pu-box'><div class='pu-blbl'>Watts</div><div class='pu-bval'>${watts ?: '—'}</div></div>
+    <div class='pu-box'><div class='pu-blbl'>GPM</div><div class='pu-bval'>${gpm ?: '—'}</div></div>
+    <div class='pu-box'><div class='pu-blbl'>Water</div><div class='pu-bval'>${tempVal}</div></div>
+  </div>
+</div>"""
+
+    sendEvent(name: "tile", value: html, displayed: false)
 }
