@@ -210,6 +210,11 @@ def debounceTile() {
 // which prevented the tile from rendering. Inline styles are
 // passed through untouched.
 // ============================================================
+// ============================================================
+// ===================== TILE RENDERER =======================
+// No SVG, no position:absolute, no transform — dashboard safe.
+// Arc gauge replaced with plain temp block. All controls kept.
+// ============================================================
 def renderTile() {
     def sw       = device.currentValue("switch")           ?: "off"
     def temp     = (device.currentValue("temperature")     ?: 0).toDouble()
@@ -230,28 +235,6 @@ def renderTile() {
 
     def url    = { String cmd -> "${base}/body/${dni}/${cmd}" }
     def srcUrl = { String src -> "${base}/body/${dni}/heatsource/${src.replaceAll(' ','_').toLowerCase()}" }
-
-    // ── Arc gauge ─────────────────────────────────────────────
-    def minT      = (minSetPoint ?: 40).toDouble()
-    def maxT      = (maxSetPoint ?: 104).toDouble()
-    def arcStart  = 125.0; def arcEnd = 415.0; def arcRange = arcEnd - arcStart
-    def clamp     = { v, lo, hi -> Math.max((double)lo, Math.min((double)hi, (double)v)) }
-    def tempFrac  = clamp((temp  - minT) / (maxT - minT), 0.0, 1.0)
-    def setptFrac = clamp((setpt - minT) / (maxT - minT), 0.0, 1.0)
-    def toRad     = { deg -> deg * Math.PI / 180.0 }
-    def arcPath   = { double s, double e ->
-        double cx = 110, cy = 110, r = 88
-        double x1 = cx + r * Math.cos(toRad(s-90)); double y1 = cy + r * Math.sin(toRad(s-90))
-        double x2 = cx + r * Math.cos(toRad(e-90)); double y2 = cy + r * Math.sin(toRad(e-90))
-        "M ${x1.round(2)} ${y1.round(2)} A ${r} ${r} 0 ${((e-s)>180)?1:0} 1 ${x2.round(2)} ${y2.round(2)}"
-    }
-    def tempAngle  = arcStart + tempFrac  * arcRange
-    def setptAngle = arcStart + setptFrac * arcRange
-    def dotX = (110 + 88 * Math.cos(toRad(setptAngle - 90))).round(2)
-    def dotY = (110 + 88 * Math.sin(toRad(setptAngle - 90))).round(2)
-    def trackPath = arcPath(arcStart, arcEnd)
-    def setptPath = arcPath(arcStart, setptAngle)
-    def tempPath  = arcPath(arcStart, tempAngle)
 
     // ── Fetch URLs ─────────────────────────────────────────────
     def btnUpFetch     = hasUrl ? "fetch('${url('setpointup')}');"   : ""
@@ -301,11 +284,14 @@ def renderTile() {
         pumpSectionHtml = "<button style='width:100%;padding:14px;border-radius:12px;border:2px solid #166534;background:#052e16;color:#4ade80;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:6px;box-sizing:border-box;' onclick=\"${pumpOnFetch}\">▶  Start Pump Only  (no heat)</button><div style='text-align:center;font-size:11px;color:#475569;margin-top:8px;padding:4px;'>Everything is off</div>"
     }
 
-    def noBase  = !base ? "<div style='color:#fbbf24;font-size:10px;text-align:center;margin-bottom:6px;'>⚠ Open app → click Done to activate controls</div>" : ""
+    def noBase        = !base ? "<div style='color:#fbbf24;font-size:10px;text-align:center;margin-bottom:6px;'>⚠ Open app → click Done to activate controls</div>" : ""
+    def tempStatusClr = isHeating ? "#f97316" : (isOn ? "#4ade80" : "#64748b")
+    def tempStatusLbl = isHeating ? "● Heating" : (isOn ? "● Running" : "● Off")
 
-    def html = "<div style='font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;background:#0f172a;border-radius:20px;padding:16px 14px;color:#fff;max-width:260px;margin:0 auto;box-sizing:border-box;'><div style='font-size:16px;font-weight:800;text-align:center;margin-bottom:8px;color:#e2e8f0;letter-spacing:.3px;'>${name}</div>${noBase}<div style='position:relative;width:200px;height:128px;margin:0 auto 8px;'><svg style='width:200px;height:200px;overflow:visible;' viewBox='0 0 220 220'><path d='${trackPath}' stroke='#1e3a5f' stroke-width='13' fill='none' stroke-linecap='round'/><path d='${setptPath}' stroke='#1d3460' stroke-width='13' fill='none' stroke-linecap='round'/><path d='${tempPath}' stroke='#1d6fbf' stroke-width='13' fill='none' stroke-linecap='round'/><circle cx='${dotX}' cy='${dotY}' r='7' fill='#38bdf8' stroke='#0f172a' stroke-width='3'/></svg><div style='position:absolute;top:18px;left:50%;transform:translateX(-50%);text-align:center;pointer-events:none;white-space:nowrap;'><div style='font-size:9px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;'>${htmode}</div><div style='font-size:42px;font-weight:800;line-height:1;color:#fff;'>${Math.round(temp)}</div><div style='font-size:11px;color:#94a3b8;'>°F current</div><div style='font-size:10px;color:#38bdf8;margin-top:2px;'>Target ${Math.round(setpt)}°F</div></div></div><div style='display:flex;gap:6px;margin-bottom:10px;'><div style='flex:1;background:#1e3a5f;border-radius:10px;padding:7px 5px;text-align:center;'><div style='font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;'>Target</div><div style='font-size:13px;font-weight:700;color:#e2e8f0;'>${Math.round(setpt)}°</div></div><div style='flex:1;background:#1e3a5f;border-radius:10px;padding:7px 5px;text-align:center;'><div style='font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;'>Max</div><div style='font-size:13px;font-weight:700;color:#e2e8f0;'>${Math.round(maxTemp)}°</div></div><div style='flex:1;background:#1e3a5f;border-radius:10px;padding:7px 5px;text-align:center;'><div style='font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px;'>Pump</div><div style='font-size:13px;font-weight:700;color:${pumpClr};'>${isOn ? 'On' : 'Off'}</div></div></div><hr style='border:none;border-top:1px solid #1e3a5f;margin:10px 0;'/>${heatSectionHtml}<hr style='border:none;border-top:1px solid #1e3a5f;margin:10px 0;'/>${pumpSectionHtml}</div>"
+    // ── Temp block replaces SVG arc gauge ──────────────────────
+    def tempBlock = "<div style='background:#1e3a5f;border-radius:14px;padding:14px;text-align:center;margin-bottom:10px;'><div style='font-size:11px;font-weight:700;color:${tempStatusClr};margin-bottom:8px;'>${tempStatusLbl}</div><div style='display:flex;gap:6px;'><div style='flex:1;'><div style='font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;'>Current</div><div style='font-size:36px;font-weight:800;color:#fff;line-height:1;'>${Math.round(temp)}°</div></div><div style='width:1px;background:#0f172a;margin:4px 0;'></div><div style='flex:1;'><div style='font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px;'>Target</div><div style='font-size:36px;font-weight:800;color:#38bdf8;line-height:1;'>${Math.round(setpt)}°</div></div></div><div style='font-size:9px;color:#475569;margin-top:8px;'>${htmode} · Max ${Math.round(maxTemp)}°F</div></div>"
+
+    def html = "<div style='font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;background:#0f172a;border-radius:20px;padding:16px 14px;color:#fff;box-sizing:border-box;'><div style='font-size:16px;font-weight:800;text-align:center;margin-bottom:8px;color:#e2e8f0;letter-spacing:.3px;'>${name}</div>${noBase}${tempBlock}<hr style='border:none;border-top:1px solid #1e3a5f;margin:10px 0;'/>${heatSectionHtml}<hr style='border:none;border-top:1px solid #1e3a5f;margin:10px 0;'/>${pumpSectionHtml}</div>"
 
     sendEvent(name: "tile", value: html, displayed: false)
 }
-
-
