@@ -24,8 +24,6 @@ metadata {
         attribute "tile",            "string"
         attribute "heatLock",        "string"
 
-        command "refresh"
-        command "▶ Start Pump Only (same as Switch On)"
         command "⚙ Disable Heat Lock"
         command "⚙ Enable Heat Lock"
         command "🔥 Heat and Start Pump", [[name: "degrees*", type: "NUMBER", description: "Target temp °F"]]
@@ -33,6 +31,7 @@ metadata {
             constraints: ["Off", "Heater", "Solar Only", "Solar Preferred", "Heat Pump", "Heat Pump Preferred"]]]
         command "🔴 Stop Heat and Pump"
         command "⚙ Stop Heat - Keep Pump On"
+        command "refresh"
     }
 
     preferences {
@@ -94,13 +93,7 @@ def "⚙ Stop Heat - Keep Pump On"() {
     debounceTile()
 }
 
-def "▶ Start Pump Only (same as Switch On)"() {
-    if (debugMode) log.debug "${device.displayName}: Start Pump Only"
-    sendEvent(name: "switch",     value: "on")
-    sendEvent(name: "bodyStatus", value: "On")
-    parent?.setBodyStatus(device.deviceNetworkId, "ON")
-    debounceTile()
-}
+
 
 def "🔴 Stop Heat and Pump"() {
     if (debugMode) log.debug "${device.displayName}: Stop Pump and Heat"
