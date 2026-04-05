@@ -3,7 +3,7 @@ definition(
     namespace: "intellicenter",
     author: "jdthomas24",
     description: "Pentair IntelliCenter local integration for Hubitat",
-    version: "1.5.2",
+    version: "1.5.3",
     category: "Convenience",
     iconUrl: "",
     iconX2Url: ""
@@ -133,7 +133,7 @@ def endpointHeatOff() {
     // "Heat Off" on the body driver calls parent?.setBodyHeatSource("Off")
     // which reaches the bridge and sends HTMODE=0 + HTSRC=00000.
     // No need to call setBodyHeatSource here separately.
-    child."⚙ Heat Off, Keep Pump On"()
+    child."⚙ Stop Heat - Keep Pump On"()
     render status: 200, data: "OK"
 }
 
