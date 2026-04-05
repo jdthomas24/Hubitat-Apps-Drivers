@@ -25,12 +25,12 @@ metadata {
         attribute "heatLock",        "string"
 
         command "🔥 Heat and Start Pump", [[name: "degrees*", type: "NUMBER", description: "Target temp °F"]]
-        command "▶ Start Pump Only (same as Switch On)"
-        command "⏹ Stop Heat and Pump"
-        command "⚙ Stop Heat - Keep Pump On"
-        command "refresh"
         command "⚙ Set Heat Source", [[name: "source*", type: "ENUM",
             constraints: ["Off", "Heater", "Solar Only", "Solar Preferred", "Heat Pump", "Heat Pump Preferred"]]]
+        command "🔴 Stop Heat and Pump"
+        command "⚙ Stop Heat - Keep Pump On"
+        command "refresh"
+        command "▶ Start Pump Only (same as Switch On)"
         command "⚙ Disable Heat Lock"
         command "⚙ Enable Heat Lock"
     }
@@ -102,7 +102,7 @@ def "▶ Start Pump Only (same as Switch On)"() {
     debounceTile()
 }
 
-def "⏹ Stop Heat and Pump"() {
+def "🔴 Stop Heat and Pump"() {
     if (debugMode) log.debug "${device.displayName}: Stop Pump and Heat"
     sendEvent(name: "switch",     value: "off")
     sendEvent(name: "bodyStatus", value: "Off")
@@ -111,7 +111,7 @@ def "⏹ Stop Heat and Pump"() {
 }
 
 def on()  { "▶ Start Pump Only (same as Switch On)"() }
-def off() { "⏹ Stop Heat and Pump"() }
+def off() { "🔴 Stop Heat and Pump"() }
 
 def setHeatingSetpoint(temp) {
     sendEvent(name: "heatingSetpoint", value: temp.toInteger(), unit: "°F")
@@ -217,4 +217,3 @@ def renderTile() {
 
     sendEvent(name: "tile", value: html, displayed: false)
 }
-
