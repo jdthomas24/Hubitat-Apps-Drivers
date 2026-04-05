@@ -3,7 +3,7 @@ definition(
     namespace: "intellicenter",
     author: "jdthomas24",
     description: "Pentair IntelliCenter local integration for Hubitat",
-    version: "1.5.1",
+    version: "1.5.2",
     category: "Convenience",
     iconUrl: "",
     iconX2Url: ""
