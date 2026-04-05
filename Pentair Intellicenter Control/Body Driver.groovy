@@ -29,9 +29,9 @@ metadata {
         command "🔴 Stop Heat and Pump"
         command "⚙ Stop Heat - Keep Pump On"
         command "🔥 Heat and Start Pump", [[name: "degrees*", type: "NUMBER", description: "Target temp °F"]]
+        command "refresh"
         command "⚙ Set Heat Source", [[name: "source*", type: "ENUM",
             constraints: ["Off", "Heater", "Solar Only", "Solar Preferred", "Heat Pump", "Heat Pump Preferred"]]]
-        command "refresh"
     }
 
     preferences {
@@ -210,4 +210,5 @@ def renderTile() {
 
     sendEvent(name: "tile", value: html, displayed: false)
 }
+
 
