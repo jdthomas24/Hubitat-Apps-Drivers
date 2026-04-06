@@ -3,30 +3,35 @@
   "author": "Jdthomas24",
   "version": "1.5.4",
   "category": "Utility",
+  "description": "Pentair Intellicenter Controller ",
   "dateReleased": "4-6-26",
   "minimumHEVersion": "2.3.0",
   "apps": [
     {
       "name": "Intellicenter Parent App",
       "location": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/blob/main/Pentair%20Intellicenter%20Control/Parent%20App.groovy",
-      "required": true
+      "required": true,
+      "oauth": true
     }
   ],
   "drivers": [
     {
       "name": "Bridge Device Driver",
       "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/Bridge%20Device%20Driver.groovy",
-      "required": true
+      "required": true,
+      "oauth": true
     },
     {
       "name": "Body Driver",
       "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/Body%20Driver.groovy",
-      "required": true
+      "required": true,
+      "oauth": true
     },
     {
       "name": "Pump Speed Driver",
       "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/Pump%20Speed%20Driver.groovy",
-      "required": true
+      "required": true,
+      "oauth": true
     }
   ]
 }
