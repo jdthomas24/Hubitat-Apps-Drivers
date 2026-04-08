@@ -1,12 +1,12 @@
 {
   "packageName": "Battery Monitor 2.0",
   "author": "Jdthomas24",
-  "version": "2.4.5",
+  "version": "2.4.6",
   "category": "Convenience",
   "description": "Advanced Hubitat battery monitoring with analytics, trends and replacement tracking. Recurring scan schedule, confidence-weighted health, EWMA smoothing.",
-  "dateReleased": "4/7/26",
+  "dateReleased": "4/8/26",
   "minimumHEVersion": "2.3.0",
-  "releaseNotes": "v2.4.5\n\nBug Fixes\n- Trends page showed 0% batteries as 100% (fixed truthy-check bug)\n- Drain adjustment for locks, sensors, and smoke detectors was never applying (fixed device type detection)\n- 24-hour zero-drain samples never recorded due to scan clock resetting every hour (fixed - clock now only resets when a sample is saved)\n\nNew Feature\n- Reset Drain History added to Battery Trends page\n- Select one or more devices, clear their drain samples and reset to Pending\n- Does not affect battery replacement history\n- Never runs automatically - explicit user action only\n- Documented in App Guide & Reference",
+  "releaseNotes": "v2.4.6\n\nBug Fixes\n- Last Battery column not updating on scans or Force Scan (lastDate and lastScanDate now separate fields)\n- Reset Drain History could cause inflated drain spike on first new sample after reset (date fields now reset correctly)",
   "apps": [
     {
       "name": "Battery Monitor 2.0",
