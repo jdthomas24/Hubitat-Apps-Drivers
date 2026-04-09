@@ -1,16 +1,16 @@
 {
-  "packageName": "Pentair Intellicenter Controller",
-  "author": "Jdthomas24",
-  "version": "1.5.6",
+  "packageName": "Pentair IntelliCenter Controller",
+  "author": "jdthomas24",
+  "version": "1.5.8",
   "category": "Utility",
-  "description": "Pentair Intellicenter Controller",
+  "description": "Pentair IntelliCenter local integration for Hubitat",
   "dateReleased": "4-9-26",
   "minimumHEVersion": "2.3.0",
-  "releaseNotes": "v1.5.6 — Fixed air temperature sensor not updating automatically; sensor state is now included in the scheduled poll cycle. Fixed Pump driver version string incorrectly reporting 1.5.4.",
+  "releaseNotes": "v1.5.8 — Fixed Body driver on() calling non-existent method (caused MissingMethodException on dashboard switch tap). Fixed Heat Lock warning message showing wrong command name. Fixed stale v1.5.4 log strings in Body driver. Fixed Bridge watchdog firing immediately on first boot. Fixed IC2 firmware compatibility — WriteParamList changes field now guarded as List. Fixed Bridge writing endpointBase setting on every state push. Fixed Parent App componentRefresh routing all device types correctly through Bridge.",
   "apps": [
     {
       "name": "Intellicenter Parent App",
-      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/Parent%20App.groovy",
+      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20IntelliCenter%20Control/Parent%20App.groovy",
       "required": true,
       "oauth": true
     }
@@ -18,17 +18,17 @@
   "drivers": [
     {
       "name": "Bridge Device Driver",
-      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/Bridge%20Device%20Driver.groovy",
+      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20IntelliCenter%20Control/Bridge%20Device%20Driver.groovy",
       "required": true
     },
     {
       "name": "Body Driver",
-      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/Body%20Driver.groovy",
+      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20IntelliCenter%20Control/Body%20Driver.groovy",
       "required": true
     },
     {
       "name": "Pump Speed Driver",
-      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/Pump%20Speed%20Driver.groovy",
+      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20IntelliCenter%20Control/Pump%20Speed%20Driver.groovy",
       "required": true
     }
   ]
