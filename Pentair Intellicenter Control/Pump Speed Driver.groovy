@@ -1,6 +1,6 @@
 // ============================================================
 // Pentair IntelliCenter Pump Driver
-// Version: 1.5.7
+// Version: 1.5.8
 // ============================================================
  
 metadata {
@@ -9,7 +9,7 @@ metadata {
         namespace: "intellicenter",
         author: "jdthomas24",
         description: "Variable speed pump — RPM, watts, GPM and water temperature display",
-        version: "1.5.7"
+        version: "1.5.8"
     ) {
         capability "Switch"
  
