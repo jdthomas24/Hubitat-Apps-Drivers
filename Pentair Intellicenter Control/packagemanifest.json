@@ -1,11 +1,12 @@
 {
   "packageName": "Pentair Intellicenter Controller",
   "author": "Jdthomas24",
-  "version": "1.5.5",
+  "version": "1.5.6",
   "category": "Utility",
-  "description": "Pentair Intellicenter Controller ",
-  "dateReleased": "4-6-26",
+  "description": "Pentair Intellicenter Controller",
+  "dateReleased": "4-9-26",
   "minimumHEVersion": "2.3.0",
+  "releaseNotes": "v1.5.6 — Fixed air temperature sensor not updating automatically; sensor state is now included in the scheduled poll cycle. Fixed Pump driver version string incorrectly reporting 1.5.4.",
   "apps": [
     {
       "name": "Intellicenter Parent App",
