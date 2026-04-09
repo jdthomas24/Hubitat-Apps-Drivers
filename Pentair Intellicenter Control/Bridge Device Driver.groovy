@@ -1,6 +1,6 @@
 // ============================================================
 // Pentair IntelliCenter Bridge Driver
-// Version: 1.5.7
+// Version: 1.5.8
 // All files in this integration share this version number.
 // ============================================================
 
@@ -10,7 +10,7 @@ metadata {
         namespace: "intellicenter",
         author: "jdthomas24",
         description: "Bridge driver for Pentair IntelliCenter TCP connection",
-        version: "1.5.7"
+        version: "1.5.8"
     ) {
         capability "Initialize"
         capability "Refresh"
@@ -51,7 +51,8 @@ def initialize() {
     state.objectMap    = [:]
     state.pendingCmds  = [:]
     state.connected    = false
-    state.lastPollTime = 0
+    // Initialize to now so the watchdog does not fire immediately on first boot
+    state.lastPollTime = now()
 
     unschedule()
     schedule("0 0/2 * * * ?", reconnectIfNeeded)
@@ -138,12 +139,10 @@ def disableDebugLogging() {
 // ============================================================
 def pollWatchdog() {
     if (!state.connected) return
-    def interval    = (pollInterval ?: 30).toInteger()
-    def now         = now()
-    def lastPoll    = state.lastPollTime ?: 0
-    def elapsed     = (now - lastPoll) / 1000  // seconds
+    def interval = (pollInterval ?: 30).toInteger()
+    def elapsed  = (now() - (state.lastPollTime ?: now())) / 1000  // seconds
 
-    if (lastPoll == 0 || elapsed > (interval * 2)) {
+    if (elapsed > (interval * 2)) {
         log.warn "Poll watchdog: last poll was ${elapsed.toInteger()}s ago — restarting poll chain"
         runIn(1, pollState)
     }
@@ -382,11 +381,13 @@ def handleNotifyList(json) {
 
 // WriteParamList — full state push from controller after a SetParamList.
 // Uses "changes" array instead of "objectList" params.
+// Guard changes as a List — some IC2 firmware versions send a single object.
 def handleWriteParamList(json) {
     json?.objectList?.each { obj ->
         def name       = obj.objnam
-        def changeList = obj.changes
-        if (!name || !changeList) return
+        def rawChanges = obj.changes
+        if (!name || rawChanges == null) return
+        def changeList = rawChanges instanceof List ? rawChanges : [rawChanges]
         changeList.each { change ->
             def params = change.params
             if (!params) return
@@ -474,7 +475,8 @@ def processBody(String objnam, Map params) {
         return
     }
 
-    if (endpointBase) {
+    // Only write endpointBase setting if the value has actually changed
+    if (endpointBase && body.getSetting("endpointBase") != endpointBase) {
         body.updateSetting("endpointBase", [value: endpointBase, type: "text"])
     }
 
@@ -789,4 +791,5 @@ def getOrCreateChild(String driver, String dni, String label, Boolean isComponen
     }
     return child
 }
+
 
