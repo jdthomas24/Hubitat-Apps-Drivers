@@ -1,14 +1,8 @@
-/// ============================================================
+// ============================================================
 // Pentair IntelliCenter Body Driver
 // Version: 1.6.0
 // All files in this integration share this version number.
 // ============================================================
-
-import groovy.transform.Field
-
-@Field static final String VERSION     = "1.6.0"
-@Field static final String COMM_LINK   = "https://community.hubitat.com/t/release-pentair-intellicenter-controller-beta/162876/31"
-@Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 
 metadata {
     definition(
@@ -50,6 +44,15 @@ metadata {
 }
 
 // ============================================================
+// These must appear AFTER metadata for HPM compatibility
+// ============================================================
+import groovy.transform.Field
+
+@Field static final String VERSION     = "1.6.0"
+@Field static final String COMM_LINK   = "https://community.hubitat.com/t/release-pentair-intellicenter-controller-beta/162876/31"
+@Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
+
+// ============================================================
 // ===================== HELP INFO ===========================
 // ============================================================
 String fmtHelpInfo() {
@@ -64,13 +67,13 @@ String fmtHelpInfo() {
 // ===================== LIFECYCLE ===========================
 // ============================================================
 def installed() {
-    log.info "IntelliCenter Body v1.5.9 installed: ${device.displayName}"
+    log.info "IntelliCenter Body v1.6.0 installed: ${device.displayName}"
     sendEvent(name: "heatLock", value: "unlocked")
     renderTile()
 }
 
 def updated() {
-    log.info "IntelliCenter Body v1.5.9 updated: ${device.displayName}"
+    log.info "IntelliCenter Body v1.6.0 updated: ${device.displayName}"
     unschedule(disableDebugLogging)
     if (debugMode) {
         log.info "${device.displayName}: debug logging enabled — will auto-disable in 60 minutes"
@@ -122,7 +125,6 @@ def "🔴 Stop Heat and Pump"() {
     debounceTile()
 }
 
-// on() drives the body/pump on directly
 def on() {
     if (debugMode) log.debug "${device.displayName}: on() — starting pump"
     sendEvent(name: "switch",     value: "on")
@@ -200,8 +202,6 @@ def debounceTile() {
 
 // ============================================================
 // ===================== TILE RENDERER =======================
-// Compact — under 1024 chars to fit Hubitat dashboard limit.
-// No SVG, no onclick, no flex. Display only.
 // ============================================================
 def renderTile() {
     def sw       = device.currentValue("switch")           ?: "off"
@@ -217,8 +217,6 @@ def renderTile() {
 
     def name    = device.displayName
     def pumpClr = isOn      ? "#4ade80" : "#ef4444"
-    def statClr = isHeating ? "#f97316" : (isOn ? "#4ade80" : "#64748b")
-    def statLbl = isHeating ? "Heating"  : (isOn ? "Running"  : "Off")
     def lock    = isLocked  ? " (LOCKED)" : ""
     def pumpTxt = isOn ? "On" : "Off"
     def heatClr = isHeating ? "#4ade80" : "#ef4444"
@@ -237,4 +235,5 @@ def renderTile() {
 
     sendEvent(name: "tile", value: html, displayed: false)
 }
+
 
