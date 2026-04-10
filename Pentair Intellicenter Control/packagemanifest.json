@@ -1,12 +1,12 @@
 {
   "packageName": "Pentair IntelliCenter Controller",
   "author": "jdthomas24",
-  "version": "1.5.9",
+  "version": "1.6.0",
   "category": "Utility",
   "description": "Pentair IntelliCenter local integration for Hubitat",
   "dateReleased": "4-10-26",
   "minimumHEVersion": "2.3.0",
-  "releaseNotes": "v1.5.9 — Fixed Body driver on() calling non-existent method. Fixed Heat Lock warning message. Fixed stale version log strings. Fixed Bridge watchdog first-boot race. Fixed IC2 WriteParamList compatibility. Fixed endpointBase writing on every push. Fixed Parent App componentRefresh routing. Fixed air temperature sensor not polling automatically. Fixed refresh button for all device types. Added poll watchdog self-healing. Added Community and PayPal donation links to all device pages and app.",
+  "releaseNotes": "v1.6.0 — Fixed Body driver on() calling non-existent method. Fixed Heat Lock warning message. Fixed stale version log strings. Fixed Bridge watchdog first-boot race. Fixed IC2 WriteParamList compatibility. Fixed endpointBase writing on every push. Fixed Parent App componentRefresh routing. Fixed air temperature sensor not polling automatically. Fixed refresh button for all device types. Added poll watchdog self-healing. Added Community and PayPal donation links to all device pages and app.",
   "apps": [
     {
       "name": "Intellicenter Parent App",
