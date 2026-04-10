@@ -4,12 +4,6 @@
 // All files in this integration share this version number.
 // ============================================================
 
-import groovy.transform.Field
-
-@Field static final String VERSION     = "1.6.0"
-@Field static final String COMM_LINK   = "https://community.hubitat.com/t/release-pentair-intellicenter-controller-beta/162876/31"
-@Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
-
 metadata {
     definition(
         name: "Pentair IntelliCenter Bridge",
@@ -38,6 +32,15 @@ metadata {
         input name: "helpInfo", type: "hidden", title: fmtHelpInfo()
     }
 }
+
+// ============================================================
+// These must appear AFTER metadata for HPM compatibility
+// ============================================================
+import groovy.transform.Field
+
+@Field static final String VERSION     = "1.6.0"
+@Field static final String COMM_LINK   = "https://community.hubitat.com/t/release-pentair-intellicenter-controller-beta/162876/31"
+@Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 
 // ============================================================
 // ===================== HELP INFO ===========================
