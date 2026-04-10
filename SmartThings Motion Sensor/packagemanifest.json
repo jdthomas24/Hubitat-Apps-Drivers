@@ -1,18 +1,19 @@
 {
   "packageName": "SmartThings Motion Sensor Driver",
-  "author": "Jdthomas24",
-  "version": "1.7.2",
-  "category": "Drivers",
+  "author": "jdthomas24",
+  "version": "1.7.3",
+  "category": "Utility",
   "description": "Custom Hubitat driver for SmartThings Zigbee motion sensors with local processing and battery reporting.",
-  "dateReleased": "4/7/26",
+  "dateReleased": "4-10-26",
   "minimumHEVersion": "2.3.0",
-  "releaseNotes": "v1.7.2\n- Debug logging auto-disables after 30 minutes (default now off)\n- Presence logging fully suppressed when Enable Presence Detection is off\n- Temperature log suppressed when Enable Temperature Reporting is off\n- Refined battery voltage curve for CR2450/CR2477 coin cells (more accurate mid-range reporting)\n- Motion reset time validated against zero or negative values\n- Stale motion reset timer cleared when settings are saved\n- checkinHistory list trimmed on read to prevent state bloat after hub restart",
+  "releaseNotes": "v1.7.3 - Unique package ID added for HPM compatibility. Debug logging auto-disables after 30 minutes. Refined battery voltage curve. Motion reset timer fixes. State bloat prevention.",
   "drivers": [
     {
+      "id": "a60901b6-bed8-4d00-9c98-a12ff7fa196b",
       "name": "SmartThings Motion Sensor Advanced",
+      "namespace": "jdthomas24",
       "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/SmartThings%20Motion%20Sensor/Raw%20Code/SmartThings%20Motion.groovy",
-      "required": true,
-      "primary": true
+      "required": true
     }
   ]
 }
