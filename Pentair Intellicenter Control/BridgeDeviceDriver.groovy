@@ -1,6 +1,6 @@
 // ============================================================
 // Pentair IntelliCenter Bridge Driver
-// Version: 1.6.0
+// Version: 1.6.1
 // All files in this integration share this version number.
 // ============================================================
 
@@ -10,7 +10,7 @@ metadata {
         namespace: "intellicenter",
         author: "jdthomas24",
         description: "Bridge driver for Pentair IntelliCenter TCP connection",
-        version: "1.6.0"
+        version: "1.6.1"
     ) {
         capability "Initialize"
         capability "Refresh"
