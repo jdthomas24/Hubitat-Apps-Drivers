@@ -1,7 +1,7 @@
 /*
 SmartThings Motion Sensor Enhanced
  
-Version: 1.7.2
+Version: 1.7.3
 Author: jdthomas24
 Namespace: jdthomas24
  
