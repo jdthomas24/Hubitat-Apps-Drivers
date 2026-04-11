@@ -1,6 +1,6 @@
 // ============================================================
 // Pentair IntelliCenter Bridge Driver
-// Version: 1.6.1
+// Version: 1.6.2
 // All files in this integration share this version number.
 // ============================================================
 
@@ -10,7 +10,7 @@ metadata {
         namespace: "intellicenter",
         author: "jdthomas24",
         description: "Bridge driver for Pentair IntelliCenter TCP connection",
-        version: "1.6.1"
+        version: "1.6.2"
     ) {
         capability "Initialize"
         capability "Refresh"
@@ -779,6 +779,7 @@ def getOrCreateChild(String driver, String dni, String label, Boolean isComponen
     }
     return child
 }
+
 
 
 
