@@ -1,6 +1,6 @@
 // ============================================================
 // Pentair IntelliCenter Body Driver
-// Version: 1.6.1
+// Version: 1.6.2
 // All files in this integration share this version number.
 // ============================================================
 
@@ -10,7 +10,7 @@ metadata {
         namespace: "intellicenter",
         author: "jdthomas24",
         description: "Pool / Spa controller — pump, temperature and heat control",
-        version: "1.6.1"
+        version: "1.6.2"
     ) {
         capability "Switch"
 
@@ -223,16 +223,15 @@ def renderTile() {
     def tNow    = Math.round(temp).toInteger()
     def tSet    = Math.round(setpt).toInteger()
 
-    def html = "<div style=\"font-family:sans-serif;background:#0f172a;border-radius:16px;padding:10px;color:#fff;text-align:center;width:100%;height:100%;margin:auto;box-sizing:border-box;\">" +
-        "<div style=\"font-size:15px;font-weight:800;color:#e2e8f0;margin-bottom:4px;\">${name}${lock}</div>" +
-        "<div style=\"background:#1e3a5f;border-radius:8px;padding:8px;margin-bottom:6px;\">" +
-        "<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>" +
-        "<td style=\"text-align:center;width:50%;\"><div style=\"font-size:9px;color:#64748b;\">NOW</div><div style=\"font-size:28px;font-weight:800;color:#fff;\">${tNow}&#176;</div></td>" +
-        "<td style=\"text-align:center;width:50%;\"><div style=\"font-size:9px;color:#64748b;\">TARGET</div><div style=\"font-size:28px;font-weight:800;color:#38bdf8;\">${tSet}&#176;</div></td>" +
+    def html = "<div style='width:100%;height:100%;background:#0f172a;border-radius:16px;padding:10px;color:#fff;text-align:center;box-sizing:border-box;font-family:sans-serif;margin-left:1.5px'>" +
+        "<div style='font-size:15px;font-weight:800;color:#e2e8f0;margin-bottom:4px'>${name}${lock}</div>" +
+        "<div style='background:#1e3a5f;border-radius:8px;padding:8px;margin-bottom:6px'>" +
+        "<table width='100%' cellpadding='0' cellspacing='0'><tr>" +
+        "<td style='width:50%'><div style='font-size:9px;color:#64748b'>NOW</div><div style='font-size:28px;font-weight:800'>${tNow}&#176;</div></td>" +
+        "<td style='width:50%'><div style='font-size:9px;color:#64748b'>TARGET</div><div style='font-size:28px;font-weight:800;color:#38bdf8'>${tSet}&#176;</div></td>" +
         "</tr></table></div>" +
-        "<div style=\"font-size:10px;color:#94a3b8;\">Pump: <b style=\"color:${pumpClr};\">${pumpTxt}</b>  |  Src: ${htsrc}  |  Heat: <b style=\"color:${heatClr};\">${htmode}</b></div>" +
+        "<div style='font-size:10px;color:#94a3b8'>Pump:<b style='color:${pumpClr}'>${pumpTxt}</b> Src:${htsrc} Heat:<b style='color:${heatClr}'>${htmode}</b></div>" +
         "</div>"
-
     sendEvent(name: "tile", value: html, displayed: false)
 }
 
