@@ -1,13 +1,13 @@
 {
   "packageName": "Pentair IntelliCenter Controller",
   "author": "jdthomas24",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "category": "Utility",
   "description": "Pentair IntelliCenter local integration for Hubitat",
   "dateReleased": "4-10-26",
   "minimumHEVersion": "2.3.0",
   "communityLink": "https://community.hubitat.com/t/release-pentair-intellicenter-controller-beta/162876/31",
-  "releaseNotes": "v1.6.1 - Fixed HPM installation issue. All drivers and app now load correctly via HPM.",
+  "releaseNotes": "v1.6.2 - Dashboard Attribute updates for Pump, Spa, and Pool Tiles.",
   "apps": [
     {
       "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
