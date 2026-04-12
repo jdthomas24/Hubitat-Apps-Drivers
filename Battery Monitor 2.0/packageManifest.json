@@ -1,12 +1,12 @@
 {
   "packageName": "Battery Monitor 2.0",
   "author": "Jdthomas24",
-  "version": "2.4.6",
+  "version": "2.4.7",
   "category": "Convenience",
   "description": "Advanced Hubitat battery monitoring with analytics, trends and replacement tracking. Recurring scan schedule, confidence-weighted health, EWMA smoothing.",
   "dateReleased": "4/8/26",
   "minimumHEVersion": "2.3.0",
-  "releaseNotes": "v2.4.6\n\nBug Fixes\n- Last Battery column not updating on scans or Force Scan (lastDate and lastScanDate now separate fields)\n- Reset Drain History could cause inflated drain spike on first new sample after reset (date fields now reset correctly)",
+  "releaseNotes": "v2.4.7 - Dead battery detection added. Improved door lock drain handling with separate thresholds. Sample Quality column added to Trends page. Color coded health ratings. Updated App Guide.",
   "apps": [
     {
       "name": "Battery Monitor 2.0",
