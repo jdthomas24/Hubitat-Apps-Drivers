@@ -115,9 +115,9 @@ def mainPage() {
         // ── Device Selection ─────────────────────────────────
         def devicesSelected = (monitoredDevices?.size() ?: 0) > 0
         section("<b>Monitored Devices</b>", hideable: true, hidden: devicesSelected) {
-            paragraph "<b>Select all Zigbee and Z-Wave devices you want to monitor.</b> The app will automatically detect the protocol for each device."
+            paragraph "<b>Select Zigbee and Z-Wave devices to monitor.</b> The app will automatically detect the protocol for each device and skip any LAN, cloud, or virtual devices selected by mistake."
             paragraph "<span style='color:red; font-weight:bold;'>IMPORTANT: After selecting devices, you MUST click 'Done' before viewing reports.</span>"
-            input "monitoredDevices", "capability.sensor",
+            input "monitoredDevices", "capability.actuator",
                   title: "Select devices to monitor",
                   multiple: true,
                   required: false,
@@ -334,13 +334,13 @@ def updateDeviceHistory(device) {
 
     if (!data) {
         state.history[id] = [
-            lastSeen:        now(),
-            lastCheckin:     now(),
-            samples:         [],
-            avgInterval:     null,
-            userInterval:    null,
-            missedCheckins:  0,
-            protocol:        getProtocol(device)
+            lastSeen:       now(),
+            lastCheckin:    now(),
+            samples:        [],
+            avgInterval:    null,
+            userInterval:   null,
+            missedCheckins: 0,
+            protocol:       getProtocol(device)
         ]
         state.health[id] = "Pending"
         data = state.history[id]
@@ -349,9 +349,8 @@ def updateDeviceHistory(device) {
     }
 
     def lastSeen = data.lastCheckin ?: now()
-    def elapsed  = (now() - lastSeen) / (1000 * 60)  // minutes
+    def elapsed  = (now() - lastSeen) / (1000 * 60)
 
-    // Only record a sample if meaningful time has passed (at least 10 minutes)
     if (elapsed >= 10) {
         def alpha      = 0.3
         def prevSmooth = (data.samples && data.samples.size() > 0) ? data.samples[-1] : elapsed
@@ -376,29 +375,26 @@ def updateDeviceHistory(device) {
 // ===================== HEALTH SCORING ======================
 // ============================================================
 def updateHealth(device) {
-    def id       = device.id
-    def data     = state.history[id]
+    def id   = device.id
+    def data = state.history[id]
     if (!data) return
 
-    def samples  = data.samples?.size() ?: 0
+    def samples = data.samples?.size() ?: 0
     if (samples < 3) {
         state.health[id] = "Pending"
         return
     }
 
-    // Check offline first — hard threshold regardless of baseline
-    def offlineThreshold = ((settings?.offlineThresholdHours ?: 24) * 60).toDouble()
+    def offlineThreshold     = ((settings?.offlineThresholdHours ?: 24) * 60).toDouble()
     def minutesSinceLastSeen = (now() - (data.lastSeen ?: now())) / (1000 * 60)
+
     if (minutesSinceLastSeen >= offlineThreshold) {
         state.health[id] = "Offline"
         return
     }
 
-    // Use user override if set, otherwise use learned baseline
     def baseline = (data.userInterval ?: data.avgInterval ?: 60).toDouble()
-
-    // Score based on how late the last check-in was vs baseline
-    def ratio = minutesSinceLastSeen / baseline
+    def ratio    = minutesSinceLastSeen / baseline
 
     if      (ratio <= 1.2) state.health[id] = "Excellent"
     else if (ratio <= 2.0) state.health[id] = "Good"
@@ -413,7 +409,7 @@ def updateHealth(device) {
 // ===================== HEALTH DISPLAY ======================
 // ============================================================
 def getHealthDisplay(device) {
-    def h = state.health[device.id] ?: "Pending"
+    def h       = state.health[device.id] ?: "Pending"
     def samples = state.history?.get(device.id)?.samples?.size() ?: 0
 
     if (h == "Pending") {
