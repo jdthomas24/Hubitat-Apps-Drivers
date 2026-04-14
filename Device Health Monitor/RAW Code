@@ -76,19 +76,25 @@ def applyCustomLabel() {
 // ===================== HELPERS =============================
 // ============================================================
 def getAllMonitoredDevices() {
-    return monitoredDevices ?: []
+    def all = []
+    if (sensorDevices)   all.addAll(sensorDevices)
+    if (actuatorDevices) all.addAll(actuatorDevices)
+    return all.unique { it.id }
 }
 
 def getProtocol(device) {
     try {
-        // Zigbee devices have endpointId or zigbeeNodeType data values
-        if (device.getDataValue("endpointId")                != null) return "Zigbee"
+        // Zigbee — capital E, space
+        if (device.getDataValue("Endpoint Id")                != null) return "Zigbee"
+        if (device.getDataValue("endpointId")                 != null) return "Zigbee"
         if (device.getDataValue("zigbeeNodeType")             != null) return "Zigbee"
         if (device.getDataValue("zigbeeId")                   != null) return "Zigbee"
-        // Z-Wave devices have zwaveSecurePairingComplete or inClusters
-        if (device.getDataValue("zwaveSecurePairingComplete") != null) return "Z-Wave"
+        // Z-Wave — capital I, space
+        if (device.getDataValue("In Clusters")                != null) return "Z-Wave"
         if (device.getDataValue("inClusters")                 != null) return "Z-Wave"
+        if (device.getDataValue("zwaveSecurePairingComplete") != null) return "Z-Wave"
         if (device.getDataValue("secureInClusters")           != null) return "Z-Wave"
+        if (device.getDataValue("Zw Node Info")               != null) return "Z-Wave"
     } catch (e) {
         if (debugMode) log.debug "getProtocol error for ${device.displayName}: ${e.message}"
     }
@@ -117,24 +123,32 @@ def mainPage() {
         }
 
         // ── Device Selection ─────────────────────────────────
-        def devicesSelected = (monitoredDevices?.size() ?: 0) > 0
+        def devicesSelected = ((sensorDevices?.size() ?: 0) + (actuatorDevices?.size() ?: 0)) > 0
         section("<b>Monitored Devices</b>", hideable: true, hidden: devicesSelected) {
             paragraph "<b>Select Zigbee and Z-Wave devices to monitor.</b> The app will automatically detect the protocol for each device and skip any LAN, cloud, or virtual devices selected by mistake."
             paragraph "<span style='color:red; font-weight:bold;'>IMPORTANT: After selecting devices, you MUST click 'Done' before viewing reports.</span>"
-            input "monitoredDevices", "capability.actuator",
-                  title: "Select devices to monitor",
+            input "sensorDevices", "capability.sensor",
+                  title: "Select sensor devices (Zigbee motion, contact, smoke, temp, etc.)",
+                  multiple: true,
+                  required: false,
+                  submitOnChange: true
+            input "actuatorDevices", "capability.actuator",
+                  title: "Select actuator devices (Z-Wave switches, dimmers, locks, etc.)",
                   multiple: true,
                   required: false,
                   submitOnChange: true
         }
         if (devicesSelected) {
-            def zigbeeCount  = monitoredDevices.count { getProtocol(it) == "Zigbee" }
-            def zwaveCount   = monitoredDevices.count { getProtocol(it) == "Z-Wave" }
-            def unknownCount = monitoredDevices.count { getProtocol(it) == "Unknown" }
+            def allSelected  = getAllMonitoredDevices()
+            def zigbeeCount  = allSelected.count { getProtocol(it) == "Zigbee" }
+            def zwaveCount   = allSelected.count { getProtocol(it) == "Z-Wave" }
+            def unknownCount = allSelected.count { getProtocol(it) == "Unknown" }
+            def totalCount   = allSelected.size()
             section("") {
-                paragraph "<b><span style='color:blue;'>${monitoredDevices.size()} device(s) selected</span></b> — " +
-                          "Zigbee: <b>${zigbeeCount}</b> | Z-Wave: <b>${zwaveCount}</b>" +
-                          (unknownCount > 0 ? " | <span style='color:orange;'>Unknown protocol: <b>${unknownCount}</b> (these will be skipped)</span>" : "") +
+                paragraph "<b><span style='color:blue;'>${totalCount} device(s) selected</span></b> — " +
+                          "Zigbee: <b><span style='color:blue;'>${zigbeeCount}</span></b> | " +
+                          "Z-Wave: <b><span style='color:blue;'>${zwaveCount}</span></b>" +
+                          (unknownCount > 0 ? " | <span style='color:orange;'>Unknown protocol: <b><span style='color:orange;'>${unknownCount}</span></b> (these will be skipped)</span>" : "") +
                           " — Tap <b>Monitored Devices</b> above to change."
             }
         }
