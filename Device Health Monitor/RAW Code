@@ -54,10 +54,8 @@ def initialize() {
     if (state.health  == null) state.health  = [:]
     scheduleScanInterval()
     scheduleReportFrequency()
-    def allDevices = getAllMonitoredDevices()
-        .findAll { getProtocol(it) != "Unknown" }
-    if (allDevices) subscribe(allDevices, "checkInterval", activityHandler)
-    if (debugMode) log.debug "Monitoring ${allDevices.size()} device(s)"
+    if (debugMode) log.debug "Monitoring ${getAllMonitoredDevices().findAll { getProtocol(it) != 'Unknown' }.size()} device(s)"
+    runIn(5, scanAllDevices)
 }
 
 def disableDebugLogging() {
@@ -302,7 +300,7 @@ def shouldRunWeekly() {
 }
 
 // ============================================================
-// ===================== SCAN / HANDLER ======================
+// ===================== SCAN ================================
 // ============================================================
 def scanAllDevices() {
     def devList = getAllMonitoredDevices().findAll { getProtocol(it) != "Unknown" }
@@ -310,65 +308,54 @@ def scanAllDevices() {
     if (debugMode) log.debug "Running scheduled device scan for ${devList.size()} device(s)"
     devList.each { device ->
         try {
-            updateDeviceHistory(device)
+            def id   = device.id
+            def data = state.history[id]
+
+            def lastActivity = device.getLastActivity()
+            def lastSeen     = lastActivity ? safeTime(lastActivity) : now()
+
+            if (!data) {
+                // First time seeing this device — seed from lastActivity
+                state.history[id] = [
+                    lastSeen:       lastSeen,
+                    lastCheckin:    lastSeen,
+                    samples:        [],
+                    avgInterval:    null,
+                    userInterval:   null,
+                    missedCheckins: 0,
+                    protocol:       getProtocol(device)
+                ]
+                state.health[id] = "Pending"
+                if (debugMode) log.debug "Seeded ${device.displayName} from lastActivity: ${formatTimeAgo(lastSeen)}"
+            } else {
+                // Subsequent scans — check if lastActivity has changed
+                def prevLastSeen = data.lastSeen ?: lastSeen
+                if (lastSeen > prevLastSeen) {
+                    // Device has checked in since last scan — record a sample
+                    def elapsed = (lastSeen - prevLastSeen) / (1000 * 60)
+                    if (elapsed >= 10) {
+                        def alpha      = 0.3
+                        def prevSmooth = (data.samples && data.samples.size() > 0) ? data.samples[-1] : elapsed
+                        def smoothed   = alpha * elapsed + (1 - alpha) * prevSmooth
+                        data.samples << smoothed
+                        if (data.samples.size() > 20) data.samples.remove(0)
+                        if (data.samples.size() >= 3) {
+                            data.avgInterval = data.samples.sum() / data.samples.size()
+                        }
+                        if (debugMode) log.debug "${device.displayName}: new activity detected interval=${elapsed.toInteger()}min smoothed=${smoothed.toInteger()}min avg=${data.avgInterval?.toInteger()}min"
+                    }
+                    data.lastSeen    = lastSeen
+                    data.lastCheckin = lastSeen
+                } else {
+                    if (debugMode) log.debug "${device.displayName}: no new activity since last scan"
+                }
+                data.protocol = getProtocol(device)
+                updateHealth(device)
+            }
         } catch (e) {
             log.warn "Scan failed for ${device.displayName}: ${e.message}"
         }
     }
-}
-
-def activityHandler(evt) {
-    def device = evt.device
-    if (!device) return
-    if (getProtocol(device) == "Unknown") return
-    if (debugMode) log.debug "Activity event from ${device.displayName}"
-    updateDeviceHistory(device)
-}
-
-// ============================================================
-// ===================== CORE HISTORY UPDATE =================
-// ============================================================
-def updateDeviceHistory(device) {
-    def id   = device.id
-    def data = state.history[id]
-
-    if (!data) {
-        state.history[id] = [
-            lastSeen:       now(),
-            lastCheckin:    now(),
-            samples:        [],
-            avgInterval:    null,
-            userInterval:   null,
-            missedCheckins: 0,
-            protocol:       getProtocol(device)
-        ]
-        state.health[id] = "Pending"
-        data = state.history[id]
-        if (debugMode) log.debug "Initialized history for ${device.displayName}"
-        return
-    }
-
-    def lastSeen = data.lastCheckin ?: now()
-    def elapsed  = (now() - lastSeen) / (1000 * 60)
-
-    if (elapsed >= 10) {
-        def alpha      = 0.3
-        def prevSmooth = (data.samples && data.samples.size() > 0) ? data.samples[-1] : elapsed
-        def smoothed   = alpha * elapsed + (1 - alpha) * prevSmooth
-        data.samples << smoothed
-        if (data.samples.size() > 20) data.samples.remove(0)
-
-        if (data.samples.size() >= 3) {
-            data.avgInterval = data.samples.sum() / data.samples.size()
-        }
-
-        if (debugMode) log.debug "${device.displayName}: interval=${elapsed.toInteger()}min smoothed=${smoothed.toInteger()}min avg=${data.avgInterval?.toInteger()}min"
-    }
-
-    data.lastCheckin = now()
-    data.lastSeen    = now()
-    data.protocol    = getProtocol(device)
-    updateHealth(device)
 }
 
 // ============================================================
@@ -502,7 +489,6 @@ def activitySummaryPage() {
             def rowNum = 0
             devList.each { device ->
                 def data     = state.history[device.id]
-                def h        = state.health[device.id] ?: "Pending"
                 def protocol = getProtocol(device)
                 def lastSeen = data?.lastSeen ? formatTimeAgo(data.lastSeen) : "Never"
                 def avgInt   = data?.userInterval ? formatInterval(data.userInterval) + " (manual)" :
@@ -606,7 +592,7 @@ def forceScanPage() {
             paragraph "✅ Device scan complete — ${devList.size()} device(s) checked. " +
                       "Return to Device Activity Summary to see updated values.<br><br>" +
                       "<b>Note:</b> A new check-in sample is only recorded if at least 10 minutes " +
-                      "have passed since the last reading."
+                      "have passed since the last recorded activity."
         }
     }
 }
@@ -845,13 +831,13 @@ def infoPage(Map params = [:]) {
                       "After 3 samples the app calculates a baseline average interval using EWMA smoothing — " +
                       "the same approach used in Battery Monitor 2.0.<br><br>" +
                       "The baseline updates continuously as new check-ins arrive, so it adapts to changes in device behavior over time.<br><br>" +
-                      "If the auto-learned baseline seems wrong for a specific device you can override it manually in the device settings.</div>"
+                      "If the auto-learned baseline seems wrong for a specific device you can override it manually using Reset Device History.</div>"
         }
 
         section("<b>🔄 Force Scan</b>") {
             paragraph rawHtml: true, "<div style='background-color:#f8f8f8; border:1px solid #dddddd; border-radius:6px; padding:10px; margin-bottom:4px;'>" +
                       "Force Scan immediately checks all monitored devices rather than waiting for the next scheduled scan. " +
-                      "A new sample is only recorded if at least 10 minutes have passed since the last check-in. " +
+                      "A new sample is only recorded if at least 10 minutes have passed since the last recorded activity. " +
                       "Use Force Scan after making changes to see updated health ratings sooner.</div>"
         }
 
@@ -861,7 +847,8 @@ def infoPage(Map params = [:]) {
                       "• Set Scan Interval to Hourly to build baselines faster<br>" +
                       "• Use Reset Device History if a device shows incorrect health after a mesh change<br>" +
                       "• Zigbee devices are shown in blue, Z-Wave in purple in the reports<br>" +
-                      "• Devices that only wake on events (motion, contact) will have longer natural intervals — this is normal</div>"
+                      "• Devices that only wake on events (motion, contact) will have longer natural intervals — this is normal<br>" +
+                      "• No hub event subscriptions are used — all monitoring is done via scheduled scans using Hubitat's built-in Last Activity data</div>"
         }
     }
 }
