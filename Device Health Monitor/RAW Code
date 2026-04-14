@@ -81,11 +81,17 @@ def getAllMonitoredDevices() {
 
 def getProtocol(device) {
     try {
-        if (device.getZigbeeInfo()) return "Zigbee"
-    } catch (e) { }
-    try {
-        if (device.getZwaveInfo()) return "Z-Wave"
-    } catch (e) { }
+        // Zigbee devices have endpointId or zigbeeNodeType data values
+        if (device.getDataValue("endpointId")                != null) return "Zigbee"
+        if (device.getDataValue("zigbeeNodeType")             != null) return "Zigbee"
+        if (device.getDataValue("zigbeeId")                   != null) return "Zigbee"
+        // Z-Wave devices have zwaveSecurePairingComplete or inClusters
+        if (device.getDataValue("zwaveSecurePairingComplete") != null) return "Z-Wave"
+        if (device.getDataValue("inClusters")                 != null) return "Z-Wave"
+        if (device.getDataValue("secureInClusters")           != null) return "Z-Wave"
+    } catch (e) {
+        if (debugMode) log.debug "getProtocol error for ${device.displayName}: ${e.message}"
+    }
     return "Unknown"
 }
 
@@ -315,7 +321,6 @@ def scanAllDevices() {
             def lastSeen     = lastActivity ? safeTime(lastActivity) : now()
 
             if (!data) {
-                // First time seeing this device — seed from lastActivity
                 state.history[id] = [
                     lastSeen:       lastSeen,
                     lastCheckin:    lastSeen,
@@ -328,10 +333,8 @@ def scanAllDevices() {
                 state.health[id] = "Pending"
                 if (debugMode) log.debug "Seeded ${device.displayName} from lastActivity: ${formatTimeAgo(lastSeen)}"
             } else {
-                // Subsequent scans — check if lastActivity has changed
                 def prevLastSeen = data.lastSeen ?: lastSeen
                 if (lastSeen > prevLastSeen) {
-                    // Device has checked in since last scan — record a sample
                     def elapsed = (lastSeen - prevLastSeen) / (1000 * 60)
                     if (elapsed >= 10) {
                         def alpha      = 0.3
@@ -342,7 +345,7 @@ def scanAllDevices() {
                         if (data.samples.size() >= 3) {
                             data.avgInterval = data.samples.sum() / data.samples.size()
                         }
-                        if (debugMode) log.debug "${device.displayName}: new activity detected interval=${elapsed.toInteger()}min smoothed=${smoothed.toInteger()}min avg=${data.avgInterval?.toInteger()}min"
+                        if (debugMode) log.debug "${device.displayName}: new activity interval=${elapsed.toInteger()}min smoothed=${smoothed.toInteger()}min avg=${data.avgInterval?.toInteger()}min"
                     }
                     data.lastSeen    = lastSeen
                     data.lastCheckin = lastSeen
@@ -831,7 +834,7 @@ def infoPage(Map params = [:]) {
                       "After 3 samples the app calculates a baseline average interval using EWMA smoothing — " +
                       "the same approach used in Battery Monitor 2.0.<br><br>" +
                       "The baseline updates continuously as new check-ins arrive, so it adapts to changes in device behavior over time.<br><br>" +
-                      "If the auto-learned baseline seems wrong for a specific device you can override it manually using Reset Device History.</div>"
+                      "If the auto-learned baseline seems wrong for a specific device you can override it using Reset Device History.</div>"
         }
 
         section("<b>🔄 Force Scan</b>") {
