@@ -1,1 +1,306 @@
+definition(
+    name: "Device Health Monitor",
+    namespace: "jdthomas24",
+    author: "jdthomas24",
+    description: "Zigbee and Z-Wave device health monitoring with check-in tracking, baseline learning, trend analysis and notifications.",
+    category: "Convenience",
+    importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Device%20Health%20Monitor/Raw%20Code/DeviceHealthMonitor.groovy",
+    version: "1.0.0-beta",
+    doNotFocus: true
+)
 
+preferences {
+    page(name: "mainPage")
+    page(name: "activitySummaryPage")
+    page(name: "problemDevicesPage")
+    page(name: "sendNotificationPage")
+    page(name: "forceScanPage")
+    page(name: "resetHistoryPage")
+    page(name: "resetHistoryConfirmPage")
+    page(name: "infoPage")
+}
+
+// ============================================================
+// ===================== LIFECYCLE ===========================
+// ============================================================
+def installed() {
+    if (debugMode) log.debug "Device Health Monitor installed"
+    applyCustomLabel()
+    initialize()
+}
+
+def updated() {
+    if (debugMode) log.debug "Device Health Monitor updated"
+    applyCustomLabel()
+    unschedule()
+    unsubscribe()
+    initialize()
+    if (debugMode) runIn(1800, disableDebugLogging)
+
+    def allDevices = getAllMonitoredDevices()
+    def currentIds = allDevices.collect { it.id as String }
+    state.history?.keySet()?.findAll { !currentIds.contains(it) }?.each { removedId ->
+        state.history.remove(removedId)
+        state.health?.remove(removedId)
+        if (debugMode) log.debug "Cleaned up removed device: ${removedId}"
+    }
+}
+
+def initialize() {
+    if (debugMode) log.debug "Device Health Monitor initializing"
+    if (state.history == null) state.history = [:]
+    if (state.health  == null) state.health  = [:]
+    scheduleScanInterval()
+    scheduleReportFrequency()
+    def allDevices = getAllMonitoredDevices()
+    if (allDevices) subscribe(allDevices, "checkInterval", activityHandler)
+}
+
+def disableDebugLogging() {
+    log.info "Device Health Monitor: auto-disabling debug logging after 30 minutes"
+    app.updateSetting("debugMode", [value: false, type: "bool"])
+}
+
+def applyCustomLabel() {
+    if (settings?.customAppName) {
+        if (app.label != settings?.customAppName) {
+            app.updateLabel(settings.customAppName)
+            if (debugMode) log.debug "App label updated to: ${settings.customAppName}"
+        }
+    }
+}
+
+// ============================================================
+// ===================== HELPERS =============================
+// ============================================================
+def getAllMonitoredDevices() {
+    def all = []
+    if (zigbeeDevices) all.addAll(zigbeeDevices)
+    if (zwaveDevices)  all.addAll(zwaveDevices)
+    return all.unique { it.id }
+}
+
+def getProtocol(device) {
+    if (zigbeeDevices?.find { it.id == device.id }) return "Zigbee"
+    if (zwaveDevices?.find  { it.id == device.id }) return "Z-Wave"
+    return "Unknown"
+}
+
+// ============================================================
+// ===================== MAIN PAGE ===========================
+// ============================================================
+def mainPage() {
+    applyCustomLabel()
+    dynamicPage(name: "mainPage", title: "Device Health Monitor", install: true, uninstall: true) {
+
+        def hasCustomName = settings?.customAppName?.trim()
+        section("<b>App Display Name (optional)</b>", hideable: true, hidden: hasCustomName) {
+            paragraph "Enter a name to rename this app in your Hubitat app list."
+            input "customAppName", "text",
+                  title: "Custom App Name",
+                  description: "Rename how this app appears in your Hubitat app list",
+                  required: false
+        }
+        if (hasCustomName) {
+            section("") {
+                paragraph "Current name: <b><span style='color:blue;'>${settings.customAppName}</span></b> — tap <b>App Display Name (optional)</b> above to change."
+            }
+        }
+
+        // ── Zigbee Devices ──────────────────────────────────
+        def zigbeeSelected = (zigbeeDevices?.size() ?: 0) > 0
+        section("<b>Zigbee Devices</b>", hideable: true, hidden: zigbeeSelected) {
+            paragraph "<b>Select Zigbee devices to monitor.</b> Only Zigbee devices should be selected here."
+            input "zigbeeDevices", "capability.sensor",
+                  title: "Select Zigbee devices",
+                  multiple: true,
+                  required: false,
+                  submitOnChange: true
+        }
+        if (zigbeeSelected) {
+            section("") {
+                paragraph "<b><span style='color:blue;'>${zigbeeDevices.size()} Zigbee device(s)</span></b> selected. Tap <b>Zigbee Devices</b> above to change."
+            }
+        }
+
+        // ── Z-Wave Devices ──────────────────────────────────
+        def zwaveSelected = (zwaveDevices?.size() ?: 0) > 0
+        section("<b>Z-Wave Devices</b>", hideable: true, hidden: zwaveSelected) {
+            paragraph "<b>Select Z-Wave devices to monitor.</b> Only Z-Wave devices should be selected here."
+            input "zwaveDevices", "capability.sensor",
+                  title: "Select Z-Wave devices",
+                  multiple: true,
+                  required: false,
+                  submitOnChange: true
+        }
+        if (zwaveSelected) {
+            section("") {
+                paragraph "<b><span style='color:blue;'>${zwaveDevices.size()} Z-Wave device(s)</span></b> selected. Tap <b>Z-Wave Devices</b> above to change."
+            }
+        }
+
+        if (!zigbeeSelected && !zwaveSelected) {
+            section("") {
+                paragraph "<span style='color:red; font-weight:bold;'>⚠ No devices selected. Select Zigbee and/or Z-Wave devices above to begin monitoring.</span>"
+            }
+        }
+
+        // ── Scan Interval ───────────────────────────────────
+        section("<b>Device Scan Interval</b>") {
+            input "scanInterval", "enum",
+                  title: "Scan Frequency:",
+                  description: "How often device activity is checked.",
+                  options: ["1": "Hourly", "3": "Every 3 Hours", "6": "Every 6 Hours"],
+                  defaultValue: "3",
+                  submitOnChange: true
+        }
+
+        // ── Offline Threshold ────────────────────────────────
+        section("<b>Offline Threshold</b>") {
+            input "offlineThresholdHours", "number",
+                  title: "Mark device Offline if no activity for X hours:",
+                  defaultValue: 24,
+                  required: true
+        }
+
+        // ── Notifications ────────────────────────────────────
+        def notificationSettings = (notificationSettings != false)
+        section("<b>Notifications</b>", hideable: true, hidden: notificationSettings) {
+            paragraph "ℹ️ Enable the toggle below to configure notification settings."
+            input "enablePush", "bool", title: "Enable notifications", defaultValue: true, submitOnChange: true
+
+            if (settings?.enablePush != false) {
+                input "reportFrequency", "enum",
+                      title: "Notification Frequency:",
+                      options: [
+                          "daily":  "Daily",
+                          "every2": "Every 2 Days",
+                          "every3": "Every 3 Days",
+                          "weekly": "Weekly"
+                      ],
+                      defaultValue: "daily"
+
+                input "summaryTime", "time",
+                      title: "Notification Time:",
+                      required: false
+
+                input "notifyDevices", "capability.notification",
+                      title: "Notification devices",
+                      multiple: true,
+                      required: false
+
+                input "enablePushover", "bool", title: "⚙️ Enable Pushover Markup", defaultValue: false
+                input "pushoverDevices", "capability.notification",
+                      title: "Pushover notification devices <b>(receives Pushover-formatted message)</b>",
+                      multiple: true, required: false
+                input "pushoverPrefix", "text",
+                      title: "Pushover tags <b>(Only used if Enable Pushover Markup is toggled ON)</b>",
+                      description: "e.g. [H][TITLE=Device Health Report][HTML][SELFDESTRUCT=43200]",
+                      required: false
+
+                paragraph "<b>Report Sections:</b>"
+                input "notifyOffline",  "bool", title: "🔴 Include Offline devices",               defaultValue: true
+                input "notifyPoor",     "bool", title: "🔴 Include Poor health devices",            defaultValue: true
+                input "notifyFair",     "bool", title: "🟠 Include Fair health devices",            defaultValue: true
+                input "notifyGood",     "bool", title: "🟢 Include Good health devices",            defaultValue: false
+                input "notifyExcellent","bool", title: "🟢 Include Excellent health devices",       defaultValue: false
+                input "suppressEmptyReport", "bool",
+                      title: "🔕 Don't send notification if nothing to report",
+                      defaultValue: false
+
+                paragraph "<b>Send notification now:</b>"
+                href "sendNotificationPage", title: "📤 Send Notification Now",
+                     description: "Tap to preview and send a device health notification"
+            }
+        }
+        if (notificationSettings) {
+            section("") {
+                paragraph "Notifications are <b><span style='color:blue;'>" + (settings?.enablePush != false ? "ON" : "OFF") + "</span></b> — tap <b>Notifications</b> above to expand and configure."
+            }
+        }
+
+        // ── Reports ──────────────────────────────────────────
+        section("<b>Reports:</b>") {
+            href "activitySummaryPage", title: "Device Activity Summary"
+            href "problemDevicesPage",  title: "⚠️ Problem Devices"
+        }
+
+        // ── Help ─────────────────────────────────────────────
+        section("<b>Help & Info:</b>") {
+            href "infoPage", title: "App Guide & Reference",
+                 description: "Health scoring, check-in baselines, and troubleshooting explained"
+        }
+
+        // ── Diagnostics ──────────────────────────────────────
+        section("<b>Diagnostics</b>") {
+            input "debugMode", "bool",
+                  title: "Debug Logging (auto-disables after 30 min)",
+                  defaultValue: false,
+                  submitOnChange: true
+        }
+
+        // ── Support ──────────────────────────────────────────
+        section("<b>Support & Community</b>") {
+            href url: "https://community.hubitat.com",
+                 style: "external",
+                 title: "💬 Hubitat Community Thread",
+                 description: "Questions, feedback, and release notes"
+            href url: "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US",
+                 style: "external",
+                 title: "☕ Buy Me a Coffee",
+                 description: "Enjoying the app? Any amount is appreciated — thank you!"
+        }
+    }
+}
+
+// ============================================================
+// ===================== REPORT SCHEDULING ==================
+// ============================================================
+def scheduleReportFrequency() {
+    unschedule("reportScheduler")
+    if (!summaryTime) return
+    schedule(summaryTime, reportScheduler)
+}
+
+def scheduleScanInterval() {
+    unschedule("scanAllDevices")
+    def interval = (settings?.scanInterval ?: "3").toInteger()
+    def cronExpr = ""
+    switch (interval) {
+        case 1:  cronExpr = "0 0 * * * ?";   break
+        case 3:  cronExpr = "0 0 */3 * * ?"; break
+        case 6:  cronExpr = "0 0 */6 * * ?"; break
+        default: cronExpr = "0 0 */3 * * ?"; break
+    }
+    schedule(cronExpr, scanAllDevices)
+    if (debugMode) log.debug "Device scan scheduled every ${interval}h (cron: ${cronExpr})"
+}
+
+def reportScheduler() {
+    switch (reportFrequency) {
+        case "daily":  scheduledSummary(); break
+        case "every2": if (shouldRunEveryXDays(2)) scheduledSummary(); break
+        case "every3": if (shouldRunEveryXDays(3)) scheduledSummary(); break
+        case "weekly": if (shouldRunWeekly())       scheduledSummary(); break
+    }
+}
+
+def shouldRunEveryXDays(daysInterval) {
+    def today   = new Date().clearTime()
+    def lastRun = state.lastReportRun ? new Date(state.lastReportRun).clearTime() : null
+    if (!lastRun) { state.lastReportRun = now(); return true }
+    def diff = (today.time - lastRun.time) / (1000 * 60 * 60 * 24)
+    if (diff >= daysInterval) { state.lastReportRun = now(); return true }
+    return false
+}
+
+def shouldRunWeekly() {
+    def today   = new Date()
+    def lastRun = state.lastReportRun ? new Date(state.lastReportRun) : null
+    if (!lastRun) { state.lastReportRun = now(); return true }
+    if (today.format("u") == "1") {
+        def diff = (today.time - lastRun.time) / (1000 * 60 * 60 * 24)
+        if (diff >= 7) { state.lastReportRun = now(); return true }
+    }
+    return false
+}
