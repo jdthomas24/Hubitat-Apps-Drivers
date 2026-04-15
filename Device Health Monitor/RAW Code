@@ -142,10 +142,11 @@ def mainPage() {
             }
         }
 
-        // ── Device Selection ─────────────────────────────────
+       // ── Device Selection ─────────────────────────────────
         def devicesSelected = ((sensorDevices?.size() ?: 0) + (actuatorDevices?.size() ?: 0)) > 0
         section("<b>Monitored Devices</b>", hideable: true, hidden: devicesSelected) {
-            paragraph "<b>Select your devices across both lists below.</b> Protocol (Zigbee, Z-Wave, Matter, Hub Mesh, LAN) is detected automatically regardless of which list a device appears in."
+            paragraph "<b>Select your devices across both lists below.</b> Protocol (Zigbee, Z-Wave, Matter, Hub Mesh, LAN) is detected automatically regardless of which list a device appears in.<br><br>" +
+                      "<span style='color:#64748b;'>ℹ️ LAN integration devices such as Hue lights may appear in either list — this is normal. Select them wherever they appear and the app will correctly identify them as LAN.</span>"
             paragraph "<span style='color:red; font-weight:bold;'>IMPORTANT: After selecting devices, you MUST click 'Done' before viewing reports.</span>"
             input "sensorDevices", "capability.sensor",
                   title: "📡 Sensors — motion, contact, smoke, temperature, water, presence, etc.",
