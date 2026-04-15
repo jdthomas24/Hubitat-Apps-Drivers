@@ -1,12 +1,12 @@
 {
   "packageName": "Battery Monitor 2.0",
   "author": "Jdthomas24",
-  "version": "2.4.7",
+  "version": "2.4.8",
   "category": "Convenience",
   "description": "Advanced Hubitat battery monitoring with analytics, trends and replacement tracking. Recurring scan schedule, confidence-weighted health, EWMA smoothing.",
   "dateReleased": "4/8/26",
   "minimumHEVersion": "2.3.0",
-  "releaseNotes": "v2.4.7 - Dead battery detection added. Improved door lock drain handling with separate thresholds. Sample Quality column added to Trends page. Color coded health ratings. Updated App Guide.",
+  "releaseNotes": "v2.4.8 - Global notification snooze added. Silence all notifications for a configurable number of days — useful when traveling or away from home. Snooze status shown on main page with remaining time and one-tap clear.",
   "apps": [
     {
       "name": "Battery Monitor 2.0",
