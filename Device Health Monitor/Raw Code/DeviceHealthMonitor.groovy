@@ -321,8 +321,9 @@ def mainPage() {
                       defaultValue: false
 
                 paragraph "<b>Send notification now:</b>"
-                href "sendNotificationPage", title: "📤 Send Notification Now",
-                     description: "Tap to preview and send a device health notification"
+                href(name: "toSendNotification", page: "sendNotificationPage",
+                     title: "📤 Send Notification Now",
+                     description: "Tap to preview and send a device health notification")
             }
         }
         if (notifConfigured) {
@@ -336,16 +337,22 @@ def mainPage() {
 
         // ── Reports ──────────────────────────────────────────
         section("<b>Reports:</b>") {
-            href "activitySummaryPage", title: "Device Activity Summary"
-            href "problemDevicesPage",  title: "⚠️ Problem Devices"
-            href "snoozeManagePage",    title: "😴 Manage Snoozed Devices",
-                 description: "Snooze devices or clear active snoozes"
+            href(name: "toActivitySummary", page: "activitySummaryPage",
+                 title: "Device Activity Summary",
+                 description: "View all monitored devices and their health status")
+            href(name: "toProblemDevices", page: "problemDevicesPage",
+                 title: "⚠️ Problem Devices",
+                 description: "View devices with Fair, Poor or Offline health")
+            href(name: "toSnoozeManage", page: "snoozeManagePage",
+                 title: "😴 Manage Snoozed Devices",
+                 description: "Snooze devices or clear active snoozes")
         }
 
         // ── Help ─────────────────────────────────────────────
         section("<b>Help & Info:</b>") {
-            href "infoPage", title: "App Guide & Reference",
-                 description: "Health scoring, check-in baselines, snooze, and troubleshooting explained"
+            href(name: "toInfoPage", page: "infoPage",
+                 title: "App Guide & Reference",
+                 description: "Health scoring, check-in baselines, snooze, and troubleshooting explained")
         }
 
         // ── Diagnostics ──────────────────────────────────────
@@ -585,10 +592,12 @@ def formatInterval(minutes) {
 def activitySummaryPage() {
     dynamicPage(name: "activitySummaryPage", title: "Device Activity Summary", install: false) {
         section("") {
-            href "forceScanPage", title: "🔄 Force Scan Now",
-                 description: "Tap to immediately check all monitored devices"
-            href "snoozeManagePage", title: "😴 Manage Snoozed Devices",
-                 description: "Snooze devices or clear active snoozes"
+            href(name: "toForceScan", page: "forceScanPage",
+                 title: "🔄 Force Scan Now",
+                 description: "Tap to immediately check all monitored devices")
+            href(name: "toSnoozeFromSummary", page: "snoozeManagePage",
+                 title: "😴 Manage Snoozed Devices",
+                 description: "Snooze devices or clear active snoozes")
 
             def devList = getAllMonitoredDevices().findAll { getProtocol(it) != "Unknown" }
             if (!devList) { paragraph "No devices found. Please select devices on the main page first."; return }
@@ -641,7 +650,9 @@ def activitySummaryPage() {
 
         section("<b>🔄 Reset Device History</b>", hideable: true, hidden: true) {
             paragraph "Reset check-in history for specific devices. Health returns to Pending while fresh data is collected."
-            href "resetHistoryPage", title: "🔄 Reset Device History", description: "Select devices to reset"
+            href(name: "toResetHistory", page: "resetHistoryPage",
+                 title: "🔄 Reset Device History",
+                 description: "Select devices to reset")
         }
     }
 }
@@ -664,7 +675,6 @@ def snoozeManagePage() {
 
     dynamicPage(name: "snoozeManagePage", title: "😴 Manage Snoozed Devices", install: false) {
 
-        // ── Snooze devices ───────────────────────────────────
         section("<b>Snooze Devices</b>") {
             paragraph "Select devices to snooze for <b>${settings?.snoozeDurationHours ?: 24} hours</b>. Snoozed devices are excluded from notifications and the Problem Devices page until the snooze expires."
             if (activeList) {
@@ -703,7 +713,6 @@ def snoozeManagePage() {
             }
         }
 
-        // ── Currently snoozed ────────────────────────────────
         section("<b>Currently Snoozed</b>") {
             if (snoozedList) {
                 paragraph snoozedList.collect { device ->
@@ -853,7 +862,8 @@ def resetHistoryPage() {
                   defaultValue: false
         }
         section() {
-            href "resetHistoryConfirmPage", title: "Submit Reset"
+            href(name: "toResetConfirm", page: "resetHistoryConfirmPage",
+                 title: "Submit Reset")
         }
     }
 }
