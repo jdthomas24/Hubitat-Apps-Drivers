@@ -1,1 +1,18 @@
-
+{
+  "packageName": "Device Health Monitor",
+  "author": "Jdthomas24",
+  "version": "1.1.0",
+  "category": "Utility",
+  "description": "Monitor device check-in health across Zigbee, Z-Wave, Matter, Hub Mesh and LAN — learns each device's normal pattern and alerts you when something goes quiet.",
+  "dateReleased": "4-15-26",
+  "minimumHEVersion": "2.3.0",
+  "apps": [
+    {
+      "id": "29a4d6b9-1402-427f-9234-af06e1231e5c",
+      "name": "Device Health Monitor",
+      "namespace": "Jdthomas24",
+      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Device%20Health%20Monitor/Raw%20Code/DeviceHealthMonitor.groovy",
+      "required": true
+    }
+  ]
+}
