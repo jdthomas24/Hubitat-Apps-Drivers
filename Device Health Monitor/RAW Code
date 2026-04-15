@@ -7,7 +7,7 @@ definition(
     importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Device%20Health%20Monitor/Raw%20Code/DeviceHealthMonitor.groovy",
     iconUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Device%20Health%20Monitor/Raw%20Code/DeviceHealthMonitor.groovy",
     iconX2Url: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Device%20Health%20Monitor/Raw%20Code/DeviceHealthMonitor.groovy",
-    version: "1.0.0-beta",
+    version: "1.1.0-beta",
     doNotFocus: true
 )
 
@@ -50,8 +50,9 @@ def updated() {
 
 def initialize() {
     if (debugMode) log.debug "Device Health Monitor initializing"
-    if (state.history == null) state.history = [:]
-    if (state.health  == null) state.health  = [:]
+    if (state.history  == null) state.history  = [:]
+    if (state.health   == null) state.health   = [:]
+    if (state.snoozed  == null) state.snoozed  = [:]
     scheduleScanInterval()
     scheduleReportFrequency()
     if (debugMode) log.debug "Monitoring ${getAllMonitoredDevices().findAll { getProtocol(it) != 'Unknown' }.size()} device(s)"
@@ -69,6 +70,43 @@ def applyCustomLabel() {
             app.updateLabel(settings.customAppName)
             if (debugMode) log.debug "App label updated to: ${settings.customAppName}"
         }
+    }
+}
+
+// ============================================================
+// ===================== SNOOZE ==============================
+// ============================================================
+def snoozeDevice(deviceId) {
+    def hours     = (settings?.snoozeDurationHours ?: 24).toInteger()
+    def until     = now() + (hours * 3600000)
+    if (!state.snoozed) state.snoozed = [:]
+    state.snoozed[deviceId] = until
+    if (debugMode) log.debug "Snoozed device ${deviceId} for ${hours}h until ${new Date(until)}"
+}
+
+def unsnoozeDevice(deviceId) {
+    state.snoozed?.remove(deviceId)
+    if (debugMode) log.debug "Unsnoozed device ${deviceId}"
+}
+
+def isDeviceSnoozed(deviceId) {
+    def until = state.snoozed?.get(deviceId)
+    if (!until) return false
+    if (until >= now()) return true
+    state.snoozed.remove(deviceId)
+    return false
+}
+
+// ============================================================
+// ===================== APP BUTTON HANDLER ==================
+// ============================================================
+def appButtonHandler(btn) {
+    if (btn.startsWith("snooze_")) {
+        def deviceId = btn.replace("snooze_", "")
+        snoozeDevice(deviceId)
+    } else if (btn.startsWith("unsnooze_")) {
+        def deviceId = btn.replace("unsnooze_", "")
+        unsnoozeDevice(deviceId)
     }
 }
 
@@ -118,6 +156,12 @@ def getProtocolColor(protocol) {
         case "Bluetooth": return "#06b6d4"
         default:          return "#94a3b8"
     }
+}
+
+def isModeOK() {
+    if (!settings?.enableModeRestriction) return true
+    if (!settings?.restrictedModes) return true
+    return settings.restrictedModes.contains(location.mode)
 }
 
 // ============================================================
@@ -180,21 +224,61 @@ def mainPage() {
         }
 
         // ── Scan Interval ────────────────────────────────────
-        section("<b>Device Scan Interval</b>") {
+        def scanIntervalLabel = ["1": "Hourly", "3": "Every 3 Hours", "6": "Every 6 Hours"]
+        def currentScan = scanIntervalLabel[settings?.scanInterval ?: "3"] ?: "Every 3 Hours"
+        section("<b>Device Scan Interval</b>", hideable: true, hidden: true) {
+            paragraph "How often device activity is checked and health ratings are updated."
             input "scanInterval", "enum",
                   title: "Scan Frequency:",
-                  description: "How often device activity is checked.",
                   options: ["1": "Hourly", "3": "Every 3 Hours", "6": "Every 6 Hours"],
                   defaultValue: "3",
                   submitOnChange: true
         }
+        section("") {
+            paragraph "Scan interval: <b><span style='color:blue;'>${currentScan}</span></b> — tap <b>Device Scan Interval</b> above to change."
+        }
 
         // ── Offline Threshold ────────────────────────────────
-        section("<b>Offline Threshold</b>") {
+        def currentThreshold = settings?.offlineThresholdHours ?: 24
+        section("<b>Offline Threshold</b>", hideable: true, hidden: true) {
+            paragraph "Devices with no activity beyond this threshold will be marked Offline regardless of their baseline ratio."
             input "offlineThresholdHours", "number",
                   title: "Mark device Offline if no activity for X hours:",
                   defaultValue: 24,
-                  required: true
+                  required: true,
+                  submitOnChange: true
+        }
+        section("") {
+            paragraph "Offline threshold: <b><span style='color:blue;'>${currentThreshold}h</span></b> — tap <b>Offline Threshold</b> above to change."
+        }
+
+        // ── Snooze Duration ──────────────────────────────────
+        def currentSnooze = settings?.snoozeDurationHours ?: 24
+        section("<b>Snooze Duration</b>", hideable: true, hidden: true) {
+            paragraph "When a device is snoozed from the Activity Summary it will be excluded from notifications for this many hours."
+            input "snoozeDurationHours", "number",
+                  title: "Snooze duration (hours):",
+                  defaultValue: 24,
+                  required: true,
+                  submitOnChange: true
+        }
+        section("") {
+            paragraph "Snooze duration: <b><span style='color:blue;'>${currentSnooze}h</span></b> — tap <b>Snooze Duration</b> above to change."
+        }
+
+        // ── Mode Restriction ─────────────────────────────────
+        section("<b>Mode Restriction</b>", hideable: true, hidden: true) {
+            paragraph "Optionally restrict notifications to specific hub modes. Scanning always runs — only notifications are affected."
+            input "enableModeRestriction", "bool",
+                  title: "Enable mode restriction for notifications",
+                  defaultValue: false,
+                  submitOnChange: true
+            if (settings?.enableModeRestriction) {
+                input "restrictedModes", "mode",
+                      title: "Only send notifications when hub is in one of these modes:",
+                      multiple: true,
+                      required: false
+            }
         }
 
         // ── Notifications ────────────────────────────────────
@@ -262,7 +346,7 @@ def mainPage() {
         // ── Help ─────────────────────────────────────────────
         section("<b>Help & Info:</b>") {
             href "infoPage", title: "App Guide & Reference",
-                 description: "Health scoring, check-in baselines, and troubleshooting explained"
+                 description: "Health scoring, check-in baselines, snooze, and troubleshooting explained"
         }
 
         // ── Diagnostics ──────────────────────────────────────
@@ -433,8 +517,15 @@ def updateHealth(device) {
 // ===================== HEALTH DISPLAY ======================
 // ============================================================
 def getHealthDisplay(device) {
-    def h       = state.health[device.id] ?: "Pending"
+    def h       = state.health?.get(device.id) ?: "Pending"
     def samples = state.history?.get(device.id)?.samples?.size() ?: 0
+    def snoozed = isDeviceSnoozed(device.id as String)
+
+    if (snoozed) {
+        def until = state.snoozed?.get(device.id as String)
+        def hoursLeft = until ? Math.ceil((until - now()) / 3600000).toInteger() : 0
+        return "😴 <span style='color:#94a3b8;'>Snoozed (${hoursLeft}h remaining)</span>"
+    }
 
     if (h == "Pending") {
         return "<span style='color:#94a3b8;'>⏳ Pending (${samples}/3 samples)</span>"
@@ -504,8 +595,8 @@ def activitySummaryPage() {
 
             devList = devList.sort { a, b ->
                 def healthPriority = ["Offline": 1, "Poor": 2, "Fair": 3, "Good": 4, "Excellent": 5, "Pending": 6]
-                def hA = state.health[a.id] ?: "Pending"
-                def hB = state.health[b.id] ?: "Pending"
+                def hA = state.health?.get(a.id) ?: "Pending"
+                def hB = state.health?.get(b.id) ?: "Pending"
                 def pA = healthPriority[hA] ?: 6
                 def pB = healthPriority[hB] ?: 6
                 if (pA != pB) return pA <=> pB
@@ -520,26 +611,33 @@ def activitySummaryPage() {
             table += "<td style='padding:4px; border:1px solid #ccc;'>Last Seen</td>"
             table += "<td style='padding:4px; border:1px solid #ccc;'>Avg Check-in</td>"
             table += "<td style='padding:4px; border:1px solid #ccc;'>Samples</td>"
+            table += "<td style='padding:4px; border:1px solid #ccc;'>Snooze</td>"
             table += "</tr>"
 
             def rowNum = 0
             devList.each { device ->
-                def data     = state.history[device.id]
+                def data     = state.history?.get(device.id)
                 def protocol = getProtocol(device)
                 def lastSeen = data?.lastSeen ? formatTimeAgo(data.lastSeen) : "Never"
                 def avgInt   = data?.userInterval ? formatInterval(data.userInterval) + " (manual)" :
                                data?.avgInterval  ? formatInterval(data.avgInterval) : "Learning..."
                 def samples  = data?.samples?.size() ?: 0
-                def rowBg    = (rowNum % 2 == 0) ? "#ffffff" : "#ebebeb"
+                def snoozed  = isDeviceSnoozed(device.id as String)
+                def rowBg    = snoozed ? "#f8f8f8" : (rowNum % 2 == 0) ? "#ffffff" : "#ebebeb"
                 rowNum++
 
-                table += "<tr style='background-color:${rowBg};'>"
+                def snoozeBtn = snoozed ?
+                    "<input type='button' value='✅' onclick='buttonClick(this)' name='unsnooze_${device.id}' style='cursor:pointer;font-size:16px;border:none;background:none;' title='Click to unsnooze'>" :
+                    "<input type='button' value='😴' onclick='buttonClick(this)' name='snooze_${device.id}' style='cursor:pointer;font-size:16px;border:none;background:none;' title='Click to snooze'>"
+
+                table += "<tr style='background-color:${rowBg};${snoozed ? "opacity:0.6;" : ""}'>"
                 table += "<td style='padding:4px; border:1px solid #ccc;'>${device.displayName}</td>"
                 table += "<td style='padding:4px; border:1px solid #ccc;'><span style='color:${getProtocolColor(protocol)};font-weight:bold;'>${protocol}</span></td>"
                 table += "<td style='padding:4px; border:1px solid #ccc;'>${getHealthDisplay(device)}</td>"
                 table += "<td style='padding:4px; border:1px solid #ccc;'>${lastSeen}</td>"
                 table += "<td style='padding:4px; border:1px solid #ccc;'>${avgInt}</td>"
                 table += "<td style='padding:4px; border:1px solid #ccc;'>${samples}</td>"
+                table += "<td style='padding:4px; border:1px solid #ccc; text-align:center;'>${snoozeBtn}</td>"
                 table += "</tr>"
             }
 
@@ -561,8 +659,8 @@ def problemDevicesPage() {
     dynamicPage(name: "problemDevicesPage", title: "⚠️ Problem Devices", install: false) {
         section("") {
             def devList = getAllMonitoredDevices().findAll { device ->
-                def h = state.health[device.id] ?: "Pending"
-                h in ["Offline", "Poor", "Fair"]
+                def h = state.health?.get(device.id) ?: "Pending"
+                h in ["Offline", "Poor", "Fair"] && !isDeviceSnoozed(device.id as String)
             }
 
             if (!devList) {
@@ -572,8 +670,8 @@ def problemDevicesPage() {
 
             devList = devList.sort { a, b ->
                 def healthPriority = ["Offline": 1, "Poor": 2, "Fair": 3]
-                def hA = state.health[a.id] ?: "Fair"
-                def hB = state.health[b.id] ?: "Fair"
+                def hA = state.health?.get(a.id) ?: "Fair"
+                def hB = state.health?.get(b.id) ?: "Fair"
                 (healthPriority[hA] ?: 3) <=> (healthPriority[hB] ?: 3)
             }
 
@@ -588,7 +686,7 @@ def problemDevicesPage() {
 
             def rowNum = 0
             devList.each { device ->
-                def data     = state.history[device.id]
+                def data     = state.history?.get(device.id)
                 def protocol = getProtocol(device)
                 def lastSeen = data?.lastSeen ? formatTimeAgo(data.lastSeen) : "Never"
                 def avgInt   = data?.userInterval ? formatInterval(data.userInterval) + " (manual)" :
@@ -648,7 +746,7 @@ def resetHistoryPage() {
                 paragraph "Select one or more devices to reset. Their check-in history and learned baseline will be cleared. Health will return to Pending while fresh data is collected."
                 input "resetHistoryDevices", "enum",
                       title: "Select devices to reset",
-                      options: devList.collectEntries { [(it.id): "${it.displayName} (${state.health[it.id] ?: 'Pending'})"] }
+                      options: devList.collectEntries { [(it.id): "${it.displayName} (${state.health?.get(it.id) ?: 'Pending'})"] }
                                       .sort { a, b -> a.value <=> b.value },
                       multiple: true,
                       required: false
@@ -689,7 +787,7 @@ def resetHistoryConfirmPage() {
                             lastCheckin:    now(),
                             samples:        [],
                             avgInterval:    null,
-                            userInterval:   state.history[device.id]?.userInterval,
+                            userInterval:   state.history?.get(device.id)?.userInterval,
                             missedCheckins: 0,
                             protocol:       getProtocol(device)
                         ]
@@ -770,6 +868,11 @@ def sendNotificationPage() {
 // ===================== SCHEDULED SUMMARY ===================
 // ============================================================
 def scheduledSummary() {
+    if (!isModeOK()) {
+        if (debugMode) log.debug "Notification skipped — hub mode not in allowed modes"
+        return
+    }
+
     def devList = getAllMonitoredDevices().findAll { getProtocol(it) != "Unknown" }
     if (!devList) return
 
@@ -799,10 +902,17 @@ def scheduledSummary() {
     ]
 
     devList.each { device ->
-        def h = state.health[device.id] ?: "Pending"
-        if (sections.containsKey(h)) {
-            sections[h].list << device.displayName.trim()
+        if (!isDeviceSnoozed(device.id as String)) {
+            def h = state.health?.get(device.id) ?: "Pending"
+            if (sections.containsKey(h)) {
+                sections[h].list << device.displayName.trim()
+            }
         }
+    }
+
+    if (suppressEmptyReport != null ? suppressEmptyReport : false) {
+        def hasContent = sections.any { h, data -> data.enabled && data.list }
+        if (!hasContent) return
     }
 
     sections.each { health, data ->
@@ -814,11 +924,6 @@ def scheduledSummary() {
                 body += "None\n"
             }
         }
-    }
-
-    if (suppressEmptyReport != null ? suppressEmptyReport : false) {
-        def hasContent = sections.any { h, data -> data.enabled && data.list }
-        if (!hasContent) return
     }
 
     def pushoverBody = body
@@ -854,6 +959,7 @@ def infoPage(Map params = [:]) {
                       "<tr><td>🟠 Fair</td><td>Checking in within 3x of baseline — worth watching</td></tr>" +
                       "<tr><td>🔴 Poor</td><td>Checking in within 5x of baseline — likely a problem</td></tr>" +
                       "<tr><td>💀 <span style='color:#991b1b;font-weight:bold;'>Offline</span></td><td>No activity for ${settings?.offlineThresholdHours ?: 24}h or beyond 5x baseline</td></tr>" +
+                      "<tr><td>😴 Snoozed</td><td>Excluded from notifications for a set duration — still visible in reports</td></tr>" +
                       "</table></div><br>" +
                       "<b>Protocol Colors:</b><br>" +
                       "<div style='overflow-x:auto; -webkit-overflow-scrolling:touch;'><table style='width:100%; border-collapse: collapse;'>" +
@@ -869,10 +975,17 @@ def infoPage(Map params = [:]) {
         section("<b>⏳ Baseline Learning</b>") {
             paragraph rawHtml: true, "<div style='background-color:#f8f8f8; border:1px solid #dddddd; border-radius:6px; padding:10px; margin-bottom:4px;'>" +
                       "Each device starts as <b>⏳ Pending</b> while the app learns its normal check-in frequency. " +
-                      "After 3 samples the app calculates a baseline average interval using EWMA smoothing — " +
-                      "the same approach used in Battery Monitor 2.0.<br><br>" +
-                      "The baseline updates continuously as new check-ins arrive, so it adapts to changes in device behavior over time. " +
+                      "After 3 samples the app calculates a baseline using EWMA smoothing — the same approach used in Battery Monitor 2.0.<br><br>" +
+                      "The baseline adapts continuously as new check-ins arrive. " +
                       "Use Reset Device History if a device's baseline needs to be cleared after a mesh change or hardware swap.</div>"
+        }
+
+        section("<b>😴 Snooze</b>") {
+            paragraph rawHtml: true, "<div style='background-color:#f8f8f8; border:1px solid #dddddd; border-radius:6px; padding:10px; margin-bottom:4px;'>" +
+                      "Tap 😴 next to any device in the Activity Summary to snooze it. Snoozed devices are excluded from notifications for the configured snooze duration (default 24h).<br><br>" +
+                      "Snoozed devices still appear in the Activity Summary table with a 😴 indicator and a countdown showing hours remaining. " +
+                      "Tap ✅ to unsnooze a device early. Snoozes expire automatically when the duration passes.<br><br>" +
+                      "Snoozed devices are never included in Problem Devices — use snooze for devices you are actively working on.</div>"
         }
 
         section("<b>📋 Device Selection</b>") {
@@ -883,11 +996,11 @@ def infoPage(Map params = [:]) {
                       "• <span style='color:#8b5cf6;font-weight:bold;'>Z-Wave</span> — directly paired Z-Wave devices<br>" +
                       "• <span style='color:#f97316;font-weight:bold;'>Matter</span> — Matter devices<br>" +
                       "• <span style='color:#06b6d4;font-weight:bold;'>Hub Mesh</span> — devices linked from another Hubitat hub<br>" +
-                      "• <span style='color:#14b8a6;font-weight:bold;'>LAN</span> — everything else: local integrations (Hue, Shelly, Harmony), cloud integrations (Govee, Tesla, Ecobee), and app-created devices<br><br>" +
+                      "• <span style='color:#14b8a6;font-weight:bold;'>LAN</span> — local integrations (Hue, Shelly), cloud integrations (Govee, Tesla, Ecobee), and app-created devices<br><br>" +
                       "<b>Notes:</b><br>" +
                       "• Virtual switches appear as LAN — simply don't select them if you don't want them monitored<br>" +
-                      "• App-created child devices (automations, light animations) appear as LAN — monitoring these is useful for detecting broken automations<br>" +
-                      "• Bluetooth devices (C-8 Pro only) are not yet confirmed and will appear as LAN until a controllerType value is established</div>"
+                      "• App-created child devices appear as LAN — monitoring these is useful for detecting broken automations<br>" +
+                      "• Bluetooth devices (C-8 Pro only) will appear as LAN until a controllerType value is confirmed</div>"
         }
 
         section("<b>💡 Tips for Best Results</b>") {
@@ -896,8 +1009,9 @@ def infoPage(Map params = [:]) {
                       "• Set Scan Interval to Hourly to build baselines faster<br>" +
                       "• Devices that only wake on events (motion, contact) will have longer natural intervals — this is normal<br>" +
                       "• App-created devices that haven't fired in a long time will show 💀 Offline — useful for spotting broken automations<br>" +
-                      "• No hub event subscriptions are used — all monitoring is done via scheduled scans of Hubitat's built-in Last Activity data<br>" +
-                      "• 🔴 Poor and 💀 Offline both indicate problems — Poor means late, Offline means gone</div>"
+                      "• Hub variable connector devices going stale will show as Offline — useful for detecting broken Rule Machine rules<br>" +
+                      "• No hub event subscriptions are used — all monitoring is done via scheduled scans of Hubitat's Last Activity data<br>" +
+                      "• Use Mode Restriction to suppress notifications during certain hub modes (e.g. Away, Night)</div>"
         }
     }
 }
