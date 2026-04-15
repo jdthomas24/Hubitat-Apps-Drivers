@@ -6,6 +6,7 @@
   "description": "Monitor device check-in health across Zigbee, Z-Wave, Matter, Hub Mesh and LAN — learns each device's normal pattern and alerts you when something goes quiet.",
   "dateReleased": "4-15-26",
   "minimumHEVersion": "2.3.0",
+  "releaseNotes": "v1.1.0-beta — Initial public beta release. EWMA baseline learning with 3-sample minimum. Automatic protocol detection (Zigbee, Z-Wave, Matter, Hub Mesh, LAN). Health scoring: Excellent / Good / Fair / Poor / Offline. Snooze per device with configurable duration and auto-expiry. Mode restriction for notifications. Pushover markup support. Single capability.* device picker. Collapsed settings sections with current value display.",
   "apps": [
     {
       "id": "29a4d6b9-1402-427f-9234-af06e1231e5c",
