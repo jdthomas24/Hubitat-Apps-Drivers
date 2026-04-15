@@ -1,0 +1,132 @@
+# Device Health Monitor
+**Version:** 1.1.0-beta  
+**Author:** jdthomas24  
+**Platform:** Hubitat Elevation  
+**Category:** Convenience  
+
+---
+
+## Overview
+
+Device Health Monitor tracks how frequently your devices check in with the hub and flags anything that goes quiet, checks in late, or drops offline. Unlike fixed-threshold monitoring apps, it learns each device's individual check-in baseline using EWMA smoothing and evaluates health relative to that baseline.
+
+This is a companion app to [Battery Monitor 2.0](https://github.com/jdthomas24/Hubitat-Apps-Drivers) — where Battery Monitor tracks battery levels, Device Health Monitor tracks connectivity and mesh health.
+
+---
+
+## Features
+
+- **Single device picker** — select all devices from one list using `capability.*`
+- **Automatic protocol detection** — Zigbee, Z-Wave, Matter, Hub Mesh, LAN
+- **EWMA baseline learning** — adapts to each device's real check-in behavior
+- **Health scoring** — Excellent / Good / Fair / Poor / Offline
+- **Snooze** — silence individual devices from notifications for a configurable duration
+- **Mode restriction** — optionally suppress notifications during specific hub modes
+- **Pushover support** — full markup tag support
+- **Very low hub overhead** — no event subscriptions, scheduled scans only
+- **Broken automation detection** — app-created and hub variable connector devices go Offline when their automation stops firing
+
+---
+
+## Health Ratings
+
+| Rating | Meaning |
+|--------|---------|
+| ⏳ Pending | Learning baseline — need 3 samples |
+| 🟢 Excellent | Checking in within 1.2x of baseline |
+| 🟢 Good | Checking in within 2x of baseline |
+| 🟠 Fair | Checking in within 3x of baseline — worth watching |
+| 🔴 Poor | Checking in within 5x of baseline — likely a problem |
+| 💀 Offline | No activity for configured threshold or beyond 5x baseline |
+| 😴 Snoozed | Excluded from notifications for configured duration |
+
+---
+
+## Protocol Colors
+
+| Color | Protocol |
+|-------|---------|
+| 🔵 Blue | Zigbee |
+| 🟣 Purple | Z-Wave |
+| 🟠 Orange | Matter |
+| 🩵 Cyan | Hub Mesh |
+| 🩴 Teal | LAN / Cloud / Virtual |
+
+---
+
+## Installation
+
+### Via Hubitat Package Manager (HPM) — Recommended
+1. Open HPM on your Hubitat hub
+2. Search for **Device Health Monitor**
+3. Click Install
+
+### Manual Import
+1. Go to **Apps Code** in your Hubitat hub
+2. Click **New App**
+3. Click **Import** and paste:
+4. Click **Save**
+5. Go to **Apps** and click **Add User App**
+6. Select **Device Health Monitor**
+
+---
+
+## Configuration
+
+1. **Select devices** — tap Monitored Devices and select all devices you want to monitor
+2. **Click Done** — required before viewing reports
+3. **Set scan interval** — Hourly recommended for faster baseline learning, Every 3 Hours for lower hub overhead
+4. **Set offline threshold** — default 24h, adjust based on your device types
+5. **Configure notifications** — select notification device(s), frequency and time
+6. **View reports** — Device Activity Summary and Problem Devices pages update after each scan
+
+---
+
+## Snooze
+
+Tap 😴 next to any device in the Activity Summary to snooze it. Snoozed devices are:
+- Excluded from all notifications
+- Excluded from the Problem Devices page
+- Still visible in the Activity Summary with a countdown
+- Auto-expired when the snooze duration passes
+
+Tap ✅ to unsnooze early. Snooze duration is configurable globally (default 24h).
+
+---
+
+## Notes
+
+- **Virtual switches** appear as LAN — simply don't select them if you don't want them monitored
+- **Hub variable connector devices** going stale indicates a broken Rule Machine rule
+- **Bluetooth devices** (C-8 Pro only) will appear as LAN until a controllerType value is confirmed
+- **Cloud integrations** (Govee, Tesla, Ecobee) appear as LAN — still worth monitoring for integration failures
+
+---
+
+## Changelog
+
+### v1.1.0-beta (2026-04-15)
+- Initial public beta release
+- EWMA baseline learning with 3-sample minimum
+- Automatic protocol detection (Zigbee, Z-Wave, Matter, Hub Mesh, LAN)
+- Health scoring: Excellent / Good / Fair / Poor / Offline
+- Snooze per device with configurable duration and auto-expiry
+- Mode restriction for notifications
+- Pushover markup support
+- Single `capability.*` device picker
+- Collapsed settings sections with current value display
+- NullPointerException fixes for fresh installs
+
+---
+
+## Support
+
+- [Hubitat Community Thread](https://community.hubitat.com)
+- [GitHub Repository](https://github.com/jdthomas24/Hubitat-Apps-Drivers)
+
+---
+
+## Buy Me a Coffee ☕
+
+If you enjoy this app, any support is appreciated!  
+[paypal.me/jdthomas24](https://paypal.me/jdthomas24?locale.x=en_US&country.x=US)
