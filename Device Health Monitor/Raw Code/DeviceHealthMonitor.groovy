@@ -232,8 +232,8 @@ def isModeOK() {
 def isLowActivityDevice(device) {
     def data = state.history?.get(device.id)
     if (!data) return false
-    def samples  = data.samples?.size() ?: 0
-    def seededAt = data.lastCheckin ?: data.lastSeen
+    def samples      = data.samples?.size() ?: 0
+    def seededAt     = data.lastCheckin ?: data.lastSeen
     if (!seededAt) return false
     def daysSinceSeeded = (now() - safeTime(seededAt)) / (1000 * 60 * 60 * 24)
     return (samples < 3 && daysSinceSeeded >= 7)
@@ -246,6 +246,7 @@ def mainPage() {
     applyCustomLabel()
     dynamicPage(name: "mainPage", title: "Device Health Monitor", install: true, uninstall: true) {
 
+        // ── App Display Name ─────────────────────────────────
         def hasCustomName = settings?.customAppName?.trim()
         section("<b>App Display Name (optional)</b>", hideable: true, hidden: hasCustomName) {
             paragraph "Enter a name to rename this app in your Hubitat app list."
@@ -297,59 +298,40 @@ def mainPage() {
                           " — Tap <b>Monitored Devices</b> above to change."
             }
         }
-
         if (!devicesSelected) {
             section("") {
                 paragraph "<span style='color:red; font-weight:bold;'>⚠ No devices selected. Select devices above to begin monitoring.</span>"
             }
         }
 
-        // ── Scan Interval ────────────────────────────────────
+        // ── Monitoring Settings ──────────────────────────────
         def scanIntervalLabel = ["0.5": "Every 30 Minutes", "1": "Hourly", "3": "Every 3 Hours", "6": "Every 6 Hours"]
-        def currentScan = scanIntervalLabel[settings?.scanInterval ?: "3"] ?: "Every 3 Hours"
-        section("<b>Device Scan Interval</b>", hideable: true, hidden: true) {
-            paragraph "How often device activity is checked and health ratings are updated."
+        def currentScan       = scanIntervalLabel[settings?.scanInterval ?: "3"] ?: "Every 3 Hours"
+        def currentThreshold  = settings?.offlineThresholdHours ?: 24
+        def currentSnooze     = settings?.snoozeDurationHours ?: 24
+        def modeConfigured    = settings?.enableModeRestriction && settings?.restrictedModes
+
+        section("<b>Monitoring Settings</b>", hideable: true, hidden: true) {
+            paragraph "Configure scan frequency, offline detection, snooze duration, and mode restriction."
+
             input "scanInterval", "enum",
                   title: "Scan Frequency:",
                   options: ["0.5": "Every 30 Minutes", "1": "Hourly", "3": "Every 3 Hours", "6": "Every 6 Hours"],
                   defaultValue: "3",
                   submitOnChange: true
-        }
-        section("") {
-            paragraph "Scan interval: <b><span style='color:blue;'>${currentScan}</span></b> — tap <b>Device Scan Interval</b> above to change."
-        }
 
-        // ── Offline Threshold ────────────────────────────────
-        def currentThreshold = settings?.offlineThresholdHours ?: 24
-        section("<b>Offline Threshold</b>", hideable: true, hidden: true) {
-            paragraph "Devices with no activity beyond this threshold will be marked Offline."
             input "offlineThresholdHours", "number",
                   title: "Mark device Offline if no activity for X hours:",
                   defaultValue: 24,
                   required: true,
                   submitOnChange: true
-        }
-        section("") {
-            paragraph "Offline threshold: <b><span style='color:blue;'>${currentThreshold}h</span></b> — tap <b>Offline Threshold</b> above to change."
-        }
 
-        // ── Snooze Duration ──────────────────────────────────
-        def currentSnooze = settings?.snoozeDurationHours ?: 24
-        section("<b>Snooze Duration</b>", hideable: true, hidden: true) {
-            paragraph "When a device is snoozed it will be excluded from notifications for this many hours."
             input "snoozeDurationHours", "number",
                   title: "Snooze duration (hours):",
                   defaultValue: 24,
                   required: true,
                   submitOnChange: true
-        }
-        section("") {
-            paragraph "Snooze duration: <b><span style='color:blue;'>${currentSnooze}h</span></b> — tap <b>Snooze Duration</b> above to change."
-        }
 
-        // ── Mode Restriction ─────────────────────────────────
-        section("<b>Mode Restriction</b>", hideable: true, hidden: true) {
-            paragraph "Optionally restrict notifications to specific hub modes. Scanning always runs — only notifications are affected."
             input "enableModeRestriction", "bool",
                   title: "Enable mode restriction for notifications",
                   defaultValue: false,
@@ -360,6 +342,13 @@ def mainPage() {
                       multiple: true,
                       required: false
             }
+        }
+        section("") {
+            paragraph "Scan: <b><span style='color:blue;'>${currentScan}</span></b> | " +
+                      "Offline: <b><span style='color:blue;'>${currentThreshold}h</span></b> | " +
+                      "Snooze: <b><span style='color:blue;'>${currentSnooze}h</span></b>" +
+                      (modeConfigured ? " | Mode: <b><span style='color:blue;'>${settings.restrictedModes.join(', ')}</span></b>" : "") +
+                      " — tap <b>Monitoring Settings</b> above to change."
         }
 
         // ── Notifications ────────────────────────────────────
@@ -584,10 +573,8 @@ def updateHealth(device) {
     def data     = state.history[id]
     if (!data) return
 
-    def protocol = getProtocol(device)
-    def isLan    = isLanProtocol(protocol)
-
-    // LAN devices require 5 samples, all others require 3
+    def protocol   = getProtocol(device)
+    def isLan      = isLanProtocol(protocol)
     def minSamples = isLan ? 5 : 3
     def samples    = data.samples?.size() ?: 0
 
@@ -787,7 +774,7 @@ def protocolOverridePage() {
         }
 
         section("<b>Unidentified Devices (${devList.size()})</b>") {
-            paragraph "The following devices are showing as <b>Hub Mesh</b> or <b>LAN</b> because their underlying protocol could not be determined automatically. Select the correct protocol for each device below."
+            paragraph "The following devices are showing as <b>Hub Mesh</b> or <b>LAN</b> because their underlying protocol could not be determined automatically."
             devList.each { device ->
                 def currentProtocol = getProtocol(device)
                 def currentOverride = settings["protocolOverride_${device.id}"] ?: "Auto-detect"
@@ -828,7 +815,7 @@ def snoozeManagePage() {
 
     dynamicPage(name: "snoozeManagePage", title: "😴 Manage Snoozed Devices", install: false) {
         section("<b>Snooze Devices</b>") {
-            paragraph "Select devices to snooze for <b>${settings?.snoozeDurationHours ?: 24} hours</b>."
+            paragraph "Select devices to snooze for <b>${settings?.snoozeDurationHours ?: 24} hours</b>. Snoozed devices are excluded from notifications and the Problem Devices page until the snooze expires."
             if (activeList) {
                 input "devicesToSnooze", "enum",
                       title: "Select devices to snooze:",
@@ -1172,7 +1159,7 @@ def infoPage(Map params = [:]) {
                       "<tr><td>💀 <span style='color:#991b1b;font-weight:bold;'>Offline</span></td><td>No activity for ${settings?.offlineThresholdHours ?: 24}h — hard threshold only</td></tr>" +
                       "<tr><td>😴 Snoozed</td><td>Excluded from notifications for a set duration</td></tr>" +
                       "</table></div><br>" +
-                      "<b>Important:</b> Offline is triggered exclusively by the hard hour threshold — never by the ratio check. A device that is late relative to its baseline will show at most 🔴 Poor until the hard threshold is reached. This prevents LAN and event-driven devices from showing false Offline readings due to irregular activity patterns.<br><br>" +
+                      "<b>Important:</b> Offline is triggered exclusively by the hard hour threshold — never by the ratio check. A device that is late relative to its baseline will show at most 🔴 Poor until the hard threshold is reached.<br><br>" +
                       "<b>Protocol Colors:</b><br>" +
                       "<div style='overflow-x:auto; -webkit-overflow-scrolling:touch;'><table style='width:100%; border-collapse: collapse;'>" +
                       "<tr style='font-weight:bold;'><td>Color</td><td>Protocol</td></tr>" +
@@ -1190,9 +1177,9 @@ def infoPage(Map params = [:]) {
             paragraph rawHtml: true, "<div style='background-color:#f8f8f8; border:1px solid #dddddd; border-radius:6px; padding:10px; margin-bottom:4px;'>" +
                       "Each device starts as <b>⏳ Pending</b> while the app learns its normal check-in frequency using EWMA smoothing.<br><br>" +
                       "<b>Minimum samples before health scoring:</b><br>" +
-                      "• <b>LAN and Hub Mesh devices</b> — 5 samples required. These devices include Hue bridges, Shelly, cloud integrations, and linked hub devices. The higher threshold prevents false health ratings from irregular early intervals.<br>" +
-                      "• <b>All other protocols</b> — 3 samples required.<br><br>" +
-                      "<b>⚠ Low Activity warning:</b> If a device has been monitored for more than 7 days but has fewer than 3 samples, the Samples column will show a <span style='color:#f97316;'>⚠ Low Activity</span> warning. This means the device is not generating enough activity for the app to learn its baseline. This is normal for infrequently used lights, switches, and fans — the app can only learn from actual device activity.</div>"
+                      "• <b>LAN and Hub Mesh devices</b> — 5 samples required<br>" +
+                      "• <b>All other protocols</b> — 3 samples required<br><br>" +
+                      "<b>⚠ Low Activity warning:</b> If a device has been monitored for more than 7 days with fewer than 3 samples, the Samples column shows a <span style='color:#f97316;'>⚠ Low Activity</span> warning. This means the device is not generating enough activity for the app to learn its baseline. This is normal for infrequently used lights, switches, and fans.</div>"
         }
 
         section("<b>🔀 Virtual & Hub Variable Devices</b>") {
@@ -1205,14 +1192,14 @@ def infoPage(Map params = [:]) {
         section("<b>🔗 Hub Mesh Protocol Detection</b>") {
             paragraph rawHtml: true, "<div style='background-color:#f8f8f8; border:1px solid #dddddd; border-radius:6px; padding:10px; margin-bottom:4px;'>" +
                       "Hub Mesh linked devices show <b>LNK</b> as their controller type regardless of the underlying protocol. The app attempts to identify the real protocol using Encoding data values, Zigbee cluster data, driver name heuristics, and known manufacturer names.<br><br>" +
-                      "When identified the device shows as <b>Hub Mesh (Zigbee)</b>, <b>Hub Mesh (Z-Wave)</b>, or <b>Hub Mesh (Matter)</b> in the matching protocol color. When it cannot be identified it shows as plain <b><span style='color:#06b6d4;'>Hub Mesh</span></b>.<br><br>" +
-                      "<b>Protocol Overrides:</b> Use the <b>🔧 Protocol Overrides</b> page to manually set the protocol for any device that shows as plain Hub Mesh or LAN. The override always wins over auto-detection even if detection later improves. Set back to <b>Auto-detect</b> to restore automatic detection. Overridden devices show a small <i>(override)</i> label in the Activity Summary.</div>"
+                      "When identified the device shows as <b>Hub Mesh (Zigbee)</b>, <b>Hub Mesh (Z-Wave)</b>, or <b>Hub Mesh (Matter)</b>. When it cannot be identified it shows as plain <b><span style='color:#06b6d4;'>Hub Mesh</span></b>.<br><br>" +
+                      "<b>Protocol Overrides:</b> Use the <b>🔧 Protocol Overrides</b> page to manually set the protocol for any device showing as plain Hub Mesh or LAN. The override always wins over auto-detection. Set back to <b>Auto-detect</b> to restore automatic detection. Overridden devices show a small <i>(override)</i> label in the Activity Summary.</div>"
         }
 
         section("<b>😴 Snooze</b>") {
             paragraph rawHtml: true, "<div style='background-color:#f8f8f8; border:1px solid #dddddd; border-radius:6px; padding:10px; margin-bottom:4px;'>" +
                       "Use <b>Manage Snoozed Devices</b> from the main page or Activity Summary to snooze individual devices. " +
-                      "Snoozed devices are excluded from notifications and the Problem Devices page for the configured snooze duration (default 24h).<br><br>" +
+                      "Snoozed devices are excluded from notifications and the Problem Devices page for the configured snooze duration.<br><br>" +
                       "Snoozed devices still appear in the Activity Summary with a 😴 indicator and a countdown. " +
                       "You can unsnooze devices early at any time. Snoozes expire automatically.</div>"
         }
