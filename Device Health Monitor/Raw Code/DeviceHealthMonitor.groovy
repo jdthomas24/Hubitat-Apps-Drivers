@@ -7,7 +7,7 @@ definition(
     importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Device%20Health%20Monitor/Raw%20Code/DeviceHealthMonitor.groovy",
     iconUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Device%20Health%20Monitor/Raw%20Code/DeviceHealthMonitor.groovy",
     iconX2Url: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Device%20Health%20Monitor/Raw%20Code/DeviceHealthMonitor.groovy",
-    version: "1.3.2",
+    version: "1.3.3",
     doNotFocus: true
 )
 
@@ -598,11 +598,17 @@ def scanAllDevices() {
                             }
                             if (debugEnabled()) log.debug "${device.displayName} (${protocol}): interval=${elapsed.toInteger()}min smoothed=${smoothed.toInteger()}min avg=${data.avgInterval?.toInteger()}min gate=${minGate.toInteger()}min"
                         }
+                        // v1.3.3: only advance lastSeen anchor when elapsed >= minGate so that
+                        // rapid-fire devices (motion sensors, contact sensors firing every 1-2 min)
+                        // don't walk lastSeen forward in tiny steps, which would produce a
+                        // near-zero baseline and cause spurious Poor health when the device goes quiet.
+                        data.lastSeen    = lastSeen
+                        data.lastCheckin = lastSeen
                     } else {
-                        if (debugEnabled()) log.debug "${device.displayName}: elapsed ${elapsed.toInteger()}min below gate ${minGate.toInteger()}min — skipping sample"
+                        if (debugEnabled()) log.debug "${device.displayName}: elapsed ${elapsed.toInteger()}min below gate ${minGate.toInteger()}min — skipping sample and not advancing lastSeen anchor"
+                        // v1.3.3: do NOT update lastSeen here — leave the anchor where it was
+                        // so the next scan measures elapsed from the last gate-qualifying activity
                     }
-                    data.lastSeen    = lastSeen
-                    data.lastCheckin = lastSeen
                 } else {
                     if (debugEnabled()) log.debug "${device.displayName}: no new activity since last scan"
                 }
@@ -721,9 +727,15 @@ def formatInterval(minutes) {
 // ============================================================
 // ===================== ACTIVITY SUMMARY PAGE ===============
 // ============================================================
+// v1.3.3: DataTables sortable columns
 def activitySummaryPage() {
     dynamicPage(name: "activitySummaryPage", title: "Device Activity Summary", install: false) {
         section("") {
+            // v1.3.3: load DataTables CSS and JS
+            paragraph rawHtml: true, """
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+<script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+"""
             href(name: "toForceScan", page: "forceScanPage",
                  title: "🔄 Force Scan Now",
                  description: "Tap to immediately check all monitored devices")
@@ -748,35 +760,52 @@ def activitySummaryPage() {
 
             def hubIp = location?.hub?.localIP ?: ""
 
-            def table = "<table style='width:100%; border-collapse: collapse; border: 1px solid #ccc;'>"
-            table += "<tr style='font-weight:bold; background-color:#f0f0f0;'>"
-            table += "<td style='padding:4px; border:1px solid #ccc;'>Device</td>"
-            table += "<td style='padding:4px; border:1px solid #ccc;'>Protocol</td>"
-            table += "<td style='padding:4px; border:1px solid #ccc;'>Health</td>"
-            table += "<td style='padding:4px; border:1px solid #ccc;'>Last Seen</td>"
-            table += "<td style='padding:4px; border:1px solid #ccc;'>Avg Check-in</td>"
-            table += "<td style='padding:4px; border:1px solid #ccc;'>Samples</td>"
-            table += "</tr>"
+            // v1.3.3: thead/tbody required for DataTables
+            def table = "<table id='activityTable' style='width:100%; border-collapse: collapse; border: 1px solid #ccc;'>"
+            table += "<thead><tr style='font-weight:bold; background-color:#f0f0f0;'>"
+            table += "<th style='padding:4px; border:1px solid #ccc;'>Device</th>"
+            table += "<th style='padding:4px; border:1px solid #ccc;'>Protocol</th>"
+            table += "<th style='padding:4px; border:1px solid #ccc;'>Health</th>"
+            table += "<th style='padding:4px; border:1px solid #ccc;'>Last Seen</th>"
+            table += "<th style='padding:4px; border:1px solid #ccc;'>Avg Check-in</th>"
+            table += "<th style='padding:4px; border:1px solid #ccc;'>Samples</th>"
+            table += "</tr></thead><tbody>"
 
             def rowNum = 0
             devList.each { device ->
-                def data       = state.history?.get(device.id)
-                def protocol   = getProtocol(device)
-                def lastSeen   = data?.lastSeen ? formatTimeAgo(data.lastSeen) : "Never"
-                def avgInt     = data?.userInterval ? formatInterval(data.userInterval) + " (manual)" :
-                                 data?.avgInterval  ? formatInterval(data.avgInterval) : "Learning..."
-                def sampleCount = data?.samples?.size() ?: 0
-                def snoozed    = isDeviceSnoozed(device.id as String)
+                def data        = state.history?.get(device.id)
+                def protocol    = getProtocol(device)
+                def snoozed     = isDeviceSnoozed(device.id as String)
                 def hasOverride = settings["protocolOverride_${device.id}"] &&
                                   settings["protocolOverride_${device.id}"] != "Auto-detect"
-                def rowBg      = snoozed ? "#f8f8f8" : (rowNum % 2 == 0) ? "#ffffff" : "#ebebeb"
+                def rowBg       = snoozed ? "#f8f8f8" : (rowNum % 2 == 0) ? "#ffffff" : "#ebebeb"
                 def protocolDisplay = hasOverride ? "${protocol} <span style='color:#94a3b8;font-size:10px;'>(override)</span>" : protocol
 
-                // v1.3.2: Low Activity label
-                def lowActivity = isLowActivity(device.id as String)
+                // v1.3.3: data-order values
+                // Last Seen — epoch ms (higher = more recent; invert so "most recent" sorts first asc)
+                def lastSeenMs  = data?.lastSeen ? (data.lastSeen as Long) : 0
+                def lastSeenStr = lastSeenMs ? formatTimeAgo(lastSeenMs) : "Never"
+
+                // Avg Check-in — raw minutes for numeric sort; Learning... = 999999 (sorts last)
+                def avgRawMin = data?.userInterval ? (data.userInterval as Long) :
+                                data?.avgInterval  ? (data.avgInterval as Long) : 999999
+                def avgIntStr = data?.userInterval ? formatInterval(data.userInterval) + " (manual)" :
+                                data?.avgInterval  ? formatInterval(data.avgInterval) : "Learning..."
+
+                // Samples — numeric
+                def sampleCount = data?.samples?.size() ?: 0
+
+                // Low Activity label
+                def lowActivity    = isLowActivity(device.id as String)
                 def samplesDisplay = lowActivity
                     ? "${sampleCount} <span style='color:#f97316;font-size:10px;'>⚠ Low Activity</span>"
                     : "${sampleCount}"
+
+                // Health sort: Offline=1, Poor=2, Fair=3, Good=4, Excellent=5, Pending=6, Snoozed=99
+                def h           = state.health?.get(device.id) ?: "Pending"
+                def healthOrder = snoozed ? 99 :
+                                  (h == "Offline" ? 1 : h == "Poor" ? 2 : h == "Fair" ? 3 :
+                                   h == "Good" ? 4 : h == "Excellent" ? 5 : 6)
 
                 rowNum++
 
@@ -788,20 +817,36 @@ def activitySummaryPage() {
                 }
 
                 table += "<tr style='background-color:${rowBg};${snoozed ? "opacity:0.6;" : ""}'>"
-                table += "<td style='padding:4px; border:1px solid #ccc;'>${deviceLink}</td>"
-                table += "<td style='padding:4px; border:1px solid #ccc;'><span style='color:${getProtocolColor(protocol)};font-weight:bold;'>${protocolDisplay}</span></td>"
-                table += "<td style='padding:4px; border:1px solid #ccc;'>${getHealthDisplay(device)}</td>"
-                table += "<td style='padding:4px; border:1px solid #ccc;'>${lastSeen}</td>"
-                table += "<td style='padding:4px; border:1px solid #ccc;'>${avgInt}</td>"
-                table += "<td style='padding:4px; border:1px solid #ccc;'>${samplesDisplay}</td>"
+                table += "<td style='padding:4px; border:1px solid #ccc;' data-order='${device.displayName.toLowerCase().trim()}'>${deviceLink}</td>"
+                table += "<td style='padding:4px; border:1px solid #ccc;' data-order='${protocol}'><span style='color:${getProtocolColor(protocol)};font-weight:bold;'>${protocolDisplay}</span></td>"
+                table += "<td style='padding:4px; border:1px solid #ccc;' data-order='${healthOrder}'>${getHealthDisplay(device)}</td>"
+                // v1.3.3: negate epoch ms so ascending sort = most recent first
+                table += "<td style='padding:4px; border:1px solid #ccc;' data-order='${-lastSeenMs}'>${lastSeenStr}</td>"
+                table += "<td style='padding:4px; border:1px solid #ccc;' data-order='${avgRawMin}'>${avgIntStr}</td>"
+                table += "<td style='padding:4px; border:1px solid #ccc;' data-order='${sampleCount}'>${samplesDisplay}</td>"
                 table += "</tr>"
             }
 
-            table += "</table>"
-            if (hubIp) {
-                paragraph "<span style='color:#94a3b8;font-size:11px;'>⚠ Device links are accessible on your local network only.</span>"
-            }
-            paragraph "<div style='overflow-x:auto; -webkit-overflow-scrolling:touch;'>${table}</div>"
+            table += "</tbody></table>"
+
+            // v1.3.3: DataTables init — paging off, search on, default sort col 2 (Health) asc, numeric on cols 2/3/4/5
+            paragraph rawHtml: true, """
+${hubIp ? "<span style='color:#94a3b8;font-size:11px;'>⚠ Device links are accessible on your local network only.</span><br>" : ""}
+<div style='overflow-x:auto; -webkit-overflow-scrolling:touch;'>${table}</div>
+<script>
+\$(document).ready(function() {
+    \$('#activityTable').DataTable({
+        paging:     false,
+        info:       false,
+        searching:  true,
+        order:      [[2, 'asc']],
+        columnDefs: [
+            { type: 'num', targets: [2, 3, 4, 5] }
+        ]
+    });
+});
+</script>
+"""
         }
 
         section("<b>🔄 Reset Device History</b>", hideable: true, hidden: true) {
