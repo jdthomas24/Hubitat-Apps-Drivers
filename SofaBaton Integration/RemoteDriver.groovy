@@ -26,56 +26,7 @@
 		 courtesy before public release, same community norm dJOS followed
 		 crediting mike.maxwell/Gassgs/SViel.
 
-	*OVERVIEW
-	 This driver allows a Sofabaton X Series remote to trigger Hubitat automations.
-	 When a Sofabaton activity is started or stopped on the remote, it sends a value
-	 in the request body to this driver via a local HTTP PUT request. That value is mapped
-	 to a button press which can then trigger any Hubitat rule or automation.
-
-	 The driver supports three types of input:
-	   -on/off: fires a switch event (reserved, always active)
-	   -Numeric (1-10): fires a pushed event with the number; use Button Labels in
-	    preferences to document what each number represents
-	   -User definable (10 slots): match any string the remote sends to a named button;
-	    configure the match string and a friendly label in preferences. Slot 1 fires
-	    button 11, slot 2 fires button 12, and so on through slot 10 / button 20
-
-	 Every input fires a numeric pushed event, since Hubitat's PushableButton capability
-	 defines pushed as a number. To trigger on the string itself instead, use the
-	 lastButtonValue attribute (the raw text from the remote) or lastButtonLabel (your
-	 configured description) as a Custom Attribute trigger in Rule Machine.
-
-	 If a fired button's resolved label matches the name of a "Sofabaton Activity"
-	 child device (added via the parent app), that Activity device's state is kept
-	 in sync automatically -- see handleActivityStateSync() below.
-
-	 NOTE: This is one-way communication - remote to Hubitat only.
-	 To trigger a Sofabaton activity FROM Hubitat, use the matching "Sofabaton
-	 Activity" child device's on()/off() commands, which call Sofabaton's cloud
-	 API webhook for that activity.
-
-	*COMPATIBLE HARDWARE
-	 X1S (minimum supported), X2
-
-	*HUBITAT CONFIGURATION
-	 -Set a static DHCP reservation for the Sofabaton hub
-	 -Enter that reserved IP address in this driver's Remote IP Address preference
-	  (pre-filled by the parent app when the hub is added)
-
-	*SOFABATON APP CONFIGURATION
-	 -In the Sofabaton app, go to Devices and tap Add Device, then select Wi-Fi
-	 -Tap the link at the bottom: "Create a virtual device for IP control"
-	 -Enter the URL:  http://[your Hubitat IP]:39501/
-	 -Set the request method to PUT
-	 -Leave Content Type and Additional Headers blank
-	 -In the Body field, enter either:
-	    -A number 1-10 for a numeric button, or 11-20 for a user definable button
-	    -Any string (e.g. "watchTV") matching the Match String configured in this
-	     driver's preferences (case insensitive)
-	    -on or off to set this device's switch state
-	 -Repeat for each activity using a unique value each time
-
-
+	
 */
 
 def version() {
