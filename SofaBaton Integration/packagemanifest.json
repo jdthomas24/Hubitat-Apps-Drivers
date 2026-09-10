@@ -1,1 +1,49 @@
+{
+    "packageName": "Sofabaton Integration",
+    "author": "Jason Thomas",
+    "version": "1.0.0",
+    "minimumHEVersion": "2.5.0",
+    "dateReleased": "",
+    "documentationLink": "",
+    "communityLink": "",
+    "releaseNotes": "Initial pre-release scaffold. Not yet validated against real hardware -- see each driver's header notes for what's confirmed vs. still open.",
+    "apps": [
+        {
+            "id": "938eb704-adaf-44b6-957a-d81698af9b10",
+            "name": "Sofabaton Integration",
+            "namespace": "jdthomas24",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Sofabaton%20Integration/ParentApp.groovy",
+            "required": true,
+            "oauth": false,
+            "primary": true,
+            "version": "1.0.0"
+        }
+    ],
+    "drivers": [
+        {
+            "id": "1c2584c4-58c8-4324-8e42-4bf4c33fb38a",
+            "name": "Sofabaton Integration Bridge",
+            "namespace": "jdthomas24",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Sofabaton%20Integration/BridgeDevice.groovy",
+            "required": true,
+            "version": "1.0.0"
+        },
+        {
+            "id": "398080a1-8ee2-48cc-bdbe-e76d92ce7338",
+            "name": "Sofabaton Remote",
+            "namespace": "jdthomas24",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Sofabaton%20Integration/RemoteDriver.groovy",
+            "required": true,
+            "version": "1.0.0-jdthomas24"
+        },
+        {
+            "id": "df7fa700-8ef0-41c0-a81c-eef92760a811",
+            "name": "Sofabaton Activity",
+            "namespace": "jdthomas24",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Sofabaton%20Integration/ActivityDriver.groovy",
+            "required": true,
+            "version": "1.0.0"
+        }
+    ]
+}
 
