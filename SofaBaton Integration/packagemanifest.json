@@ -1,12 +1,14 @@
 {
     "packageName": "Sofabaton Integration",
-    "author": "Jdthomas24",
+    "releaseNotes": "v1.0.0 (initial scaffold) -- Not yet publicly released. ParentApp, Sofabaton Integration Bridge (grouping device), Sofabaton Remote (forked from dJOS's community Sofabaton X Series Driver, local button/activity triggers unmodified from the original) and Sofabaton Activity (cloud webhook start/stop) added. Remote-driven Activity state sync -- the fired activity is set on and the previously-on activity for that hub set off, both local-only with no cloud call -- is new and not yet validated against real hardware. Cloud Stop Activity webhook is unconfirmed as a real Sofabaton feature; off() falls back to a local-only state change with a warning if no Stop URL is configured.",
+    "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Sofabaton%20Integration",
+    "communityLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Sofabaton%20Integration",
+    "author": "jdthomas24",
     "version": "1.0.0",
     "minimumHEVersion": "2.5.0",
     "dateReleased": "",
-    "documentationLink": "",
-    "communityLink": "",
-    "releaseNotes": "Initial pre-release scaffold. Not yet validated against real hardware -- see each driver's header notes for what's confirmed vs. still open.",
+    "category": "Integrations",
+    "tags": "remote, video, TV",
     "apps": [
         {
             "id": "938eb704-adaf-44b6-957a-d81698af9b10",
@@ -15,8 +17,7 @@
             "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Sofabaton%20Integration/ParentApp.groovy",
             "required": true,
             "oauth": false,
-            "primary": true,
-            "version": "1.0.0"
+            "description": "Manages one or more Sofabaton X Series hubs. Creates a Sofabaton Remote device per hub (local remote-to-Hubitat triggers) and Sofabaton Activity devices per hub (cloud webhook control)."
         }
     ],
     "drivers": [
@@ -26,7 +27,7 @@
             "namespace": "jdthomas24",
             "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Sofabaton%20Integration/BridgeDevice.groovy",
             "required": true,
-            "version": "1.0.0"
+            "description": "Internal nesting-only group device -- gives each hub's Sofabaton Remote device a shared parent so multiple hubs group together in the Devices list. Not user-facing; created automatically by the app."
         },
         {
             "id": "398080a1-8ee2-48cc-bdbe-e76d92ce7338",
@@ -34,7 +35,7 @@
             "namespace": "jdthomas24",
             "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Sofabaton%20Integration/RemoteDriver.groovy",
             "required": true,
-            "version": "1.0.0-jdthomas24"
+            "description": "Component driver for one physical Sofabaton hub (X1S/X2). Receives local button/activity triggers from the physical remote and drives Sofabaton Activity state sync. Forked from dJOS's community Sofabaton X Series Driver -- see driver header for full credit and changelog."
         },
         {
             "id": "df7fa700-8ef0-41c0-a81c-eef92760a811",
@@ -42,8 +43,7 @@
             "namespace": "jdthomas24",
             "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Sofabaton%20Integration/ActivityDriver.groovy",
             "required": true,
-            "version": "1.0.0"
+            "description": "Component driver for one Sofabaton activity. on()/off() call Sofabaton's cloud webhook for that activity. syncOn()/syncOff() are called only by the parent Sofabaton Remote device to mirror state locally, with no cloud call, when the physical remote changes activity."
         }
     ]
 }
-
