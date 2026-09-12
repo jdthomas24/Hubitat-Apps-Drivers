@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.5.0-beta19
+ * Version: 1.5.0-beta20
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -28,8 +28,20 @@
  * v1.5.0 BETA (in progress, shared privately with one reporting user, not
  * on HPM) -- NVR recording control: a master record on/off switch, plus
  * named per-channel schedule presets loaded on demand. Current design as
- * of beta19 (this section is periodically condensed as the design
+ * of beta20 (this section is periodically condensed as the design
  * settles, same practice as the trimmed pre-1.3.8 history below):
+ *  - beta20: permanent per-device recording-preset lock. A new
+ *    excludeFromRecordingPresets preference (CameraDriver.groovy /
+ *    DoorbellDriver.groovy) is read directly here inside
+ *    componentLoadPreset() -- a locked channel is skipped on every preset
+ *    load regardless of what that preset specifies for it, distinct from
+ *    the existing "skipped (no data)" case (a channel simply left blank in
+ *    THIS preset). presetsPage() also greys out a locked channel's picker
+ *    with a 🔒 instead of rendering an editable input for it, so the UI
+ *    can't even suggest a setting that would never actually apply. Direct
+ *    manual commands aimed at a locked device are unaffected -- only
+ *    preset-driven writes are blocked. Not rushing this to production
+ *    given it touches real recording behavior; testing first.
  *  - beta19 (bridge-only, no app change): reintroduced a named
  *    loadPreset(presetName) command on the bridge -- see
  *    ReolinkDeviceBridge.groovy's beta19 note. componentLoadPreset() here
@@ -244,7 +256,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.5.0-beta19"
+@Field static final String APP_VERSION = "1.5.0-beta20"
 
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 
@@ -1065,6 +1077,19 @@ def presetsPage(params) {
                 if (advancedMode) {
                     channels.each { ch ->
                         def channelNum = ch.getDataValue("channel")
+                        // v1.5.0-beta20: a locked channel gets no input at
+                        // all -- rendering a disabled-looking input that
+                        // Hubitat's own dynamicPage framework can't actually
+                        // prevent submission on would be worse than no
+                        // input, since it'd look interactive but silently
+                        // do nothing. A plain paragraph makes the lock
+                        // visually unmistakable and genuinely un-editable.
+                        if (ch.getSetting("excludeFromRecordingPresets") == true) {
+                            paragraph "🔒 <b>${ch.label ?: ch.name} (ch ${channelNum})</b> -- excluded from all " +
+                                "presets (locked on the device's own preferences page). This preset will never " +
+                                "write a schedule to it."
+                            return
+                        }
                         def key = "preset_${sourceId}_${name}_${channelNum}"
                         input key, "text", title: "${ch.label ?: ch.name} (ch ${channelNum})",
                             defaultValue: chMap[channelNum] ?: ""
@@ -1073,6 +1098,15 @@ def presetsPage(params) {
                     def simpleForPreset = (state.recPresetSimpleConfig ?: [:])[sourceId.toString()]?.get(name) ?: [:]
                     channels.each { ch ->
                         def channelNum = ch.getDataValue("channel")
+                        // v1.5.0-beta20: same lock check as the advanced
+                        // branch above -- see that comment for why this is
+                        // a paragraph, not a disabled input.
+                        if (ch.getSetting("excludeFromRecordingPresets") == true) {
+                            paragraph "🔒 <b>${ch.label ?: ch.name} (ch ${channelNum})</b> -- excluded from all " +
+                                "presets (locked on the device's own preferences page). This preset will never " +
+                                "write a schedule to it."
+                            return
+                        }
                         def simpleCfg = simpleForPreset[channelNum]
                         def modeKey = "presetMode_${sourceId}_${name}_${channelNum}"
                         def currentMode = settings[modeKey] ?: simpleCfg?.mode ?: REC_MODE_OFF
@@ -2592,10 +2626,20 @@ def componentLoadPreset(child, sourceId, String presetName) {
     int okCount = 0
     def failedChannels = []
     def skipped = []
+    // v1.5.0-beta20: channels locked out entirely, distinct from `skipped`
+    // (a channel simply left blank in THIS particular preset) -- a locked
+    // channel is protected from EVERY preset, not just this one.
+    def locked = []
     channels.each { ch ->
         def channelNum = ch.getDataValue("channel") as Integer
         def bitstring = chMap[channelNum.toString()]
-        if (!bitstring) {
+        if (ch.getSetting("excludeFromRecordingPresets") == true) {
+            // Enforced here regardless of whether this preset even has
+            // data for this channel -- the whole point of the lock is that
+            // it can't be bypassed by a future preset that DOES set
+            // something for this channel, intentionally or by mistake.
+            locked << channelNum
+        } else if (!bitstring) {
             skipped << channelNum
         } else {
             try {
@@ -2618,6 +2662,10 @@ def componentLoadPreset(child, sourceId, String presetName) {
     def parts = ["${okCount}/${channels.size()} OK"]
     if (failedChannels) parts << "failed: ${failedChannels.collect { "ch${it}" }.join(', ')}"
     if (skipped) parts << "skipped (no data): ${skipped.collect { "ch${it}" }.join(', ')}"
+    // v1.5.0-beta20: reported separately from "skipped (no data)" so it's
+    // clear at a glance THIS was a deliberate, permanent lock, not just an
+    // unset field in this one preset.
+    if (locked) parts << "locked: ${locked.collect { "ch${it}" }.join(', ')}"
     def summary = parts.join(', ')
     logNormal "Reolink source ${sourceId}: preset '${presetName}' loaded -- ${summary}"
     bridge.receiveRecordingMode(presetName)
