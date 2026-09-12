@@ -921,6 +921,17 @@ def presetsPage(params) {
             def simpleUpdated = [:]
             channels.each { ch ->
                 def channelNum = ch.getDataValue("channel")
+                // v1.5.0-beta20: a locked channel never gets an entry in
+                // this preset's saved data at all, regardless of whatever
+                // was stored here before it was locked -- without this,
+                // a channel locked AFTER already having a real schedule
+                // saved in this preset would keep that old value sitting
+                // in state.recPresets (invisible, since presetsPage() no
+                // longer renders a picker for it), even though
+                // componentLoadPreset() correctly refuses to ever write it.
+                // Enforcement was already safe without this; this just
+                // keeps the stored data itself honest.
+                if (ch.getSetting("excludeFromRecordingPresets") == true) return
                 if (advancedMode) {
                     def val = settings["preset_${sourceId}_${name}_${channelNum}"]
                     if (val) {
