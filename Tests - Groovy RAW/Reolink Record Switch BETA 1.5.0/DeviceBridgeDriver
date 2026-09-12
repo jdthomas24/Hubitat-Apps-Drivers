@@ -1,6 +1,6 @@
 /**
  * Reolink Device Bridge (Internal Parent Driver)
- * Version: 1.5.0-beta19
+ * Version: 1.5.0-beta20
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- ONE instance per SOURCE (Hub/NVR or standalone).
@@ -17,28 +17,31 @@
  * v1.5.0 BETA (in progress, shared privately with one reporting user, not
  * on HPM) -- NVR recording control, mirroring ParentApp.groovy's own
  * consolidated note (see that file for the full hardware-confirmed
- * details). Current design as of beta19. beta17 was mostly app-only (a new
- * "Never record" preset picker choice), but one bridge fix was folded in
- * before release (never shipped separately, so not its own version): a
- * second push() bug, distinct from beta16's fix, found in the same round
- * of beta15 logs -- see push()'s own comment below for the full story.
- * beta18 (bridge-only): revisited beta16's blanket removal of Commands-tab
- * description text -- see the risk asymmetry explained at on()/off()'s
- * declaration above. Restored it for on()/off() specifically;
- * loadSelectedPreset() stays bare, since that command's OWN description
- * text is what's confirmed to have caused the real crash.
- * beta19 (bridge-only): reintroduced loadPreset(presetName) -- a real
- * user-facing gap surfaced by his live rule-building, not a bug: Push
- * requires cross-referencing which button number means which preset, and
- * loadSelectedPreset() shares one Preferences dropdown across the whole
- * device (so it can't hold "Away" for one branch and "Home" for another
- * in the same rule set). loadPreset('Away') takes the name directly per
- * call. Confirmed safe to bring back despite beta16's Custom Action
- * lesson -- this declares a REAL typed STRING parameter (matching a
- * method that genuinely takes one), the same shape as push()'s already-
- * confirmed-working NUMBER parameter, not the description-only/zero-
- * argument shape that actually broke loadSelectedPreset() under Custom
- * Action.
+ * details). Current design as of beta20 -- see ParentApp.groovy's beta20
+ * note for the new permanent per-device preset lock (excludeFromRecording-
+ * Presets on the Camera/Doorbell drivers); no code in THIS file changed for
+ * that feature, since enforcement lives entirely in the app's
+ * componentLoadPreset(). beta17 was mostly app-only (a new "Never record"
+ * preset picker choice), but one bridge fix was folded in before release
+ * (never shipped separately, so not its own version): a second push() bug,
+ * distinct from beta16's fix, found in the same round of beta15 logs -- see
+ * push()'s own comment below for the full story. beta18 (bridge-only):
+ * revisited beta16's blanket removal of Commands-tab description text --
+ * see the risk asymmetry explained at on()/off()'s declaration above.
+ * Restored it for on()/off() specifically; loadSelectedPreset() stays bare,
+ * since that command's OWN description text is what's confirmed to have
+ * caused the real crash. beta19 (bridge-only): reintroduced
+ * loadPreset(presetName) -- a real user-facing gap surfaced by his live
+ * rule-building, not a bug: Push requires cross-referencing which button
+ * number means which preset, and loadSelectedPreset() shares one
+ * Preferences dropdown across the whole device (so it can't hold "Away"
+ * for one branch and "Home" for another in the same rule set).
+ * loadPreset('Away') takes the name directly per call. Confirmed safe to
+ * bring back despite beta16's Custom Action lesson -- this declares a REAL
+ * typed STRING parameter (matching a method that genuinely takes one), the
+ * same shape as push()'s already-confirmed-working NUMBER parameter, not
+ * the description-only/zero-argument shape that actually broke
+ * loadSelectedPreset() under Custom Action.
  *  - capability "Switch" (on()/off()) is the NVR's master record
  *    enable/disable -- untargeted at the API level (applies to every
  *    channel of this source at once; there is no per-channel version of
