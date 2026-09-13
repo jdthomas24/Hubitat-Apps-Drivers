@@ -599,6 +599,16 @@ def tipsPage() {
             paragraph "Every preset write is a fresh read-modify-write against whatever the channel's own " +
                 "current schedule actually is right now -- nothing is cached or \"restored\" from an earlier " +
                 "point in time, so there's no stale-snapshot trap to worry about."
+            paragraph "⚠️ <b>A preset's schedule covers continuous recording and AI/motion-triggered " +
+                "recording together, not separately.</b> Confirmed against real hardware: a channel's " +
+                "schedule has one time-table for continuous (\"TIMING\") and separate time-tables per AI " +
+                "type (person, vehicle, pet, plain motion, etc.) -- but every one of those tables gets set " +
+                "to the SAME hours by a preset here. So \"Continuous 6pm-6am\" also means AI-triggered clips " +
+                "only get saved during that same window, not any time of day. If you want continuous " +
+                "recording limited to certain hours while still catching AI events any time, the way to get " +
+                "that today is two presets and a time-based Rule Machine schedule between them, rather than " +
+                "one preset trying to do both -- e.g. a \"Daytime\" preset and a \"Nighttime\" preset, switched " +
+                "by a rule instead of expecting a single preset to express both at once."
         }
         section {
             paragraph pillHeader("Snapshot tiles on dashboards")
