@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.5.0-beta20
+ * Version: 1.5.0-beta21
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -28,8 +28,18 @@
  * v1.5.0 BETA (in progress, shared privately with one reporting user, not
  * on HPM) -- NVR recording control: a master record on/off switch, plus
  * named per-channel schedule presets loaded on demand. Current design as
- * of beta20 (this section is periodically condensed as the design
+ * of beta21 (this section is periodically condensed as the design
  * settles, same practice as the trimmed pre-1.3.8 history below):
+ *  - beta21 FIX (Camera/Doorbell drivers): componentCheckRecordingSchedule()
+ *    has existed here and on the bridge's passthrough since early in this
+ *    feature's development, but nothing on the Camera/Doorbell device
+ *    itself ever actually called it -- no command declared, no method to
+ *    call it, so there was genuinely no way to run this diagnostic from
+ *    the device page. Surfaced when the reporting user asked where to
+ *    find it and it turned out not to exist yet. Added checkRecordingSchedule()
+ *    as a real command on both drivers now. Diagnostic only, same as
+ *    always -- reads and logs the channel's current schedule, never
+ *    writes anything.
  *  - beta20: permanent per-device recording-preset lock. A new
  *    excludeFromRecordingPresets preference (CameraDriver.groovy /
  *    DoorbellDriver.groovy) is read directly here inside
@@ -256,7 +266,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.5.0-beta20"
+@Field static final String APP_VERSION = "1.5.0-beta21"
 
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 
