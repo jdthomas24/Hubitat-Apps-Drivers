@@ -796,18 +796,6 @@ def discoverPage(params) {
                     defaultValue: true, submitOnChange: true
                 paragraph "<span style='color:${statusColor};font-weight:700;font-size:12px;'>Status: ${connStatus}</span>"
             }
-            if (src.isHub) {
-                section {
-                    paragraph pillHeader("Recording Control")
-                    paragraph "Set what each channel records and when -- a completely separate thing from " +
-                        "adding/removing devices below. Most people only need to visit this once or twice to " +
-                        "define \"Away\"/\"Present\"-style presets, then trigger them from Rule Machine going " +
-                        "forward."
-                    href name: "presetsFromDiscover", title: "Recording Presets",
-                        description: "Define what each channel records and when, and load it from Rule Machine",
-                        page: "presetsPage", params: [sourceId: sourceId]
-                }
-            }
             section {
                 // v1.3.6: explicit warning added after a real-world case where a
                 // device deleted from Hubitat's Devices page (instead of this
@@ -831,11 +819,10 @@ def discoverPage(params) {
 
                 // v1.5.0-beta15: collapsible -- on a source with many
                 // channels, this list was the single biggest chunk of the
-                // page, pushing Recording Presets (moved above this
-                // section this same round) and everything else well below
-                // the fold. Collapsed by default only once a source
-                // already has at least one device (nothing to hide on a
-                // brand-new source with zero channels added yet).
+                // page, pushing everything below it well below the fold.
+                // Collapsed by default only once a source already has at
+                // least one device (nothing to hide on a brand-new source
+                // with zero channels added yet).
                 def anyExisting = channelCount > 0 && lastDiscovery.any { ch ->
                     def dni = childDni(sourceId, ch.channel)
                     getSourceBridge(sourceId)?.getChildDevice(dni) != null
@@ -893,6 +880,26 @@ def discoverPage(params) {
                 input "confirmRemoveSource", "bool",
                     title: "Remove this ENTIRE source and ALL ${childrenForSource(sourceId as Integer).size()} of its device(s) -- unrelated to the toggles above",
                     defaultValue: false, submitOnChange: true
+            }
+            // v1.5.0-beta21: moved to the bottom of the page, below Danger
+            // Zone -- most people set an "Away"/"Present"-style preset once
+            // and never touch this again, so it shouldn't compete with the
+            // add/remove-devices workflow everyone actually uses every
+            // visit. Danger Zone stays last-but-one rather than last since
+            // it's specifically about the devices listed just above it;
+            // Recording Control is a separate, unrelated feature that
+            // belongs after it, not before.
+            if (src.isHub) {
+                section {
+                    paragraph pillHeader("Recording Control")
+                    paragraph "Set what each channel records and when -- a completely separate thing from " +
+                        "adding/removing devices above. Most people only need to visit this once or twice to " +
+                        "define \"Away\"/\"Present\"-style presets, then trigger them from Rule Machine going " +
+                        "forward."
+                    href name: "presetsFromDiscover", title: "Recording Presets",
+                        description: "Define what each channel records and when, and load it from Rule Machine",
+                        page: "presetsPage", params: [sourceId: sourceId]
+                }
             }
         }
     }
