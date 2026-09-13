@@ -1,6 +1,6 @@
 /**
  * Reolink Device Bridge (Internal Parent Driver)
- * Version: 1.5.0-beta20
+ * Version: 1.5.0-beta21
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- ONE instance per SOURCE (Hub/NVR or standalone).
@@ -17,15 +17,16 @@
  * v1.5.0 BETA (in progress, shared privately with one reporting user, not
  * on HPM) -- NVR recording control, mirroring ParentApp.groovy's own
  * consolidated note (see that file for the full hardware-confirmed
- * details). Current design as of beta20 -- see ParentApp.groovy's beta20
- * note for the new permanent per-device preset lock (excludeFromRecording-
- * Presets on the Camera/Doorbell drivers); no code in THIS file changed for
- * that feature, since enforcement lives entirely in the app's
- * componentLoadPreset(). beta17 was mostly app-only (a new "Never record"
- * preset picker choice), but one bridge fix was folded in before release
- * (never shipped separately, so not its own version): a second push() bug,
- * distinct from beta16's fix, found in the same round of beta15 logs -- see
- * push()'s own comment below for the full story. beta18 (bridge-only):
+ * details). Current design as of beta21 -- see ParentApp.groovy's beta21
+ * note for the checkRecordingSchedule() command that was missing from the
+ * Camera/Doorbell drivers entirely (this bridge's own passthrough was
+ * always correct; nothing changed here). beta20 added the permanent
+ * per-device preset lock (excludeFromRecordingPresets on the Camera/
+ * Doorbell drivers); no code in THIS file changed for that either, since
+ * enforcement lives entirely in the app's componentLoadPreset(). A second
+ * push() bug, distinct from beta16's fix, was found and folded into beta17
+ * (never shipped as its own version) -- see push()'s own comment below for
+ * the full story. beta18 (bridge-only):
  * revisited beta16's blanket removal of Commands-tab description text --
  * see the risk asymmetry explained at on()/off()'s declaration above.
  * Restored it for on()/off() specifically; loadSelectedPreset() stays bare,
