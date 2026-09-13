@@ -1,6 +1,6 @@
 /**
  * Reolink Camera (Component Driver)
- * Version: 1.5.0
+ * Version: 1.5.0-beta21
  *
  * Thin device: no HTTP of its own. Delegates everything to the parent app via
  * parent.componentX(this, ...), using data values sourceId/channel to
@@ -57,6 +57,7 @@ metadata {
         command "takeSnapshot"
         command "checkBattery", [[name: "Battery-mode devices only"]]
         command "checkAbilities", [[name: "Refreshes the supportedFeatures attribute from the camera's current GetAbility data"]]
+        command "checkRecordingSchedule", [[name: "Diagnostic only -- reads and logs this channel's current NVR recording schedule, does NOT change anything. Set logging to Full to see the result."]]
         command "setPollInterval", [[name: "seconds", type: "NUMBER"]]
         command "setSnapshotInterval", [[name: "seconds", type: "NUMBER"]]
 
@@ -236,6 +237,20 @@ def checkAbilities() {
 }
 
 /**
+ * v1.5.0-beta21 FIX: componentCheckRecordingSchedule() has existed on
+ * ParentApp.groovy (and its bridge passthrough) since early in the
+ * recording-control work, but nothing on this device ever actually called
+ * it -- no command declared, no method here to call it. There was no way
+ * to run this from the device page at all. Diagnostic only: reads and
+ * logs this channel's current schedule, never writes anything. Requires
+ * the app's Log level set to Full to see the result (same as any other
+ * logNormal/logFull-routed message).
+ */
+def checkRecordingSchedule() {
+    parent?.componentCheckRecordingSchedule(this, device.deviceNetworkId)
+}
+
+/**
  * Called by the app after GetAbility, both at discovery/creation time and on
  * a manual checkAbilities command. Informational only -- see the app's Tips
  * page ("Supported Features") for what this does and doesn't mean. Does NOT
@@ -316,4 +331,3 @@ def markAsleep() {
 def receiveSnapshotUrl(url) {
     sendEvent(name: "snapshotUrl", value: url)
 }
-
