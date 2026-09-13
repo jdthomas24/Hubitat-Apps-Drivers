@@ -623,6 +623,18 @@ private void handlePushedEvent(int cmdId, String bodyText) {
             }
         }
         state.last145 = last
+    } else {
+        // v1.5.0-beta21 FIX: any cmd_id other than 33/145 was previously
+        // dropped completely silently, even at Full tier -- meaning if a
+        // doorbell ring arrives under some OTHER cmd_id (increasingly
+        // likely given a real report where cmd_id 33 never fired at all
+        // for a physical button press, while motion/AI events on the same
+        // NVR kept working normally), there was zero visibility into it.
+        // This logs the raw cmd_id and a snippet of its body so an
+        // unrecognized-but-real push type can actually be discovered,
+        // rather than vanishing without a trace.
+        parent?.logFull "Reolink Device Bridge (source ${state.sourceId}): unrecognized cmd_id ${cmdId} pushed " +
+            "(not currently handled) -- body (first 300 chars): ${bodyText.take(300)}"
     }
 }
 
@@ -958,3 +970,4 @@ private String findXmlValue(String xml, String tagName) {
 def closeSocket() {
     try { interfaces.rawSocket.close() } catch (e) { }
 }
+
