@@ -387,12 +387,21 @@ def mainPage() {
             paragraph pillHeader("Sources")
             paragraph "<b>A source is one camera, one NVR, or one Home Hub -- anything with its own IP/login.</b>"
             (state.sources ?: []).each { src ->
+                def deviceCount = childrenForSource(src.id).size()
+                def typeLine = src.isHub ?
+                    "<span style='color:#1565C0;font-weight:700;'>Hub/NVR · ${deviceCount} device(s)</span>" :
+                    "Standalone · ${deviceCount} device(s)"
                 href name: "src_${src.id}", title: "${src.label} (${src.host})",
-                    description: "${src.isHub ? 'Hub/NVR' : 'Standalone'} · ${childrenForSource(src.id).size()} device(s)",
+                    description: typeLine,
                     page: "discoverPage", params: [sourceId: src.id]
             }
-        }
-        section {
+            // v1.5.0-beta21: merged into the SAME section as the sources
+            // list above (was its own separate section) -- Hubitat's
+            // vertical gap between two sections is noticeably wider than
+            // the gap between two elements inside one section, so this
+            // tightens the visual space between the last source and "Add
+            // a source" without needing any custom CSS Hubitat's own page
+            // framework doesn't expose control over.
             href name: "addSource", title: "➕ Add a source...",
                 description: "Standalone camera, NVR, or Home Hub", page: "addSourcePage"
         }
@@ -406,11 +415,9 @@ def mainPage() {
             paragraph logLevelPill("Full") + " Everything, including every routine poll step. " +
                 "<b>Automatically reverts to Normal after 60 minutes.</b>"
         }
-        section {
-            href name: "tips", title: "Tips, limitations & what works so far", page: "tipsPage",
-                description: "Troubleshooting, known device quirks, and confirmed capabilities"
-        }
         section("<b>Help & Support</b>") {
+            href name: "tips", title: "<b>Tips & Troubleshooting</b>", page: "tipsPage",
+                description: "Known device quirks, setup gotchas, and confirmed capabilities"
             paragraph rawHtml: true, """
 <div style='padding:4px 0;'>
   <a href='https://community.hubitat.com/t/release-reolink-integration-cameras-doorbells-nvrs-home-hubs/165352' target='_blank'
@@ -457,225 +464,172 @@ private String logLevelPill(String level) {
 
 def tipsPage() {
     dynamicPage(name: "tipsPage", title: "Tips & Notes") {
+        // v1.5.0-beta21: all topics merged into ONE section instead of one
+        // section per topic -- Hubitat's own gap between separate sections
+        // is wider than the gap between elements inside one, so this tightens
+        // the page overall. A thin divider paragraph between each topic
+        // keeps them visually distinct despite the tighter spacing, rather
+        // than relying on whitespace alone to separate them.
         section {
             paragraph pillHeader("What a source is")
-            paragraph "A source is one camera, one NVR, or one Home Hub -- anything with its own IP/login."
-            paragraph "A standalone camera always has one channel: 0."
-            paragraph "An NVR/Home Hub has one channel per paired camera. Run discovery to see what it finds."
-        }
-        section {
+            paragraph "A source is one camera, one NVR, or one Home Hub -- anything with its own IP/login. " +
+                "A standalone camera always has one channel: 0. An NVR/Home Hub has one channel per paired " +
+                "camera -- run discovery to see what it finds."
+            paragraph tipsDivider()
+
             paragraph pillHeader("Before adding any camera")
             paragraph "Check the camera's own Network > Advanced (or Server) settings and make sure HTTP, " +
-                "HTTPS, and ONVIF are enabled."
-            paragraph "These are often off by default on every model tested so far -- not just Reolink's E1 " +
-                "line. This is the single most common reason a source fails to connect, and it's worth " +
-                "checking before assuming a device needs a Hub/NVR or isn't supported."
-        }
-        section {
+                "HTTPS, and ONVIF are enabled. These are often off by default on every model tested so far -- " +
+                "not just Reolink's E1 line -- and this is the single most common reason a source fails to " +
+                "connect, before assuming a device needs a Hub/NVR or isn't supported."
+            paragraph tipsDivider()
+
             paragraph pillHeader("Why a device's ID number looks out of order")
-            paragraph "Each device's internal ID (visible in Hubitat's device list as part of its DNI, e.g. " +
-                "'reolink-4-0') is just a counter that only ever goes up. It never reuses a number, even after " +
-                "you delete a source and its device."
-            paragraph "So gaps in the numbering (4, 5, 8, 9 instead of 1, 2, 3, 4) just mean some source got " +
-                "removed and re-added at some point along the way -- normal, and nothing to fix. It doesn't " +
-                "affect how anything works."
-        }
-        section {
+            paragraph "Each device's internal ID (part of its DNI, e.g. 'reolink-4-0') only ever goes up, " +
+                "never reused. Gaps in the numbering just mean a source was removed and re-added at some " +
+                "point -- normal, and nothing to fix."
+            paragraph tipsDivider()
+
+            paragraph pillHeader("Deleting a device the wrong way (Hubitat's Devices page instead of this app)")
+            paragraph "Always remove a Camera/Doorbell from its source's Discover page (toggle it off + " +
+                "Apply), not Hubitat's own Devices page. Hubitat gives apps no way to be notified when a " +
+                "device is deleted directly from there, so deleting one outside this app leaves it thinking " +
+                "the device still exists."
+            paragraph "<b>What's handled automatically:</b> the next time you open that source's Discover " +
+                "page, it notices the device is actually gone, corrects the stuck-on checkbox back to " +
+                "off, and cleans up its poll/snapshot/battery-check scheduling entries for it. Not instant " +
+                "-- only self-heals on that next page view -- but it stops the stale state from sitting " +
+                "there indefinitely."
+            paragraph "⚠️ <b>What's NOT handled:</b> deleting a source's \"Reolink Device Bridge\" device " +
+                "itself this way, instead of using \"Remove this ENTIRE source\" below. The bridge holds " +
+                "the live event connection and is the real parent of every Camera/Doorbell under it -- " +
+                "Hubitat will likely cascade-delete those children along with it, but this app's own record " +
+                "of that source would still think it exists, with no bridge left to find. This case isn't " +
+                "specifically handled -- always remove a whole source via \"Remove this ENTIRE source,\" never " +
+                "by deleting its bridge device directly."
+            paragraph tipsDivider()
+
             paragraph pillHeader("Devices that won't work standalone")
             paragraph "⚠️ <b>Battery-class cameras/doorbells</b> (Argus line, Doorbell Battery, Gen 2 " +
-                "doorbells) -- as a rule, treat these as requiring a Home Hub or NVR. Add the Hub/NVR as the " +
-                "source instead, and the device shows up as one of its channels -- confirmed working well " +
-                "across a real multi-device battery fleet as of v1.4.1."
-            paragraph "It does NOT depend on how the device is powered. Even a battery-class device running " +
-                "continuously on a DC adapter (not just trickle-charging) is affected, because this is a " +
-                "firmware/network-stack limitation, not a charging-mode setting. \"Wired Power Mode\" in the " +
-                "Reolink app only changes charging behavior, never the network API."
-            paragraph "The exact failure mode varies by model, confirmed via two real, different units tested " +
-                "standalone (no Hub):"
-            paragraph "&nbsp;&nbsp;• <b>Argus 4 Pro</b> -- no local network API at ALL. Confirmed directly " +
-                "against real hardware: both the HTTP CGI API (port 443, what discovery/every poll uses) AND " +
-                "the separate Baichuan event-subscription port (9000, what real-time push events use) " +
-                "actively refuse the connection. There is nothing on this unit's own IP for this app -- or " +
-                "any local tool -- to talk to standalone, full stop."
-            paragraph "&nbsp;&nbsp;• <b>Doorbell 2K Gen 2</b> -- DOES have enough of a local API to pair and " +
-                "poll standalone (confirmed: shows up in the integration, GetDevInfo/HTTP works). The problem " +
-                "here is different: the device's own sleep/battery behavior makes real-time event delivery " +
-                "unreliable, so motion/AI state goes stale rather than never connecting at all."
-            paragraph "Bottom line either way: a battery-class device behind a Home Hub or NVR works " +
-                "reliably (the Hub does 100% of the actual network talking on the camera's behalf, so the " +
-                "camera's own local API story stops mattering entirely). Standalone is not supported for this " +
-                "device class, for one reason or the other depending on the specific model -- don't spend time " +
-                "chasing a standalone connection for any battery device before checking this section."
-            paragraph "⚠️ <b>E1, E1 Pro, and Lumus</b> -- Reolink's own docs on whether these support local " +
-                "HTTP/HTTPS are inconsistent, and don't fully agree with each other model to model."
-            paragraph "Don't rely on the model name to decide. <b>Check the camera's own Network > Advanced " +
-                "(or Server) settings</b> for HTTP/HTTPS/ONVIF toggles -- that tells you directly whether this " +
-                "specific unit can do it, regardless of what any doc claims for the line in general. That's " +
-                "exactly how a real E1 Pro here turned out to support HTTP fine, just off by default."
-            paragraph "Everything else -- PoE cameras, WiFi cameras outside the E1 line -- works standalone."
-        }
-        section {
+                "doorbells) -- treat these as requiring a Home Hub or NVR. Add the Hub/NVR as the source " +
+                "instead, and the device shows up as one of its channels. This does NOT depend on how the " +
+                "device is powered -- even one running continuously on a DC adapter is affected, since it's " +
+                "a firmware/network-stack limitation, not a charging-mode setting. Confirmed working well " +
+                "behind a Hub/NVR across a real multi-device battery fleet."
+            paragraph "⚠️ <b>E1, E1 Pro, and Lumus</b> -- Reolink's own docs on local HTTP/HTTPS support are " +
+                "inconsistent for this line. Don't rely on the model name -- check the camera's own Network > " +
+                "Advanced (or Server) settings for HTTP/HTTPS/ONVIF toggles directly. Everything else -- PoE " +
+                "cameras, WiFi cameras outside the E1 line -- works standalone."
+            paragraph tipsDivider()
+
             paragraph pillHeader("Poll interval")
-            paragraph "Wired devices can be polled tight: a few seconds is fine."
-            paragraph "Battery devices should be polled loose -- they only wake for their own events or an " +
-                "occasional self check-in, at most once an hour or so."
-            paragraph "Polling a battery device harder doesn't get fresher data -- it just drains the battery " +
-                "for no benefit."
-            paragraph "This still holds once a battery device is behind a Hub: you're asking the Hub for its " +
-                "last-known state, not the device directly. The device's own check-in cadence is still the " +
-                "real limit."
-            paragraph "When a source's event connection is active, its children are updated in real time and " +
-                "polling is skipped entirely for as long as that connection stays healthy -- polling only " +
-                "resumes automatically if the event connection drops."
-        }
-        section {
+            paragraph "Wired devices can be polled tight (a few seconds). Battery devices should stay loose " +
+                "-- they only wake for their own events or an occasional check-in, and polling harder doesn't " +
+                "get fresher data, it just drains the battery. This still holds behind a Hub, since you're " +
+                "asking the Hub for its last-known state, not the device directly."
+            paragraph "When a source's event connection is active/healthy, its children update in real time " +
+                "and polling is skipped entirely -- polling only resumes automatically if that connection drops."
+            paragraph tipsDivider()
+
+            paragraph pillHeader("\"Use event-driven updates\" toggle (on each source's Discover page)")
+            paragraph "On by default, and for almost every source there's nothing to do here -- a source " +
+                "that supports it gets real-time updates, and if the connection ever drops, it retries " +
+                "automatically (backing off over 10 attempts) before settling into plain polling on its own. " +
+                "No toggle needed for that case; it self-recovers."
+            paragraph "This toggle matters for ONE specific case: a source that structurally can't do event " +
+                "mode at all -- port 9000 blocked by a firewall, or older firmware that doesn't speak the " +
+                "event protocol. That source will still go through all 10 reconnect attempts (and their " +
+                "logging) every time the hub restarts or the app re-initializes, before eventually giving up " +
+                "and polling anyway. If you already know a source falls into this category, turning this off " +
+                "skips that runway entirely and goes straight to polling -- a convenience, not a different " +
+                "outcome, since it lands in the same place either way."
+            paragraph tipsDivider()
+
             paragraph pillHeader("Sleep status")
-            paragraph "<b>Awake</b> -- the last poll actually got a response."
-            paragraph "<b>Asleep</b> -- the last poll got no response at all."
-            paragraph "For a battery device, asleep is normal, not an error -- it just hasn't checked in since " +
-                "its last event or self-wake."
-            paragraph "⚠️ For a <b>wired/PoE device</b>, asleep is NOT normal -- it means a poll genuinely got " +
-                "no response, which points to a real connectivity or load issue worth investigating."
-            paragraph "Motion/person/vehicle/etc. keep their last-known value when this happens, rather than " +
-                "resetting to inactive."
-        }
-        section {
+            paragraph "<b>Awake</b> -- the last poll got a response. <b>Asleep</b> -- it didn't. For a " +
+                "battery device, asleep is normal, not an error. ⚠️ For a <b>wired/PoE device</b>, asleep is " +
+                "NOT normal -- it points to a real connectivity or load issue. Motion/person/vehicle/etc. " +
+                "keep their last-known value rather than resetting to inactive when this happens."
+            paragraph tipsDivider()
+
             paragraph pillHeader("Known older-firmware bug: false 'asleep' from garbled responses")
-            paragraph "⚠️ Some E1-series cameras on ~2021-era firmware (e.g. build 21120806, v3.0.0.748) have a " +
-                "known bug where the camera's web server intermittently returns corrupted/garbled data instead " +
-                "of a real response -- not encryption, not a real connectivity problem, just bad data back from " +
-                "the camera itself. This app can't tell that apart from a genuinely unreachable device, so it " +
-                "gets reported as <b>asleep</b> even though the camera is actually online and responding."
-            paragraph "How to tell: if a wired/PoE device keeps flipping to asleep with no real pattern, and Full " +
-                "logging shows parse errors on GetAiState/GetMdState rather than plain timeouts, this is likely " +
-                "it rather than an actual network issue."
-            paragraph "Confirmed via a 2021-firmware E1 Outdoor -- newer firmware (e.g. 2024-era, v3.1.0.3429) on " +
-                "the same camera line does not show this problem."
-            paragraph "Two things worth trying, in order: (1) In the Reolink app, turn off HTTP/HTTPS under this " +
-                "camera's Network settings, reboot the camera, then turn HTTP/HTTPS back on -- this reinitializes " +
-                "the camera's web server and can clear it up without a firmware change. (2) If that doesn't help, " +
-                "check for a firmware update for this exact camera/hardware version via the Reolink desktop app's " +
-                "Download Center, or contact Reolink support directly with your model and firmware version. When " +
-                "updating, avoid any 'reset configuration' option unless you actually want to reset the camera."
-        }
-        section {
+            paragraph "⚠️ Some E1-series cameras on ~2021-era firmware have a known bug where the camera's " +
+                "web server intermittently returns corrupted data instead of a real response -- not a " +
+                "connectivity problem, just bad data from the camera itself, reported as <b>asleep</b> even " +
+                "though it's online. Tell-tale sign: flips to asleep with no real pattern, and Full logging " +
+                "shows parse errors on GetAiState/GetMdState rather than plain timeouts. Newer firmware on " +
+                "the same camera line doesn't show this."
+            paragraph "Fix, in order: (1) In the Reolink app, toggle this camera's HTTP/HTTPS off then back " +
+                "on under Network settings and reboot it -- reinitializes the web server. (2) If that doesn't " +
+                "help, check for a firmware update via the Reolink desktop app's Download Center, or contact " +
+                "Reolink support with your model/firmware version. Avoid any 'reset configuration' option " +
+                "unless you actually want to reset the camera."
+            paragraph tipsDivider()
+
             paragraph pillHeader("PTZ")
-            paragraph "Reolink has no 'Home' command. The real equivalent is a saved preset."
-            paragraph "Use <b>savePresetHere</b> once (commonly preset ID 1) to save wherever the camera is " +
-                "currently pointed."
-            paragraph "Use <b>ptzGoToPreset</b> with that same ID any time you want it to return there."
-        }
-        section {
+            paragraph "Reolink has no 'Home' command -- the equivalent is a saved preset. Use " +
+                "<b>savePresetHere</b> once (commonly preset ID 1) to save wherever the camera is currently " +
+                "pointed, then <b>ptzGoToPreset</b> with that ID any time to return there."
+            paragraph tipsDivider()
+
             paragraph pillHeader("PTZ calibration")
-            paragraph "⚠️ <b>Only applies to PTZ-capable cameras</b> (e.g. Trackmix, E1 Zoom). Non-PTZ cameras " +
-                "will just return an error if you try it -- harmless, but there's nothing to calibrate."
-            paragraph "Use <b>calibratePtz</b> if preset recall starts drifting off target over time. Check " +
-                "progress with <b>checkPtzCalibrationStatus</b> -- Required means it hasn't been calibrated, " +
-                "Running means it's in progress (takes a few seconds), Done means it's ready."
-        }
-        section {
+            paragraph "⚠️ Only applies to PTZ-capable cameras (e.g. Trackmix, E1 Zoom) -- non-PTZ cameras " +
+                "just harmlessly error if you try it. Use <b>calibratePtz</b> if preset recall starts " +
+                "drifting off target over time; check progress with <b>checkPtzCalibrationStatus</b> " +
+                "(Required / Running / Done)."
+            paragraph tipsDivider()
+
             paragraph pillHeader("PIR (motion trigger) on/off -- cameras only")
-            paragraph "Use <b>pirOn</b>/<b>pirOff</b> to enable or disable a camera's PIR motion trigger " +
-                "without removing the device. This does NOT stop an in-progress recording -- it removes the " +
-                "trigger that would have woken a battery camera to record in the first place. If anything else " +
-                "on that camera is separately configured for continuous/scheduled recording outside PIR " +
-                "triggering, that recording is unaffected."
-            paragraph "Manual on/off only -- there's no auto-revert timer. For something like \"turn PIR off " +
-                "below battery threshold X and back on above threshold Y,\" build that with Rule Machine using " +
-                "the existing battery attribute; no extra plumbing is needed here."
-        }
-        section {
+            paragraph "Use <b>pirOn</b>/<b>pirOff</b> to enable or disable a camera's PIR trigger without " +
+                "removing the device. Does NOT stop an in-progress recording -- it removes the trigger that " +
+                "would have woken a battery camera to record. Manual only, no auto-revert timer -- build " +
+                "battery-threshold automation with Rule Machine using the existing battery attribute."
+            paragraph tipsDivider()
+
             paragraph pillHeader("Recording presets (NVR/Hub master switch + per-channel schedules)")
-            paragraph "Two independent controls exist for recording, and it's worth keeping them separate in " +
-                "your head: the bridge device's own <b>On/Off switch</b> is the NVR's master switch (applies " +
-                "to EVERY channel at once -- there's no way to target one channel with it, that's a " +
-                "hardware/API limitation, not a bug here). Loading a <b>preset</b> writes a named, per-channel " +
-                "schedule defined on the Recording Presets page for that source."
-            paragraph "In practice: turn the master switch on once and leave it on, then use presets to " +
-                "control what actually gets recorded per channel. A channel left as \"Don't manage\" in a " +
-                "given preset is skipped -- its existing schedule is untouched -- which is the recommended " +
-                "way to keep a battery-class channel (e.g. a WiFi doorbell) from being forced into a " +
-                "continuous pattern meant for wired channels."
-            paragraph "Every preset write is a fresh read-modify-write against whatever the channel's own " +
-                "current schedule actually is right now -- nothing is cached or \"restored\" from an earlier " +
-                "point in time, so there's no stale-snapshot trap to worry about."
-            paragraph "⚠️ <b>A preset's schedule covers continuous recording and AI/motion-triggered " +
-                "recording together, not separately.</b> Confirmed against real hardware: a channel's " +
-                "schedule has one time-table for continuous (\"TIMING\") and separate time-tables per AI " +
-                "type (person, vehicle, pet, plain motion, etc.) -- but every one of those tables gets set " +
-                "to the SAME hours by a preset here. So \"Continuous 6pm-6am\" also means AI-triggered clips " +
-                "only get saved during that same window, not any time of day. If you want continuous " +
-                "recording limited to certain hours while still catching AI events any time, the way to get " +
-                "that today is two presets and a time-based Rule Machine schedule between them, rather than " +
-                "one preset trying to do both -- e.g. a \"Daytime\" preset and a \"Nighttime\" preset, switched " +
-                "by a rule instead of expecting a single preset to express both at once."
-        }
-        section {
+            paragraph "Two independent controls: the bridge device's own <b>On/Off switch</b> is the NVR's " +
+                "master switch (every channel at once -- no per-channel targeting, that's a hardware/API " +
+                "limitation). Loading a <b>preset</b> writes a named, per-channel schedule from the Recording " +
+                "Presets page. In practice: turn the master switch on once and leave it, then use presets to " +
+                "control what each channel actually records. A channel left as \"Don't manage\" in a preset " +
+                "is skipped -- its existing schedule stays untouched -- which is how to keep a battery-class " +
+                "channel out of a preset meant for wired ones. Every preset write is a fresh read-modify-write " +
+                "against the channel's current schedule, never a cached/restored snapshot."
+            paragraph "⚠️ <b>A preset's schedule covers continuous and AI/motion-triggered recording " +
+                "together, not separately.</b> Confirmed against real hardware: a channel has one time-table " +
+                "for continuous (\"TIMING\") and separate tables per AI type -- but a preset here sets all of " +
+                "them to the same hours. So \"Continuous 6pm-6am\" also limits AI-triggered clips to that same " +
+                "window. To get continuous-only-at-certain-hours while still catching AI events any time, use " +
+                "two presets (e.g. \"Daytime\"/\"Nighttime\") switched by a time-based Rule Machine schedule."
+            paragraph tipsDivider()
+
             paragraph pillHeader("Snapshot tiles on dashboards")
-            paragraph "Snapshot URLs point at a local relay endpoint on this app, not directly at the camera. " +
-                "The camera itself is only ever contacted on its own snapshot interval (device preference, " +
-                "separate from poll interval) -- the relay endpoint just serves whatever image was cached " +
-                "from that last fetch."
-            paragraph "That means a dashboard tile can refresh as often as you like, but the picture it shows " +
-                "only actually changes as often as that device's snapshot interval. A dashboard tile's own " +
-                "refresh setting has no effect on how often the image itself changes."
-            paragraph "Snapshot interval is intentionally kept separate from poll interval. Poll interval " +
-                "controls motion/AI state and should generally stay tight for responsive automations. " +
-                "Snapshot interval controls image freshness only, and can stay looser (default 30s) without " +
-                "affecting motion responsiveness at all."
-            paragraph "If a camera's tile feels slow to update, lower that device's snapshot interval (device " +
-                "page, or the setSnapshotInterval command) -- not the poll interval, and not the dashboard " +
-                "tile's own refresh setting."
-        }
-        section {
+            paragraph "Snapshot URLs point at a local relay endpoint on this app, not the camera directly -- " +
+                "the camera is only contacted on its own snapshot interval (separate from poll interval), and " +
+                "the relay just serves whatever's cached. A dashboard tile can refresh as often as you like, " +
+                "but the picture only actually changes as often as that device's snapshot interval -- the " +
+                "tile's own refresh setting doesn't matter. Poll interval should stay tight for responsive " +
+                "motion automations; snapshot interval only affects image freshness and can stay looser " +
+                "(default 30s). If a tile feels slow to update, lower the device's snapshot interval, not the " +
+                "poll interval."
+            paragraph tipsDivider()
+
             paragraph pillHeader("Log levels")
             paragraph logLevelPill("Errors Only") + " Default. Warnings and errors only."
-            paragraph logLevelPill("Normal") + " Errors, plus meaningful one-time events and changes: " +
-                "a fresh login, a device flipping asleep/awake, a device created, a config change. Routine " +
-                "polls that succeed with no change don't log anything."
+            paragraph logLevelPill("Normal") + " Errors, plus meaningful one-time events: logins, " +
+                "asleep/awake, devices created, config changes. Routine unchanged polls log nothing."
             paragraph logLevelPill("Full") + " Everything, including every routine poll step. " +
-                "<b>Automatically reverts to Normal after 60 minutes</b> so it doesn't stay noisy indefinitely."
-            paragraph "⚠️ It's normal for <b>Errors Only</b> and <b>Normal</b> to show nothing at all for " +
-                "long stretches -- that means nothing worth flagging has happened, not that the app has " +
-                "stopped working. If you want to confirm it's actually running, switch to <b>Full</b> " +
-                "temporarily and you'll see continuous poll activity."
-        }
-        section {
-            paragraph pillHeader("Supported Features (new in v1.3.0)")
-            paragraph "Every device now has a read-only <b>supportedFeatures</b> attribute, populated " +
-                "automatically at discovery time from the camera's own reported capabilities (Reolink's " +
-                "GetAbility API) -- e.g. \"PTZ, Spotlight, Night Vision, Person Detection, Vehicle Detection, " +
-                "Pet Detection\" for a full-featured PTZ camera with a light, or \"Night Vision, Status LED, " +
-                "Person Detection, Vehicle Detection, Package Detection\" for a doorbell with IR night vision " +
-                "and a button light but no true spotlight."
-            paragraph "⚠️ This is informational only -- it does NOT hide or disable any commands. Hubitat " +
-                "has no way to remove a command from an individual device instance, so every command still " +
-                "appears on every device regardless of what supportedFeatures says. Trying a command the " +
-                "device doesn't actually support (e.g. PTZ on a fixed camera) will just harmlessly error, " +
-                "same as before -- check supportedFeatures first to know what's actually worth trying."
-            paragraph "Use the <b>Check Abilities</b> command any time to refresh this -- useful after a " +
-                "firmware update that might add a capability, or for a device created before this feature " +
-                "existed."
-            paragraph "Package detection is doorbell-specific (cameras don't have it) and its exact field " +
-                "name is still being confirmed against real doorbell hardware -- it may not always show up " +
-                "correctly on every doorbell yet. Battery-status detection isn't part of this feature yet " +
-                "either (still relies on the existing wired/battery detection at discovery time, unrelated " +
-                "to supportedFeatures)."
-        }
-        section {
-            paragraph pillHeader("Confidence level on newer commands")
-            paragraph "<b>Confirmed working</b> against real hardware: PtzCtrl -- move, and ToPos (preset recall)." +
-                " SetRecV20 host-level enable/disable and per-channel schedule writes (GetRecV20/SetRecV20) are " +
-                "also confirmed working against a real RLN16-410 as of v1.5.0-beta8/beta9, though the preset " +
-                "workflow built on top of them (v1.5.0-beta10) is not yet independently retested end-to-end."
-            paragraph "<b>Built but not yet tested</b> against this setup's actual firmware: SetPtzPreset " +
-                "(save), SetWhiteLed (spotlight), SetIrLights (night vision), AudioAlarmPlay (siren), " +
-                "GetBatteryInfo (battery %), PtzCheck/GetPtzCheckState (calibration), SetPirInfo (PIR on/off)."
-            paragraph "These are built from consistent patterns across several independent Reolink API " +
-                "references. If one doesn't work as expected, check Logs with the log level set to Full -- " +
-                "the exact response usually points to which field name needs adjusting for this device."
+                "<b>Automatically reverts to Normal after 60 minutes.</b>"
+            paragraph "⚠️ It's normal for Errors Only/Normal to show nothing for long stretches -- that means " +
+                "nothing worth flagging happened, not that the app stopped working. Switch to Full temporarily " +
+                "to confirm it's actually running."
         }
     }
+}
+
+/** Thin horizontal rule between Tips topics -- see tipsPage()'s beta21 note for why this replaced one-section-per-topic. */
+private String tipsDivider() {
+    return "<hr style='border:none;border-top:1px solid #ddd;margin:14px 0 10px 0;'>"
 }
 
 def addSourcePage(params) {
@@ -711,9 +665,6 @@ def addSourcePage(params) {
             input "newIsHub", "bool", title: "This is an NVR or Home Hub (multiple channels)", defaultValue: false
             paragraph "Fill in Label, IP address, Username, and Password, then tap Next to save. " +
                 "Leaving any of those blank just returns you to the Sources list without creating anything."
-            paragraph "<span style='color:#5F5E5A;font-size:12px;'>ℹ️ After tapping Next, especially for an " +
-                "NVR/Home Hub with several channels, it can take up to 30 seconds or so before the discover " +
-                "page finishes loading -- it's checking each channel individually. This is normal, not stuck.</span>"
         }
     }
 }
@@ -800,18 +751,19 @@ def discoverPage(params) {
                 // v1.3.6: explicit warning added after a real-world case where a
                 // device deleted from Hubitat's Devices page (instead of this
                 // page) left the app's own checkbox state stale.
+                // v1.5.0-beta21: shortened -- the stuck-toggled-on part is now
+                // self-healing (see the "Deleting a device the wrong way" Tips
+                // topic for what's actually handled vs. still risky), so this
+                // just needs to point people to the recommended path and the
+                // fuller explanation, not carry the whole warning itself.
                 paragraph "<span style='display:inline-block;background:#FFEBEE;color:#C62828;font-weight:700;" +
                     "padding:2px 10px;border-radius:10px;font-size:11px;margin-right:6px;'>HEADS UP</span>" +
-                    "<b>Remove devices from THIS page, not Hubitat's Devices page.</b> Deleting there can " +
-                    "bring a device back on its own or leave it stuck toggled-on."
+                    "<b>Remove devices from THIS page, not Hubitat's Devices page</b> -- see the Tips page " +
+                    "for what happens either way."
                 href name: "runDiscovery", title: "Re-run discovery",
                     description: "Discovery already ran automatically when this page opened. Use this to " +
                         "refresh the channel list, e.g. after pairing a new camera to an NVR/Home Hub.",
                     page: "discoverPage", params: [sourceId: sourceId, run: true]
-                paragraph "<span style='color:#5F5E5A;font-size:12px;'>ℹ️ Discovery can take up to 30 " +
-                    "seconds or so on a brand-new source, especially one with several channels -- it's " +
-                    "checking each channel individually. This is normal, not stuck; already-added channels " +
-                    "re-discover much faster on future runs.</span>"
 
                 if (state.lastDiscoveryError) {
                     paragraph "⚠️ ${state.lastDiscoveryError}"
@@ -845,26 +797,59 @@ def discoverPage(params) {
                     // plain text or HTML.
                     paragraph "<span style='color:#5F5E5A;font-size:12px;'>ℹ️ \uD83D\uDFE2 marks a channel " +
                         "that already has a device (toggle off + apply to remove it); \uD83C\uDD95 marks one " +
-                        "that doesn't have a device yet (toggle on + apply to create it).</span>"
+                        "that doesn't have a device yet (toggle on + apply to create it).<br><b>Toggling a " +
+                        "device by itself doesn't apply anything -- use \"Apply changes now\" below once " +
+                        "you're done toggling.</b></span>"
                     lastDiscovery.each { ch ->
                         def dni = childDni(sourceId, ch.channel)
                         def bridgeForList = getSourceBridge(sourceId)
                         def exists = bridgeForList?.getChildDevice(dni) != null
+                        // v1.5.0-beta21: self-healing check for the exact
+                        // stale-toggle trap the HEADS UP warning above
+                        // exists to prevent. Hubitat has no callback that
+                        // notifies a parent app when a child device is
+                        // deleted directly from the Devices page -- once a
+                        // toggle here is set to true, Hubitat remembers
+                        // that value permanently regardless of whether the
+                        // device still exists (defaultValue only applies
+                        // the FIRST time a setting is ever touched). So a
+                        // device deleted externally would otherwise show a
+                        // stuck 🟢 forever. This corrects it every time the
+                        // page loads: if the setting says "on" but the
+                        // device is actually gone, reset the setting back
+                        // to off so the checkbox and status tag reflect
+                        // reality instead of stale state. Not real-time --
+                        // only self-heals on the next page view -- but that
+                        // beats staying wrong indefinitely.
+                        def settingKey = "create_${sourceId}_${ch.channel}"
+                        if (!exists && settings[settingKey] == true) {
+                            app.updateSetting(settingKey, [type: "bool", value: false])
+                            // Matches what normal removal (uncheck + Apply)
+                            // already does via createSelectedChildren() --
+                            // without this, an externally-deleted device's
+                            // entries in nextPollDue/nextSnapshotDue/
+                            // nextBatteryCheckDue/lastEventBatteryCheck
+                            // would linger in state forever, since nothing
+                            // else would ever clear them for a device that
+                            // was never removed through the app's own path.
+                            forgetSchedulingState(dni)
+                        }
                         def doorbellTag = ch.deviceType == "doorbell" ? " (Doorbell)" : ""
                         def statusTag = exists ? " \uD83D\uDFE2" : " \uD83C\uDD95"
-                        input "create_${sourceId}_${ch.channel}", "bool",
+                        input settingKey, "bool",
                             title: "Ch ${ch.channel}: ${ch.name}${doorbellTag}${statusTag}",
                             defaultValue: exists, submitOnChange: true, width: 6
                     }
 
                     if (channelCount > 1) {
-                        paragraph rawHtml: true, """
-<div style='border:2px solid #185FA5;border-radius:8px;background:#E6F1FB;padding:10px 14px;margin-top:14px;'>
-  <div style='color:#042C53;font-weight:700;font-size:14px;'>Apply changes</div>
-  <div style='color:#0C447C;font-size:12px;margin-top:2px;'>Creates every device toggled on above and removes every device toggled off. Toggling a device by itself does not apply anything until you toggle this.</div>
-</div>
-"""
-                        input "confirmCreate", "bool", title: "Apply changes now",
+                        // v1.5.0-beta21: a thin divider + a distinct icon/
+                        // label (rather than a plain "Ch N: Name"-shaped
+                        // row) so this doesn't visually blend into the
+                        // channel toggles directly above it -- easy to
+                        // mistake for just another device without some
+                        // separation, since it's the exact same input type.
+                        paragraph "<hr style='border:none;border-top:1px solid #ddd;margin:10px 0;'>"
+                        input "confirmCreate", "bool", title: "<b>✅ Apply changes now</b>",
                             defaultValue: false, submitOnChange: true
                     } else if (channelCount == 1) {
                         paragraph "Standalone source, one channel -- toggling it applies immediately (toggled on " +
@@ -1484,7 +1469,15 @@ private Map doReolinkApiCall(src, sourceId, String cmd, String token, Map param,
         if (value == null) {
             logFull "Reolink source ${sourceId}: ${cmd} (ch ${channel}) HTTP ok but no usable value -- raw: ${result?.toString()?.take(300)}"
         } else {
-            logFull "Reolink source ${sourceId}: ${cmd} (ch ${channel}) succeeded"
+            // v1.5.0-beta21 FIX: previously only logged "succeeded" on a
+            // successful call, never the actual returned value -- fine for
+            // routine polling, but useless for diagnosing a real question
+            // like "does GetAiState's raw response change at all when the
+            // doorbell button is pressed, and under what field name."
+            // Full tier already means "everything, very verbose" by its
+            // own definition, so including the raw value here doesn't
+            // change what tier this belongs at, just what's visible in it.
+            logFull "Reolink source ${sourceId}: ${cmd} (ch ${channel}) succeeded -- raw: ${value?.toString()?.take(300)}"
         }
         markSourceReachable(sourceId)
         return [value: value, rspCode: rspCode, parseFailure: false]
