@@ -590,6 +590,18 @@ private void handlePushedEvent(int cmdId, String bodyText) {
         elements.each { chId, elem ->
             def status = elem?.status?.text()
             def aiType = elem?.AItype?.text()
+            // v1.5.0-beta21 FIX: previously only logged WHICH channels sent
+            // an event, never the actual status/AItype VALUES inside it --
+            // so there was no way to see what a real event actually
+            // contains, even at Full tier. Added specifically to diagnose
+            // whether a doorbell's physical button press really reports
+            // status="visitor" the way translateToLegacyShape() (in
+            // ParentApp.groovy) assumes -- that mapping was always a
+            // guess, never confirmed against real hardware, flagged by a
+            // real report where a physical press never triggered push(1)
+            // even though manually calling push() on the device page
+            // worked fine.
+            parent?.logFull "Reolink Device Bridge (source ${state.sourceId}) ch ${chId}: cmd_id 33 raw event -- status='${status}', AItype='${aiType}'"
             def key = chId.toString()
             def prev = last[key]
             if (prev == null || prev.status != status || prev.aiType != aiType) {
