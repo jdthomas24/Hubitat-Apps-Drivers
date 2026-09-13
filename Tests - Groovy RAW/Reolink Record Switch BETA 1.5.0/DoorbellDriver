@@ -1,6 +1,6 @@
 /**
  * Reolink Doorbell (Component Driver)
- * Version: 1.5.0
+ * Version: 1.5.0-beta21
  *
  * Same delegation pattern as Reolink Camera, plus a "visitor" (button press)
  * event so Rule Machine can trigger straight off "pushed 1" for a doorbell
@@ -55,6 +55,7 @@ metadata {
         attribute "supportedFeatures", "string"
         command "takeSnapshot"
         command "checkAbilities", [[name: "Refreshes the supportedFeatures attribute from the doorbell's current GetAbility data"]]
+        command "checkRecordingSchedule", [[name: "Diagnostic only -- reads and logs this channel's current NVR recording schedule, does NOT change anything. Set logging to Full to see the result."]]
         command "checkBattery", [[name: "Battery-mode devices only"]]
         command "setPollInterval", [[name: "seconds", type: "NUMBER"]]
         command "setSnapshotInterval", [[name: "seconds", type: "NUMBER"]]
@@ -115,6 +116,13 @@ def setSnapshotInterval(seconds) {
 }
 def checkAbilities() {
     parent?.componentCheckAbilities(this, device.deviceNetworkId)
+}
+/**
+ * v1.5.0-beta21 FIX: see CameraDriver.groovy's matching comment -- same
+ * gap, same fix. Diagnostic only, never writes anything.
+ */
+def checkRecordingSchedule() {
+    parent?.componentCheckRecordingSchedule(this, device.deviceNetworkId)
 }
 def checkBattery() {
     parent?.componentCheckBattery(this, device.deviceNetworkId)
@@ -196,4 +204,3 @@ def receiveBatteryMode(String mode) {
 def receiveSnapshotUrl(url) {
     sendEvent(name: "snapshotUrl", value: url)
 }
-
