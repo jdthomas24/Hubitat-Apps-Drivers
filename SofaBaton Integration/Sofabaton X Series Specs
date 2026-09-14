@@ -1,0 +1,392 @@
+**SofaBaton X Series Local Integration Specification**
+
+_Generic Local Control Protocol: mDNS Service Discovery, MQTT Messaging & Key ID Mapping_
+
+# 1\. Architecture & General Principles
+
+This technical document outlines the local control and integration interface for the SofaBaton Hub (X Series). Designed for third-party smart home controllers and hubs (such as Hubitat Elevation, Home Assistant, Homebridge, etc.), the architecture operates entirely over the local network using zero-configuration mDNS discovery and standard MQTT messaging.
+
+**Conventions & Communication Standards:  
+**• Transport: Local MQTT broker; all payloads are formatted as standard UTF-8 JSON.  
+• Device Identifier ({mac}): 12-character hexadecimal MAC address without delimiters (e.g., AABBCCDDEEFF).  
+• Message Flow:  
+\- Controller -> Hub (Command/Query): Published by the smart home platform; subscribed by the Hub.  
+\- Hub -> Controller (Status/Event): Published by the Hub; subscribed by the smart home platform.
+
+# 2\. Network Discovery (mDNS)
+
+The Hub advertises its presence on the local subnet via Multicast DNS (mDNS) over UDP:
+
+**Service Type:** \_sofabaton_hub.\_udp.
+
+Sample mDNS TXT Record:
+
+```
+{
+  "NO": "xxxxx",
+  "NAME": "Living Room Hub",
+  "AVER": "1.2.0",
+  "HVER": "1.0",
+  "MAC": "AABBCCDDEEFF"
+}
+```
+
+**TXT Record Fields:  
+**• NO: Hardware batch / serial identifier.  
+• NAME: Hub broadcast / user-friendly display name.  
+• AVER: Application firmware version.  
+• HVER: Hardware version.  
+• MAC: 12-character physical device address.
+
+# 3\. Activity Management
+
+An Activity represents a multi-device operational state (e.g., 'Watch Apple TV', 'Play PS5'). The controller can query activities, trigger state changes, and receive real-time updates when an activity is started or stopped.
+
+## 3.1 Request Activity List
+
+**• Topic:** activity/{mac}/list_request  
+**• Direction:** Controller -> Hub
+
+```
+{
+  "data": "activity_list"
+}
+```
+
+## 3.2 Report Activity List
+
+**• Topic:** activity/{mac}/list  
+**• Direction:** Hub -> Controller
+
+```
+{
+  "data": [
+    {
+      "activity_id": 1,
+      "activity_name": "Watch TV",
+      "state": "off"
+    },
+    {
+      "activity_id": 2,
+      "activity_name": "Play Game",
+      "state": "on"
+    },
+    {
+      "activity_id": 3,
+      "activity_name": "Listen to Music",
+      "state": "off"
+    }
+  ],
+  "activity_count": 3
+}
+```
+
+## 3.3 Control Activity State (Command Down)
+
+Used by the controller to switch an activity ON or OFF.**• Topic:** activity/{mac}/activity_control_down  
+**• Direction:** Controller -> Hub
+
+```
+{
+  "data": {
+    "activity_id": 1,
+    "state": "on"
+  }
+}
+```
+
+## 3.4 Activity State Feedback (Status Up)
+
+Broadcasted by the Hub whenever an activity state changes (via the remote, mobile app, or smart home commands).**• Topic:** activity/{mac}/activity_control_up  
+**• Direction:** Hub -> Controller
+
+```
+{
+  "data": {
+    "activity_id": 1,
+    "state": "off"
+  }
+}
+```
+
+**Recommended Driver State Synchronization:  
+**1\. Activity Switching: When switching from Activity A to Activity B, the Hub reports the activity_id of the newly activated activity. The controller driver should mark that activity as active/on, and ensure all other activities are set to off.  
+2\. Global Power OFF: When the physical 'Power Off' key is pressed, the Hub sends activity_id: 255 (0xFF). The controller should treat this as a global turn-off event and mark all activity devices as off.
+
+# 4\. Device Management
+
+Used for discovering physical devices (e.g., TV, AVR, Projector, Media Player) registered on the Hub.
+
+## 4.1 Request Device List
+
+**• Topic:** device/{mac}/list_request  
+**• Direction:** Controller -> Hub
+
+```
+{
+  "data": "device_list"
+}
+```
+
+## 4.2 Report Device List
+
+**• Topic:** device/{mac}/list  
+**• Direction:** Hub -> Controller
+
+```
+{
+  "data": [
+    {
+      "device_name": "Philips TV",
+      "device_id": 1
+    },
+    {
+      "device_name": "Apple TV",
+      "device_id": 3
+    }
+  ]
+}
+```
+
+# 5\. Activity Keys, Favorites & Macros
+
+## 5.1 Activity Assigned Keys
+
+**• Query Assigned Keys (Controller -> Hub):** activity/{mac}/keys_request
+
+```
+{
+  "data": {
+    "activity_id": 1
+  }
+}
+```
+
+**• Report Assigned Keys (Hub -> Controller):** activity/{mac}/keys_list
+
+```
+{
+  "data": [
+    {
+      "key_id": 174
+    },
+    {
+      "key_id": 176
+    }
+  ],
+  "activity_id": 1,
+  "key_count": 2
+}
+```
+
+**• Trigger Assigned Key (Controller -> Hub):** activity/{mac}/keys_control
+
+```
+{
+  "data": {
+    "activity_id": 1,
+    "key_id": 176
+  }
+}
+```
+
+## 5.2 Activity Favorite Keys
+
+**• Query Favorites (Controller -> Hub):** activity/{mac}/favorites_keys_request
+
+```
+{
+  "data": {
+    "activity_id": 1
+  }
+}
+```
+
+**• Report Favorites (Hub -> Controller):** activity/{mac}/favorites_keys_list
+
+```
+{
+  "data": [
+    {
+      "device_id": 2,
+      "key_name": "Netflix",
+      "key_id": 3
+    },
+    {
+      "device_id": 3,
+      "key_name": "HDMI 1",
+      "key_id": 8
+    }
+  ],
+  "activity_id": 1,
+  "key_count": 2
+}
+```
+
+**• Trigger Favorite Key (Controller -> Hub):** activity/{mac}/favorites_keys_control
+
+```
+{
+  "data": {
+    "activity_id": 1,
+    "key_id": 3
+  }
+}
+```
+
+## 5.3 Activity Macro Keys
+
+**• Query Macro Keys (Controller -> Hub):** activity/{mac}/macro_keys_request
+
+```
+{
+  "data": {
+    "activity_id": 1
+  }
+}
+```
+
+**• Report Macro Keys (Hub -> Controller):** activity/{mac}/macro_keys_list
+
+```
+{
+  "data": [
+    {
+      "key_id": 1,
+      "key_name": "Cinema Mode"
+    },
+    {
+      "key_id": 2,
+      "key_name": "Mute All"
+    }
+  ],
+  "activity_id": 1,
+  "key_count": 2
+}
+```
+
+**• Trigger Macro Key (Controller -> Hub):** activity/{mac}/macro_keys_control
+
+```
+{
+  "data": {
+    "activity_id": 1,
+    "key_id": 1
+  }
+}
+```
+
+# 6\. Direct Device Commands
+
+Used to send discrete infrared (IR) or Bluetooth commands directly to a specific device regardless of current activity mode.
+
+**• Query Device Keys (Controller -> Hub):** device/{mac}/keys_request
+
+```
+{
+  "data": {
+    "device_id": 1
+  }
+}
+```
+
+**• Report Device Keys (Hub -> Controller):** device/{mac}/keys_list
+
+```
+{
+  "data": [
+    {
+      "key_id": 1,
+      "key_name": "Power"
+    },
+    {
+      "key_id": 2,
+      "key_name": "OK"
+    }
+  ],
+  "device_id": 1,
+  "key_count": 2
+}
+```
+
+**• Trigger Device Key (Controller -> Hub):** device/{mac}/keys_control
+
+```
+{
+  "data": {
+    "device_id": 1,
+    "key_id": 2
+  }
+}
+```
+
+# 7\. Custom Remote Button Uplink (Automations)
+
+When physical buttons assigned for custom smart home control are pressed on the remote, the Hub broadcasts event notifications in real time. Smart home platforms (like Hubitat) can map this directly into standard 'Button Controller' or 'PushableButton' capabilities to trigger lighting scenes, shades, or complex rules.**• Topic:** {mac}/up  
+**• Direction:** Hub -> Controller
+
+```
+{
+  "key_id": 153,
+  "device_id": 1
+}
+```
+
+# 8\. Remote Physical Key ID Mapping Reference
+
+The table below defines the standard integer identifiers (key_id) used by the physical remote control buttons. These IDs are utilized when sending key triggers over MQTT (activity/{mac}/keys_control) or receiving button press events ({mac}/up).
+
+| **Category**             | **Button Name / Identifier** | **Key ID (Decimal)** | **Standard Mapping / Function**     |
+| ------------------------ | ---------------------------- | -------------------- | ----------------------------------- |
+| Directional & Navigation | Up                           | 174                  | Directional Up Arrow                |
+| Directional & Navigation | Down                         | 178                  | Directional Down Arrow              |
+| Directional & Navigation | Left                         | 175                  | Directional Left Arrow              |
+| Directional & Navigation | Right                        | 177                  | Directional Right Arrow             |
+| Directional & Navigation | OK / Select                  | 176                  | Center Confirmation / Select        |
+| Navigation & Menu        | Back                         | 179                  | Return / Back Navigation            |
+| Navigation & Menu        | Home                         | 180                  | Main Home Screen                    |
+| Navigation & Menu        | Menu                         | 181                  | Context / Setup Menu                |
+| Navigation & Menu        | Guide                        | 157                  | Electronic Program Guide (EPG)      |
+| Navigation & Menu        | Exit                         | 154                  | Exit Current Screen                 |
+| Volume & Channel         | Volume Up                    | 182                  | Volume Level Increase               |
+| Volume & Channel         | Volume Down                  | 185                  | Volume Level Decrease               |
+| Volume & Channel         | Mute                         | 184                  | Toggle Audio Mute                   |
+| Volume & Channel         | Channel Up                   | 183                  | Channel Increment                   |
+| Volume & Channel         | Channel Down                 | 186                  | Channel Decrement                   |
+| Media Playback           | Play                         | 156                  | Media Play                          |
+| Media Playback           | Pause                        | 188                  | Media Pause                         |
+| Media Playback           | Rewind                       | 187                  | Fast Reverse / Rewind               |
+| Media Playback           | Fast Forward                 | 189                  | Fast Forward                        |
+| Media Playback           | DVR                          | 155                  | Digital Video Recorder / Recordings |
+| Color Function Keys      | Red                          | 190                  | F1 / Red Quick Function             |
+| Color Function Keys      | Green                        | 191                  | F2 / Green Quick Function           |
+| Color Function Keys      | Yellow                       | 192                  | F3 / Yellow Quick Function          |
+| Color Function Keys      | Blue                         | 193                  | F4 / Blue Quick Function            |
+| Custom Keys              | Key A                        | 153                  | Programmable Custom Key A           |
+| Custom Keys              | Key B                        | 152                  | Programmable Custom Key B           |
+| Custom Keys              | Key C                        | 151                  | Programmable Custom Key C           |
+
+# 9\. MQTT Topic Quick Reference
+
+| **Functional Group** | **Action / Event**         | **MQTT Topic**                        | **Direction**     |
+| -------------------- | -------------------------- | ------------------------------------- | ----------------- |
+| Discovery            | mDNS Service Discovery     | \_sofabaton_hub.\_udp.                | Broadcast         |
+| Activity             | Request Activity List      | activity/{mac}/list_request           | Controller -> Hub |
+| Activity             | Report Activity List       | activity/{mac}/list                   | Hub -> Controller |
+| Activity             | Control Activity (ON/OFF)  | activity/{mac}/activity_control_down  | Controller -> Hub |
+| Activity             | Activity State Feedback    | activity/{mac}/activity_control_up    | Hub -> Controller |
+| Activity Keys        | Request Assigned Keys      | activity/{mac}/keys_request           | Controller -> Hub |
+| Activity Keys        | Report Assigned Keys       | activity/{mac}/keys_list              | Hub -> Controller |
+| Activity Keys        | Trigger Assigned Key       | activity/{mac}/keys_control           | Controller -> Hub |
+| Favorites            | Request Favorite Keys      | activity/{mac}/favorites_keys_request | Controller -> Hub |
+| Favorites            | Report Favorite Keys       | activity/{mac}/favorites_keys_list    | Hub -> Controller |
+| Favorites            | Trigger Favorite Key       | activity/{mac}/favorites_keys_control | Controller -> Hub |
+| Macros               | Request Macro Keys         | activity/{mac}/macro_keys_request     | Controller -> Hub |
+| Macros               | Report Macro Keys          | activity/{mac}/macro_keys_list        | Hub -> Controller |
+| Macros               | Trigger Macro Key          | activity/{mac}/macro_keys_control     | Controller -> Hub |
+| Device               | Request Device List        | device/{mac}/list_request             | Controller -> Hub |
+| Device               | Report Device List         | device/{mac}/list                     | Hub -> Controller |
+| Device Keys          | Request Device Keys        | device/{mac}/keys_request             | Controller -> Hub |
+| Device Keys          | Report Device Keys         | device/{mac}/keys_list                | Hub -> Controller |
+| Device Keys          | Trigger Device Key         | device/{mac}/keys_control             | Controller -> Hub |
+| Automations          | Remote Button Uplink Event | {mac}/up                              | Hub -> Controller |
