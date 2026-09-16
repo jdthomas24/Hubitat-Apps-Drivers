@@ -52,6 +52,13 @@
          everything with zero error, zero log output. Added explicit
          "Add This Hub" / "Add This Activity" buttons that actually submit
          the page and trigger creation.
+        -FIXED ANOTHER REAL BUG: the Listen-mode methods (startActivityLearn,
+         getActivityLearnResult, cancelActivityLearn, clearActivityLearnResult)
+         live on the Bridge device, but addActivityPage() and
+         appButtonHandler() were calling them on the individual hub
+         (Remote) device instead -- those methods don't exist there, so
+         every click of "Listen for Next Activity" would have errored out
+         silently. Now calls bridge.* directly.
 
     *OVERVIEW
      Parent app for the Sofabaton Integration. Manages one or more physical
@@ -348,11 +355,14 @@ def addActivityPage() {
     boolean listening = isX2 && state.learnStartedFor == newActivityHub
 
     // If we're listening, check whether the Bridge has captured a result yet.
+    // Learn-mode methods (startActivityLearn, getActivityLearnResult, etc.)
+    // live on the BRIDGE device, not on the individual hub -- call bridge
+    // here, not selectedHub.
     if (listening) {
-        def result = selectedHub.getActivityLearnResult()
+        def result = bridge.getActivityLearnResult()
         if (result != null) {
             app.updateSetting("newActivitySofabatonId", [value: (result as Integer).toString(), type: "number"])
-            selectedHub.clearActivityLearnResult()
+            bridge.clearActivityLearnResult()
             state.remove("learnStartedFor")
             listening = false
         }
@@ -432,11 +442,11 @@ def appButtonHandler(String btn) {
         return
     }
     if (btn == "learnBtn") {
-        hub.startActivityLearn(hub.deviceNetworkId)
+        bridge.startActivityLearn(hub.deviceNetworkId)
         state.learnStartedFor = newActivityHub
     }
     if (btn == "cancelLearnBtn") {
-        hub.cancelActivityLearn()
+        bridge.cancelActivityLearn()
         state.remove("learnStartedFor")
     }
 }
