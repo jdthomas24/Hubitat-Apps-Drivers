@@ -59,6 +59,15 @@
          (Remote) device instead -- those methods don't exist there, so
          every click of "Listen for Next Activity" would have errored out
          silently. Now calls bridge.* directly.
+        -FIXED A THIRD REAL BUG: required:true on the page's inputs (Hub
+         Name, Hub Model, etc.) triggers the browser's own HTML5 "please
+         fill out this field" validation, which blocks submitting the form
+         at all -- including clicking "Cancel and go back", since it's the
+         same <form>. That made Cancel completely unusable on a partially
+         filled page. Dropped required:true from every field on both
+         pages; the app's own logic already gates real creation on those
+         fields being present, so nothing is lost except the native red
+         asterisk/validation nudge.
 
     *OVERVIEW
      Parent app for the Sofabaton Integration. Manages one or more physical
