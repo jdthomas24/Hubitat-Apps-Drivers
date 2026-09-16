@@ -1,6 +1,11 @@
 /*
-    Sofabaton Activity
-    Copyright 2026 Jason Thomas. All Rights Reserved
+    Sofabaton Activity Driver
+    Copyright 2026 JDThomas. All Rights Reserved
+
+    Credits: part of the Sofabaton Integration, whose X1/X1S local receive
+    path (Sofabaton Remote driver) is a fork of Derek Osborn's (dJOS1475)
+    Hubitat community driver, built on push-command building blocks
+    originated by Mike Maxwell (mike.maxwell).
 
     2026-09-10 jdthomas24
         -Initial publication
@@ -187,3 +192,4 @@ void syncOff() {
     if (txtEnable) log.info "$device.label: state sync -- now off (via remote/hub, no cloud/MQTT call made)"
     sendEvent(name: "switch", value: "off")
 }
+   
