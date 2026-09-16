@@ -1,6 +1,6 @@
 /*
     Sofabaton Integration Bridge
-    Copyright 2026 Jason Thomas. All Rights Reserved
+    Copyright 2026 JDThomas. All Rights Reserved
 
     Credits: part of the Sofabaton Integration, whose X1/X1S local receive
     path (Sofabaton Remote driver) is a fork of Derek Osborn's (dJOS1475)
