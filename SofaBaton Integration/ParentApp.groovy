@@ -1,5 +1,5 @@
 /*
-    Sofabaton Integration
+    Sofabaton Integration - Parent App
     Copyright 2026 Jason Thomas. All Rights Reserved
 
     Credits: the X1/X1S local receive path (Sofabaton Remote driver) is a
