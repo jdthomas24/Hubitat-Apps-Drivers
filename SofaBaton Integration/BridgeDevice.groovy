@@ -23,6 +23,13 @@
          "last seen" timestamp as a stand-in for true connection status
          (the X2 has no known keepalive/presence topic, so this is the
          best available signal: proof of a real message at a known time).
+        -Fixed removeRemoteDevice(): it was deleting a Remote device
+         without first removing its Activity children, which Hubitat can
+         refuse or only partially complete, silently leaving an orphaned
+         device behind that then blocked re-adding a hub with the same
+         DNI. Now calls the Remote's new removeAllActivityDevices() first,
+         and both delete steps are wrapped so a real failure logs loudly
+         instead of leaving a zombie device with no error shown anywhere.
 
     *OVERVIEW
      Grouping anchor for the Sofabaton Integration, and (for X2 hubs) the
@@ -104,7 +111,21 @@ def createRemoteDevice(String dni, String label) {
 
 void removeRemoteDevice(String dni) {
     def child = getChildDevice(dni)
-    if (child) deleteChildDevice(dni)
+    if (!child) return
+    // Must remove the Remote's own Activity children FIRST -- Hubitat can
+    // refuse (or only partially complete) deleting a device that still has
+    // children attached, which was silently leaving an orphaned Remote
+    // device behind, blocking a later add from reusing the same DNI.
+    try {
+        child.removeAllActivityDevices()
+    } catch (e) {
+        log.error "Sofabaton Bridge: failed to clear Activity children of ${child.getLabel()} before removal: ${e.message}"
+    }
+    try {
+        deleteChildDevice(dni)
+    } catch (e) {
+        log.error "Sofabaton Bridge: failed to remove hub ${child.getLabel()} (dni $dni): ${e.message}"
+    }
 }
 
 // ============================================================
