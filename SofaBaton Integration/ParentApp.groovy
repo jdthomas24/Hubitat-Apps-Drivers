@@ -21,6 +21,11 @@
          the first "Done" on the main page). Previously, adding a hub before
          ever completing that first install would silently fail since there
          was no Bridge yet to attach the child device to.
+        -Added a "Listen for Next Activity" button to the X2 branch of Add
+         Activity, working with the Bridge driver's new learn-mode support:
+         press Listen, press the activity's button on the physical remote,
+         and the numeric Sofabaton Activity ID auto-fills, no more manual
+         MQTT Explorer lookup required. Page auto-refreshes while listening.
 
     *OVERVIEW
      Parent app for the Sofabaton Integration. Manages one or more physical
@@ -232,6 +237,18 @@ def addActivityPage() {
     def hubs = bridge?.getChildDevices() ?: []
     def selectedHub = newActivityHub ? bridge?.getChildDevice(newActivityHub) : null
     boolean isX2 = selectedHub?.currentValue("hubModel") == "X2"
+    boolean listening = isX2 && state.learnStartedFor == newActivityHub
+
+    // If we're listening, check whether the Bridge has captured a result yet.
+    if (listening) {
+        def result = selectedHub.getActivityLearnResult()
+        if (result != null) {
+            app.updateSetting("newActivitySofabatonId", [value: (result as Integer).toString(), type: "number"])
+            selectedHub.clearActivityLearnResult()
+            state.remove("learnStartedFor")
+            listening = false
+        }
+    }
 
     if (newActivityHub && newActivityName) {
         if (!isX2 && newActivityUrlOn) {
@@ -246,7 +263,7 @@ def addActivityPage() {
         }
     }
 
-    dynamicPage(name: "addActivityPage", title: "Add an Activity", install: false, uninstall: false) {
+    dynamicPage(name: "addActivityPage", title: "Add an Activity", install: false, uninstall: false, refreshInterval: listening ? 3 : 0) {
         section {
             input name: "newActivityHub", type: "enum", title: "Which Hub?", options: hubs.collectEntries { [(it.deviceNetworkId): it.getLabel()] }, required: true, submitOnChange: true
             input name: "newActivityName", type: "text", title: "Activity Name (e.g. Watch TV)" + (isX2 ? "" : " -- must match the remote's configured user-definable button label exactly, this is how state sync matches it up"), required: true
@@ -259,10 +276,30 @@ def addActivityPage() {
         }
         if (selectedHub && isX2) {
             section {
-                paragraph "X2 hubs use MQTT, not a webhook. Enter the numeric Sofabaton Activity ID for this activity -- trigger the activity once while watching MQTT traffic (e.g. MQTT Explorer) and read the activity_id value out of the activity_control_up message. Auto-discovery of the hub's activity list is not yet implemented."
-                input name: "newActivitySofabatonId", type: "number", title: "Sofabaton Activity ID", required: true
+                paragraph "X2 hubs use MQTT, not a webhook. Press Listen below, then press the activity's button on the physical remote to auto-fill the ID below -- or enter it manually if you already know it (e.g. from MQTT Explorer)."
+                if (listening) {
+                    paragraph "<b>Listening...</b> press the activity's button on the physical remote now. This page refreshes automatically every few seconds."
+                    input name: "cancelLearnBtn", type: "button", title: "Cancel"
+                } else {
+                    input name: "learnBtn", type: "button", title: "Listen for Next Activity"
+                }
+                input name: "newActivitySofabatonId", type: "number", title: "Sofabaton Activity ID", required: true, submitOnChange: true
             }
         }
+    }
+}
+
+def appButtonHandler(String btn) {
+    def bridge = getBridge()
+    def hub = newActivityHub ? bridge?.getChildDevice(newActivityHub) : null
+    if (!hub) return
+    if (btn == "learnBtn") {
+        hub.startActivityLearn(hub.deviceNetworkId)
+        state.learnStartedFor = newActivityHub
+    }
+    if (btn == "cancelLearnBtn") {
+        hub.cancelActivityLearn()
+        state.remove("learnStartedFor")
     }
 }
 
