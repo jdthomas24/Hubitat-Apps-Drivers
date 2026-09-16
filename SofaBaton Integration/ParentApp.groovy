@@ -26,6 +26,12 @@
          press Listen, press the activity's button on the physical remote,
          and the numeric Sofabaton Activity ID auto-fills, no more manual
          MQTT Explorer lookup required. Page auto-refreshes while listening.
+        -Added a "Cancel and go back" link to both Add Hub and Add Activity,
+         and mainPage() now clears any half-entered fields from those pages
+         whenever it's reached, so a cancelled attempt doesn't leave stale
+         values sitting in the form the next time it's opened.
+        -Changed the Hub Model dropdown from "X1/X1S" to just "X1S", since
+         the plain X1 isn't supported by the underlying driver this forks.
 
     *OVERVIEW
      Parent app for the Sofabaton Integration. Manages one or more physical
@@ -107,6 +113,12 @@ def getBridge() {
 }
 
 def mainPage() {
+    // Wipe any half-entered Add Hub / Add Activity fields whenever we land
+    // back here, so a cancelled attempt doesn't leave stale values sitting
+    // in those forms the next time they're opened.
+    clearHubSettings()
+    clearActivitySettings()
+
     dynamicPage(name: "mainPage", title: "Sofabaton Integration", install: true, uninstall: true) {
         def bridge = getBridge()
         def hubs = bridge?.getChildDevices() ?: []
@@ -135,8 +147,8 @@ def mainPage() {
 
 def addHubPage() {
     log.debug "addHubPage() entered -- newHubName=${newHubName}, newHubModel=${newHubModel}, newHubIp=${newHubIp}, newHubMac=${newHubMac}, newHubMqttHost=${newHubMqttHost}"
-    if (newHubName && newHubModel == "X1/X1S" && newHubIp) {
-        log.debug "addHubPage() creating X1/X1S hub '${newHubName}'"
+    if (newHubName && newHubModel == "X1S" && newHubIp) {
+        log.debug "addHubPage() creating X1S hub '${newHubName}'"
         createHttpHub(newHubName, newHubIp)
         clearHubSettings()
         return mainPage()
@@ -150,10 +162,13 @@ def addHubPage() {
 
     dynamicPage(name: "addHubPage", title: "Add a Sofabaton Hub", install: false, uninstall: false) {
         section {
-            input name: "newHubName", type: "text", title: "Hub Name (e.g. Living Room)", required: true
-            input name: "newHubModel", type: "enum", title: "Hub Model", options: ["X1/X1S", "X2"], required: true, submitOnChange: true
+            href name: "cancelAddHub", title: "&larr; Cancel and go back", page: "mainPage"
         }
-        if (newHubModel == "X1/X1S") {
+        section {
+            input name: "newHubName", type: "text", title: "Hub Name (e.g. Living Room)", required: true
+            input name: "newHubModel", type: "enum", title: "Hub Model", options: ["X1S", "X2"], required: true, submitOnChange: true
+        }
+        if (newHubModel == "X1S") {
             section {
                 input name: "newHubIp", type: "text", title: "Hub IP Address (set a static DHCP reservation first)", required: true
             }
@@ -200,7 +215,7 @@ private void createHttpHub(String name, String ip) {
         return
     }
     hub.updateSetting("ip", [value: ip, type: "text"])
-    hub.updateSetting("hubModel", [value: "X1/X1S", type: "enum"])
+    hub.updateSetting("hubModel", [value: "X1S", type: "enum"])
     hub.updated()
 }
 
@@ -264,6 +279,9 @@ def addActivityPage() {
     }
 
     dynamicPage(name: "addActivityPage", title: "Add an Activity", install: false, uninstall: false, refreshInterval: listening ? 3 : 0) {
+        section {
+            href name: "cancelAddActivity", title: "&larr; Cancel and go back", page: "mainPage"
+        }
         section {
             input name: "newActivityHub", type: "enum", title: "Which Hub?", options: hubs.collectEntries { [(it.deviceNetworkId): it.getLabel()] }, required: true, submitOnChange: true
             input name: "newActivityName", type: "text", title: "Activity Name (e.g. Watch TV)" + (isX2 ? "" : " -- must match the remote's configured user-definable button label exactly, this is how state sync matches it up"), required: true
