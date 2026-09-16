@@ -11,6 +11,17 @@
 		-Converted to a child device created by the Sofabaton Integration app
 		 (via the Sofabaton Integration Bridge grouping device), so multiple
 		 hubs nest together in the Devices list instead of standing alone.
+	2026-09-16 jdthomas24
+		-Changed the hubModel preference dropdown from "X1/X1S" to "X1S",
+		 since the plain X1 isn't supported by the underlying driver this
+		 forks (matches the same change in the parent app).
+		-Added mqttHost/mqttPort/mqttUser as published attributes (X2 only)
+		 so the parent app's Edit Hub page can read back and pre-fill the
+		 broker connection fields. Password intentionally not exposed as a
+		 readable attribute.
+		-Added removeActivityDeviceByDni() so the parent app can remove an
+		 Activity child cleanly by its actual DNI, rather than needing to
+		 recompute the name-derived DNI itself.
 
 	*OVERVIEW
 	 Represents one physical Sofabaton hub. X1S and X2 hubs share this
@@ -47,7 +58,7 @@
 */
 
 def version() {
-    return "1.1.0-jdthomas24"
+    return "1.2.0-jdthomas24"
 }
 
 metadata {
@@ -60,18 +71,21 @@ metadata {
         attribute "remoteIp", "string"
         attribute "remoteMac", "string"
         attribute "hubModel", "string"
+        attribute "mqttHost", "string"
+        attribute "mqttPort", "string"
+        attribute "mqttUser", "string"
         preferences {
             input name: "deviceInfo", type: "paragraph", element: "paragraph", title: "Sofabaton Remote", description: "Driver Version: ${version()}<br>Compatible Hardware: X1S and above"
-            input name: "hubModel", type: "enum", title: "Hub Model", options: ["X1/X1S", "X2"], required: true
+            input name: "hubModel", type: "enum", title: "Hub Model", options: ["X1S", "X2"], required: true
             input name: "appConfig", type: "paragraph", element: "paragraph", title: "X1S: Sofabaton App Configuration", description: "1. In the Sofabaton app, go to Devices and tap Add Device, then select Wi-Fi<br>2. Tap the link at the bottom: 'Create a virtual device for IP control'<br>3. Enter the URL: http://[your Hubitat IP]:39501/<br>4. Set the request method to PUT<br>5. Leave Connect Type and Additional Headers blank<br>6. In the Body field enter either:<br>&nbsp;&nbsp;&nbsp;- A number 1-10 for a numeric button, or 11-20 for a user definable button<br>&nbsp;&nbsp;&nbsp;- Any string (e.g. watchTV) matching a user definable slot<br>&nbsp;&nbsp;&nbsp;- on or off to set this device's switch state<br>7. Repeat for each activity using a unique value each time"
-            input name:"ip", type:"text", title: "Remote IP Address (X1/X1S only)"
-            input name: "mqttConfig", type: "paragraph", element: "paragraph", title: "X2: MQTT Configuration", description: "Enable Hubitat's built-in MQTT broker first (Apps &rarr; Add Built-In App &rarr; MQTT Import Integration), then enter the same broker details below AND in the Sofabaton app's Devices &rarr; Add Device &rarr; Wi-Fi &rarr; Add Home Assistant Remote screen."
+            input name:"ip", type:"text", title: "Remote IP Address (X1S only)"
+            input name: "mqttConfig", type: "paragraph", element: "paragraph", title: "X2: MQTT Configuration", description: "Enable Hubitat's built-in MQTT broker first (Integrations &rarr; Add Built-In App &rarr; MQTT Import Integration), then enter the same broker details below AND in the Sofabaton app's Devices &rarr; Add Device &rarr; Wi-Fi &rarr; Add Home Assistant Remote screen."
             input name: "mac", type: "text", title: "Hub MAC Address (X2 only, e.g. 14639332AA40, no colons)"
             input name: "mqttHost", type: "text", title: "MQTT Broker Host/IP (X2 only, not 127.0.0.1)"
             input name: "mqttPort", type: "text", title: "MQTT Broker Port (X2 only)", defaultValue: "1883"
             input name: "mqttUser", type: "text", title: "MQTT Broker Username (X2 only, leave blank if none)"
             input name: "mqttPass", type: "password", title: "MQTT Broker Password (X2 only, leave blank if none)"
-            input name: "userInfo", type: "paragraph", element: "paragraph", title: "User Definable Buttons (X1/X1S only)", description: "Enter the match string the remote sends. Optionally add a pipe | followed by a description e.g. watchTV|Watch TV. The match string must match what you entered in the remote app.<br>These fire button numbers 11-20 (User 1 = button 11, User 10 = button 20). You can also trigger rules on the lastButtonValue or lastButtonLabel custom attributes if you prefer matching the string itself.<br><br>If a slot's description matches the name of a Sofabaton Activity child device (added via the parent app), that Activity device's state is kept in sync automatically."
+            input name: "userInfo", type: "paragraph", element: "paragraph", title: "User Definable Buttons (X1S only)", description: "Enter the match string the remote sends. Optionally add a pipe | followed by a description e.g. watchTV|Watch TV. The match string must match what you entered in the remote app.<br>These fire button numbers 11-20 (User 1 = button 11, User 10 = button 20). You can also trigger rules on the lastButtonValue or lastButtonLabel custom attributes if you prefer matching the string itself.<br><br>If a slot's description matches the name of a Sofabaton Activity child device (added via the parent app), that Activity device's state is kept in sync automatically."
             input name:"usrBtn1", type:"text", title:"User 1 (11):", description:"matchString|Description", required:false
             input name:"usrBtn2", type:"text", title:"User 2 (12):", description:"matchString|Description", required:false
             input name:"usrBtn3", type:"text", title:"User 3 (13):", description:"matchString|Description", required:false
@@ -82,7 +96,7 @@ metadata {
             input name:"usrBtn8", type:"text", title:"User 8 (18):", description:"matchString|Description", required:false
             input name:"usrBtn9", type:"text", title:"User 9 (19):", description:"matchString|Description", required:false
             input name:"usrBtn10", type:"text", title:"User 10 (20):", description:"matchString|Description", required:false
-            input name: "numericInfo", type: "paragraph", element: "paragraph", title: "Numeric Buttons (X1/X1S only)", description: "Labels for buttons triggered by a number (1-10) in the request body."
+            input name: "numericInfo", type: "paragraph", element: "paragraph", title: "Numeric Buttons (X1S only)", description: "Labels for buttons triggered by a number (1-10) in the request body."
             input name:"btnLabel1", type:"text", title:"1:", description:"Button 1 label", required:false
             input name:"btnLabel2", type:"text", title:"2:", description:"Button 2 label", required:false
             input name:"btnLabel3", type:"text", title:"3:", description:"Button 3 label", required:false
@@ -144,6 +158,9 @@ void updated(){
             }
         }
         if (mqttHost) {
+            sendEvent(name: "mqttHost", value: mqttHost)
+            sendEvent(name: "mqttPort", value: mqttPort ?: "1883")
+            sendEvent(name: "mqttUser", value: mqttUser ?: "")
             parent?.ensureMqttConnected(mqttHost, mqttPort ?: "1883", mqttUser, mqttPass)
         }
     } else {
@@ -336,6 +353,15 @@ def createActivityDevice(String name, String urlOn = null, String urlOff = null,
 
 void removeActivityDevice(String name) {
     String dni = "${device.deviceNetworkId}-activity-${name.replaceAll(/[^A-Za-z0-9]/, '')}"
+    def child = getChildDevice(dni)
+    if (child) deleteChildDevice(dni)
+}
+
+// Preferred removal path for the parent app: takes the child's actual DNI
+// directly (the app already has the device object from getChildDevices()),
+// avoiding any risk of the name-sanitization in removeActivityDevice()
+// above not exactly matching what was used at creation time.
+void removeActivityDeviceByDni(String dni) {
     def child = getChildDevice(dni)
     if (child) deleteChildDevice(dni)
 }
