@@ -165,6 +165,7 @@ def mainPage() {
 }
 
 def addHubPage(params = [:]) {
+    log.debug "addHubPage() entered -- newHubName=${newHubName}, newHubModel=${newHubModel}, newHubIp=${newHubIp}, newHubMac=${newHubMac}, newHubMqttHost=${newHubMqttHost}, params=${params}, state.editingHubDni=${state.editingHubDni}"
     // Edit mode: entered via a href with params:[editDni: <hub dni>] from
     // the main page's Edit link. Persisted in state so it survives the
     // page's own submitOnChange postbacks (params are only present on the
