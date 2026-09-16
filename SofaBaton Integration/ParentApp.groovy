@@ -12,6 +12,15 @@
         -Fixed addHubPage: removed submitOnChange from newHubIp/newHubMac/
          newHubMqttHost, which was forcing a page postback (and required-
          field validation reset) on every keystroke into those fields.
+        -Relabeled the X2 MAC field to "Sofabaton Hub MAC ID" and added
+         guidance on where to find it (it's the X2's own MAC, read out of
+         the activity_control_up topic name via a tool like MQTT Explorer --
+         not the Hubitat hub's MAC, which is an easy mix-up).
+        -Fixed getBridge() to lazily create the Bridge device if missing,
+         instead of only creating it in initialize() (which only runs after
+         the first "Done" on the main page). Previously, adding a hub before
+         ever completing that first install would silently fail since there
+         was no Bridge yet to attach the child device to.
 
     *OVERVIEW
      Parent app for the Sofabaton Integration. Manages one or more physical
@@ -79,7 +88,17 @@ private String bridgeDni() {
 }
 
 def getBridge() {
-    return getChildDevice(bridgeDni())
+    def bridge = getChildDevice(bridgeDni())
+    if (!bridge) {
+        // Lazily create the Bridge if it doesn't exist yet. installed()/
+        // updated() only fire once the user hits "Done" on the main page,
+        // but a first-run user can navigate straight into Add a Hub before
+        // that happens -- without this, the hub-creation calls below would
+        // silently fail with no Bridge to attach the child device to.
+        log.debug "getBridge() -- Bridge not found, creating it now"
+        bridge = addChildDevice("jdthomas24", "Sofabaton Integration Bridge", bridgeDni(), [label: "Sofabaton Integration Bridge"])
+    }
+    return bridge
 }
 
 def mainPage() {
@@ -110,12 +129,15 @@ def mainPage() {
 }
 
 def addHubPage() {
+    log.debug "addHubPage() entered -- newHubName=${newHubName}, newHubModel=${newHubModel}, newHubIp=${newHubIp}, newHubMac=${newHubMac}, newHubMqttHost=${newHubMqttHost}"
     if (newHubName && newHubModel == "X1/X1S" && newHubIp) {
+        log.debug "addHubPage() creating X1/X1S hub '${newHubName}'"
         createHttpHub(newHubName, newHubIp)
         clearHubSettings()
         return mainPage()
     }
     if (newHubName && newHubModel == "X2" && newHubMac && newHubMqttHost) {
+        log.debug "addHubPage() creating X2 hub '${newHubName}'"
         createMqttHub(newHubName, newHubMac, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass)
         clearHubSettings()
         return mainPage()
@@ -138,9 +160,12 @@ def addHubPage() {
                     "and turn on 'Use built-in MQTT service' if you don't already have an external broker. " +
                     "The app will show you a host, port, and login -- enter that same information below.<br>" +
                     "Then, in the Sofabaton app, go to Devices &rarr; Add Device &rarr; Wi-Fi &rarr; Add Home Assistant Remote, " +
-                    "and enter the same broker details there so the hub connects to the same broker Hubitat does."
-                input name: "newHubMac", type: "text", title: "Hub MAC Address (12 hex characters, e.g. 14639332AA40 -- colons are fine too, they'll be stripped)", required: true
-                input name: "newHubMqttHost", type: "text", title: "Broker Host/IP (not 127.0.0.1 -- use this hub's real LAN address)", required: true
+                    "and enter the same broker details there so the hub connects to the same broker Hubitat does.<br><br>" +
+                    "<b>Sofabaton Hub MAC ID:</b> this is the X2's own MAC (12 hex characters, colons ok, they'll be stripped), " +
+                    "NOT your Hubitat hub's MAC. If you don't already have it, connect a tool like MQTT Explorer to the broker, " +
+                    "press an activity button on the remote, and read it out of the topic name: activity/&lt;MAC&gt;/activity_control_up"
+                input name: "newHubMac", type: "text", title: "Sofabaton Hub MAC ID (not your Hubitat hub's MAC -- see note above for how to find it)", required: true
+                input name: "newHubMqttHost", type: "text", title: "Hubitat Hub's LAN IP (running the broker -- not the Sofabaton hub's IP, not 127.0.0.1)", required: true
                 input name: "newHubMqttPort", type: "text", title: "Broker Port", defaultValue: "1883", required: false
                 input name: "newHubMqttUser", type: "text", title: "Broker Username (leave blank if none)", required: false
                 input name: "newHubMqttPass", type: "password", title: "Broker Password (leave blank if none)", required: false
@@ -176,17 +201,22 @@ private void createHttpHub(String name, String ip) {
 
 private void createMqttHub(String name, String mac, String host, String port, String user, String pass) {
     def bridge = getBridge()
-    if (!bridge) return
+    if (!bridge) {
+        log.error "Cannot add hub '$name': Bridge device not found"
+        return
+    }
     String dni = (mac ?: "").replaceAll(/[^A-Fa-f0-9]/, "").toUpperCase()
     if (dni.length() != 12) {
         log.error "Cannot add hub '$name': '$mac' does not look like a valid 12-character MAC address"
         return
     }
+    log.debug "createMqttHub() creating child device with DNI '${dni}' under bridge"
     def hub = bridge.createRemoteDevice(dni, name)
     if (!hub) {
-        log.error "Failed to create Remote device for hub '$name'"
+        log.error "Failed to create Remote device for hub '$name' (createRemoteDevice returned null -- check Bridge driver logs)"
         return
     }
+    log.debug "createMqttHub() child device created, setting hubModel/mac/mqtt* and calling updated()"
     hub.updateSetting("hubModel", [value: "X2", type: "enum"])
     hub.updateSetting("mac", [value: dni, type: "text"])
     hub.updateSetting("mqttHost", [value: host, type: "text"])
@@ -194,6 +224,7 @@ private void createMqttHub(String name, String mac, String host, String port, St
     if (user) hub.updateSetting("mqttUser", [value: user, type: "text"])
     if (pass) hub.updateSetting("mqttPass", [value: pass, type: "password"])
     hub.updated()
+    log.debug "createMqttHub() done"
 }
 
 def addActivityPage() {
