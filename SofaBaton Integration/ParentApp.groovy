@@ -12,11 +12,25 @@
      lets each hub have one or more "Sofabaton Activity" child devices nested
      under IT for the activities you want to control/observe.
 
+     X1S hubs are identified by IP and use a local HTTP listener. X2 hubs are
+     identified by MAC address and share one MQTT connection (held by the
+     Bridge device) across however many X2 hubs you add -- confirmed against
+     real hardware. Adding an X2 hub here also wires up that shared MQTT
+     connection.
+
+     Adding an Activity asks for different things depending on the hub's
+     model: an X1S activity needs a Start (and optional Stop) webhook URL;
+     an X2 activity needs its numeric Sofabaton Activity ID instead, since
+     X2's MQTT broadcasts report activity ids, not button labels, and
+     there's currently no confirmed way to auto-discover a hub's activity
+     list.
+
      This app only handles setup (adding/removing hubs and activities).
-     Runtime behaviour -- local button routing, cloud webhook calls, and
-     Activity state sync when the physical remote is used -- lives entirely
-     in the Remote and Activity drivers themselves; this app does not
-     subscribe to or process any device events.
+     Runtime behaviour -- local button routing, MQTT connect/subscribe/
+     publish, cloud webhook calls, and Activity state sync when the
+     physical remote is used -- lives entirely in the Bridge, Remote, and
+     Activity drivers; this app does not subscribe to or process any device
+     events itself.
 */
 
 definition(
@@ -71,8 +85,9 @@ def mainPage() {
             } else {
                 hubs.each { hub ->
                     def activities = hub.getChildDevices() ?: []
-                    String ipShown = hub.currentValue("remoteIp") ?: "no IP set"
-                    paragraph "<b>${hub.getLabel()}</b> (${ipShown}) -- ${activities.size()} activit${activities.size() == 1 ? 'y' : 'ies'}"
+                    String model = hub.currentValue("hubModel") ?: "unknown model"
+                    String idShown = model == "X2" ? (hub.currentValue("remoteMac") ?: "no MAC set") : (hub.currentValue("remoteIp") ?: "no IP set")
+                    paragraph "<b>${hub.getLabel()}</b> (${model}, ${idShown}) -- ${activities.size()} activit${activities.size() == 1 ? 'y' : 'ies'}"
                 }
             }
             href name: "toAddHub", title: "Add a Hub", page: "addHubPage"
@@ -92,8 +107,8 @@ def addHubPage() {
         clearHubSettings()
         return mainPage()
     }
-    if (newHubName && newHubModel == "X2" && newHubMqttHost) {
-        createMqttHub(newHubName, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass)
+    if (newHubName && newHubModel == "X2" && newHubMac && newHubMqttHost) {
+        createMqttHub(newHubName, newHubMac, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass)
         clearHubSettings()
         return mainPage()
     }
@@ -116,18 +131,19 @@ def addHubPage() {
                     "The app will show you a host, port, and login -- enter that same information below.<br>" +
                     "Then, in the Sofabaton app, go to Devices &rarr; Add Device &rarr; Wi-Fi &rarr; Add Home Assistant Remote, " +
                     "and enter the same broker details there so the hub connects to the same broker Hubitat does."
+                input name: "newHubMac", type: "text", title: "Hub MAC Address (12 hex characters, e.g. 14639332AA40 -- colons are fine too, they'll be stripped)", required: true, submitOnChange: true
                 input name: "newHubMqttHost", type: "text", title: "Broker Host/IP (not 127.0.0.1 -- use this hub's real LAN address)", required: true, submitOnChange: true
                 input name: "newHubMqttPort", type: "text", title: "Broker Port", defaultValue: "1883", required: false
                 input name: "newHubMqttUser", type: "text", title: "Broker Username (leave blank if none)", required: false
                 input name: "newHubMqttPass", type: "password", title: "Broker Password (leave blank if none)", required: false
-                paragraph "You'll also need the hub's MAC address once it's connected -- this gets added automatically when MQTT topics are confirmed; not required to save this page."
+                paragraph "One shared MQTT connection is used for all X2 hubs you add -- entering broker details again for a second X2 hub reconnects to the same broker, it doesn't open a second connection."
             }
         }
     }
 }
 
 private void clearHubSettings() {
-    ["newHubName", "newHubModel", "newHubIp", "newHubMqttHost", "newHubMqttPort", "newHubMqttUser", "newHubMqttPass"].each {
+    ["newHubName", "newHubModel", "newHubIp", "newHubMac", "newHubMqttHost", "newHubMqttPort", "newHubMqttUser", "newHubMqttPass"].each {
         app.removeSetting(it)
     }
 }
@@ -146,51 +162,85 @@ private void createHttpHub(String name, String ip) {
         return
     }
     hub.updateSetting("ip", [value: ip, type: "text"])
-    hub.updateSetting("hubModel", [value: "X1/X1S", type: "text"])
+    hub.updateSetting("hubModel", [value: "X1/X1S", type: "enum"])
     hub.updated()
 }
 
-// MQTT hub creation is a placeholder pending real-hardware confirmation of the
-// topic structure, MAC format, and broker-field behavior in the Sofabaton app
-// (see project notes). Broker credentials are collected now since that part
-// doesn't depend on any of those open unknowns, but the created device won't
-// actually subscribe/publish to anything real until RemoteDriver has an MQTT
-// variant to hand these settings to.
-private void createMqttHub(String name, String host, String port, String user, String pass) {
-    log.warn "MQTT hub creation is not yet wired up -- '$name' broker details saved, but no MQTT Remote device type exists yet pending hardware validation"
+private void createMqttHub(String name, String mac, String host, String port, String user, String pass) {
+    def bridge = getBridge()
+    if (!bridge) return
+    String dni = (mac ?: "").replaceAll(/[^A-Fa-f0-9]/, "").toUpperCase()
+    if (dni.length() != 12) {
+        log.error "Cannot add hub '$name': '$mac' does not look like a valid 12-character MAC address"
+        return
+    }
+    def hub = bridge.createRemoteDevice(dni, name)
+    if (!hub) {
+        log.error "Failed to create Remote device for hub '$name'"
+        return
+    }
+    hub.updateSetting("hubModel", [value: "X2", type: "enum"])
+    hub.updateSetting("mac", [value: dni, type: "text"])
+    hub.updateSetting("mqttHost", [value: host, type: "text"])
+    hub.updateSetting("mqttPort", [value: port, type: "text"])
+    if (user) hub.updateSetting("mqttUser", [value: user, type: "text"])
+    if (pass) hub.updateSetting("mqttPass", [value: pass, type: "password"])
+    hub.updated()
 }
 
 def addActivityPage() {
     def bridge = getBridge()
     def hubs = bridge?.getChildDevices() ?: []
+    def selectedHub = newActivityHub ? bridge?.getChildDevice(newActivityHub) : null
+    boolean isX2 = selectedHub?.currentValue("hubModel") == "X2"
 
-    if (newActivityHub && newActivityName && newActivityUrlOn) {
-        createActivity(newActivityHub, newActivityName, newActivityUrlOn, newActivityUrlOff)
-        app.removeSetting("newActivityHub")
-        app.removeSetting("newActivityName")
-        app.removeSetting("newActivityUrlOn")
-        app.removeSetting("newActivityUrlOff")
-        return mainPage()
+    if (newActivityHub && newActivityName) {
+        if (!isX2 && newActivityUrlOn) {
+            createActivity(newActivityHub, newActivityName, newActivityUrlOn, newActivityUrlOff, null)
+            clearActivitySettings()
+            return mainPage()
+        }
+        if (isX2 && newActivitySofabatonId != null) {
+            createActivity(newActivityHub, newActivityName, null, null, newActivitySofabatonId as Integer)
+            clearActivitySettings()
+            return mainPage()
+        }
     }
 
     dynamicPage(name: "addActivityPage", title: "Add an Activity", install: false, uninstall: false) {
         section {
-            input name: "newActivityHub", type: "enum", title: "Which Hub?", options: hubs.collectEntries { [(it.deviceNetworkId): it.getLabel()] }, required: true
-            input name: "newActivityName", type: "text", title: "Activity Name (e.g. Watch TV) -- must match the remote's configured label exactly, this is how state sync matches it up", required: true
-            input name: "newActivityUrlOn", type: "text", title: "Start Activity Webhook URL", required: true
-            input name: "newActivityUrlOff", type: "text", title: "Stop Activity Webhook URL (optional, unconfirmed feature -- leave blank if unsure)", required: false, submitOnChange: true
+            input name: "newActivityHub", type: "enum", title: "Which Hub?", options: hubs.collectEntries { [(it.deviceNetworkId): it.getLabel()] }, required: true, submitOnChange: true
+            input name: "newActivityName", type: "text", title: "Activity Name (e.g. Watch TV)" + (isX2 ? "" : " -- must match the remote's configured user-definable button label exactly, this is how state sync matches it up"), required: true
+        }
+        if (selectedHub && !isX2) {
+            section {
+                input name: "newActivityUrlOn", type: "text", title: "Start Activity Webhook URL", required: true
+                input name: "newActivityUrlOff", type: "text", title: "Stop Activity Webhook URL (optional, unconfirmed feature -- leave blank if unsure)", required: false
+            }
+        }
+        if (selectedHub && isX2) {
+            section {
+                paragraph "X2 hubs use MQTT, not a webhook. Enter the numeric Sofabaton Activity ID for this activity -- trigger the activity once while watching MQTT traffic (e.g. MQTT Explorer) and read the activity_id value out of the activity_control_up message. Auto-discovery of the hub's activity list is not yet implemented."
+                input name: "newActivitySofabatonId", type: "number", title: "Sofabaton Activity ID", required: true
+            }
         }
     }
 }
 
-private void createActivity(String hubDni, String name, String urlOn, String urlOff) {
+private void clearActivitySettings() {
+    ["newActivityHub", "newActivityName", "newActivityUrlOn", "newActivityUrlOff", "newActivitySofabatonId"].each {
+        app.removeSetting(it)
+    }
+}
+
+private void createActivity(String hubDni, String name, String urlOn, String urlOff, Integer sofabatonActivityId) {
     def bridge = getBridge()
     def hub = bridge?.getChildDevice(hubDni)
     if (!hub) {
         log.error "Cannot add activity '$name': hub not found"
         return
     }
-    def activity = hub.createActivityDevice(name, urlOn, urlOff)
+    def activity = hub.createActivityDevice(name, urlOn, urlOff, sofabatonActivityId)
     if (!activity) {
         log.error "Failed to create Activity device '$name'"
     }
@@ -207,4 +257,3 @@ private String ipToHexForApp(String ipAddress) {
     if (!valid) return null
     return quad.collect { Integer.toHexString(it.toInteger()).padLeft(2, "0").toUpperCase() }.join()
 }
-
