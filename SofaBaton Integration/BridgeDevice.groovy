@@ -9,6 +9,14 @@
 
     2026-09-10 jdthomas24
         -Initial publication
+    2026-09-16 jdthomas24
+        -Added "activity learn" capture mode: startActivityLearn(mac) arms
+         a one-shot capture of the next activity_control_up "on" message
+         for that MAC, getActivityLearnResult()/clearActivityLearnResult()
+         let the parent app poll for and consume it, cancelActivityLearn()
+         disarms it. Lets the Add Activity page auto-fill a numeric
+         Sofabaton Activity ID by watching the remote get pressed, instead
+         of requiring the user to read it out of an external MQTT client.
 
     *OVERVIEW
      Grouping anchor for the Sofabaton Integration, and (for X2 hubs) the
@@ -32,7 +40,7 @@
 import groovy.json.JsonSlurper
 import groovy.json.JsonOutput
 
-def version() { return "1.1.0" }
+def version() { return "1.2.0" }
 
 metadata {
     definition (name: "Sofabaton Integration Bridge", namespace: "jdthomas24", author: "Jason Thomas") {
@@ -167,6 +175,16 @@ void parse(String description) {
             if (logEnable) log.debug "Sofabaton Bridge: no Remote child matches MAC $mac, ignoring"
             return
         }
+
+        // Activity learn mode: if armed for this MAC and this message is a
+        // real activity turning on (not the 255 hub-wide power-off), stash
+        // it for the parent app's Add Activity page to pick up.
+        if (state.learnActive && mac == state.learnMac && activityState == "on" && activityId != 255) {
+            state.learnResult = activityId
+            state.learnActive = false
+            if (txtEnable) log.info "Sofabaton Bridge: learn mode captured activity_id $activityId for MAC $mac"
+        }
+
         hub.receiveMqttActivityUpdate(activityId, activityState)
     } catch (e) {
         log.error "Sofabaton Bridge: failed to parse MQTT message: ${e.message}"
@@ -192,4 +210,40 @@ void publishMqttActivityControl(String mac, Integer activityId, String desiredSt
     } catch (e) {
         log.error "Sofabaton Bridge: MQTT publish failed: ${e.message}"
     }
+}
+
+// ============================================================
+// ============= X2 Activity "Learn" mode (setup helper) ======
+// ============================================================
+// Lets the parent app's Add Activity page capture a numeric activity_id
+// without the user needing an external MQTT client: the user presses
+// "Listen" (which calls startActivityLearn(mac) below), then presses the
+// activity's button on the physical remote. The next activity_control_up
+// "on" message parse() sees for that MAC gets stashed in state.learnResult
+// for the app to read on its next page refresh via getActivityLearnResult().
+//
+// Scoped to one MAC at a time (state.learnMac) so that with multiple X2
+// hubs sharing this Bridge's one MQTT connection, pressing a button on the
+// wrong hub's remote doesn't get mistakenly captured.
+
+void startActivityLearn(String mac) {
+    state.learnActive = true
+    state.learnMac = mac
+    state.remove("learnResult")
+    if (logEnable) log.debug "Sofabaton Bridge: activity learn mode started for MAC $mac"
+}
+
+void cancelActivityLearn() {
+    state.learnActive = false
+    state.remove("learnMac")
+    state.remove("learnResult")
+    if (logEnable) log.debug "Sofabaton Bridge: activity learn mode cancelled"
+}
+
+def getActivityLearnResult() {
+    return state.learnResult
+}
+
+void clearActivityLearnResult() {
+    state.remove("learnResult")
 }
