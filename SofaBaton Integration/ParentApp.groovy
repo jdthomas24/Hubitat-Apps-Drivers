@@ -41,6 +41,17 @@
          creation (those change the device's DNI) -- remove and re-add if
          one of those needs to change. Editing relies on new mqttHost/
          mqttPort/mqttUser attributes published by the Remote driver.
+        -FIXED A REAL BUG: neither Add Hub nor Add Activity had an actual
+         "finish" button for fields with no submitOnChange (the X2 broker
+         fields, the X1S webhook URL fields). The only clickable thing on
+         the page was the "Cancel and go back" link, which jumps straight
+         to mainPage() without ever running the creation logic in
+         addHubPage()/addActivityPage() -- and since mainPage() clears
+         those fields on entry, clicking Cancel (easy to do by mistake,
+         since it looked like the way to finish) silently discarded
+         everything with zero error, zero log output. Added explicit
+         "Add This Hub" / "Add This Activity" buttons that actually submit
+         the page and trigger creation.
 
     *OVERVIEW
      Parent app for the Sofabaton Integration. Manages one or more physical
@@ -255,6 +266,9 @@ def addHubPage(params = [:]) {
                 paragraph "One shared MQTT connection is used for all X2 hubs you add -- entering broker details again for a second X2 hub reconnects to the same broker, it doesn't open a second connection."
             }
         }
+        section {
+            input name: "saveHubBtn", type: "button", title: editingHub ? "Save Changes" : "Add This Hub"
+        }
     }
 }
 
@@ -383,12 +397,19 @@ def addActivityPage() {
                 input name: "newActivitySofabatonId", type: "number", title: "Sofabaton Activity ID", required: true, submitOnChange: true
             }
         }
+        section {
+            input name: "saveActivityBtn", type: "button", title: "Add This Activity"
+        }
     }
 }
 
 def appButtonHandler(String btn) {
     def bridge = getBridge()
 
+    if (btn == "saveHubBtn") {
+        log.debug "addHubPage() Save button pressed -- page will re-run and process current field values"
+        return
+    }
     if (btn.startsWith("removeHub_")) {
         String dni = btn - "removeHub_"
         bridge?.removeRemoteDevice(dni)
@@ -406,6 +427,10 @@ def appButtonHandler(String btn) {
 
     def hub = newActivityHub ? bridge?.getChildDevice(newActivityHub) : null
     if (!hub) return
+    if (btn == "saveActivityBtn") {
+        log.debug "addActivityPage() Save button pressed -- page will re-run and process current field values"
+        return
+    }
     if (btn == "learnBtn") {
         hub.startActivityLearn(hub.deviceNetworkId)
         state.learnStartedFor = newActivityHub
