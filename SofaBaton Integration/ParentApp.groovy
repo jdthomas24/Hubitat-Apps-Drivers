@@ -2,6 +2,10 @@
     Sofabaton Integration
     Copyright 2026 Jason Thomas. All Rights Reserved
 
+    Credits: the X1/X1S local receive path (Sofabaton Remote driver) is a
+    fork of Derek Osborn's (dJOS1475) Hubitat community driver, built on
+    push-command building blocks originated by Mike Maxwell (mike.maxwell).
+
     2026-09-10 jdthomas24
         -Initial publication
 
