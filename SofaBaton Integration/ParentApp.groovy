@@ -156,7 +156,7 @@ def addHubPage() {
         if (newHubModel == "X2") {
             section("MQTT Connection") {
                 paragraph "<b>Before adding an X2 hub, MQTT needs to be running on this Hubitat hub.</b><br>" +
-                    "Go to Apps &rarr; Add Built-In App &rarr; MQTT Import Integration (or Export Integration), enable it, " +
+                    "Go to Integrations &rarr; Add Built-In App &rarr; MQTT Import Integration (or Export Integration), enable it, " +
                     "and turn on 'Use built-in MQTT service' if you don't already have an external broker. " +
                     "The app will show you a host, port, and login -- enter that same information below.<br>" +
                     "Then, in the Sofabaton app, go to Devices &rarr; Add Device &rarr; Wi-Fi &rarr; Add Home Assistant Remote, " +
