@@ -1,4 +1,11 @@
 /*
+    Sofabaton Remote Driver
+    Copyright 2026 JDThomas. All Rights Reserved
+
+    Credits: this driver's X1/X1S local HTTP listener and DNI-routing logic
+    is a fork of Derek Osborn's (dJOS1475) Hubitat community driver, which
+    itself built on push-command building blocks originated by Mike Maxwell
+    (mike.maxwell). Full credit retained -- see author field below.
 
 	2026-09-10 jdthomas24  -- FORK, renamed "Sofabaton Remote"
 		-Converted to a child device created by the Sofabaton Integration app
@@ -44,7 +51,7 @@ def version() {
 }
 
 metadata {
-    definition (name: "Sofabaton Remote", namespace: "jdthomas24", author: "Jason Thomas (fork of dJOS/mike.maxwell/Gassgs/SViel)", importUrl: "") {
+    definition (name: "Sofabaton Remote", namespace: "jdthomas24", author: "Jason Thomas (fork of Derek Osborn/dJOS1475, building on Mike Maxwell/mike.maxwell, Gassgs, SViel)", importUrl: "") {
         capability "Actuator"
         capability "PushableButton"
         capability "Switch"
