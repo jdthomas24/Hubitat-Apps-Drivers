@@ -1,5 +1,5 @@
 /*
-    Sofabaton Remote Driver
+    Sofabaton - Remote Driver
     Copyright 2026 JDThomas. All Rights Reserved
 
     Credits: this driver's X1/X1S local HTTP listener and DNI-routing logic
