@@ -35,6 +35,12 @@
         -Main page now lists each hub's activities nested underneath it
          instead of just a count, so with multiple hubs it's clear which
          activity belongs to which hub.
+        -Added Edit (name, and for X2 the broker host/port/user/pass) and
+         Remove for hubs, and Remove for activities, right on the main
+         page. Model, MAC, and X1S IP are intentionally not editable after
+         creation (those change the device's DNI) -- remove and re-add if
+         one of those needs to change. Editing relies on new mqttHost/
+         mqttPort/mqttUser attributes published by the Remote driver.
 
     *OVERVIEW
      Parent app for the Sofabaton Integration. Manages one or more physical
@@ -135,11 +141,14 @@ def mainPage() {
                     String model = hub.currentValue("hubModel") ?: "unknown model"
                     String idShown = model == "X2" ? (hub.currentValue("remoteMac") ?: "no MAC set") : (hub.currentValue("remoteIp") ?: "no IP set")
                     paragraph "<b>${hub.getLabel()}</b> (${model}, ${idShown})"
+                    href name: "editHub_${hub.deviceNetworkId}", title: "Edit ${hub.getLabel()}", page: "addHubPage", params: [editDni: hub.deviceNetworkId]
+                    input name: "removeHub_${hub.deviceNetworkId}", type: "button", title: "Remove ${hub.getLabel()}"
                     if (!activities) {
                         paragraph "&nbsp;&nbsp;&nbsp;&nbsp;No activities yet."
                     } else {
                         activities.each { act ->
                             paragraph "&nbsp;&nbsp;&nbsp;&nbsp;&bull; ${act.getLabel()}"
+                            input name: "removeAct_${hub.deviceNetworkId}_${act.deviceNetworkId}", type: "button", title: "&nbsp;&nbsp;&nbsp;&nbsp;Remove ${act.getLabel()}"
                         }
                     }
                 }
@@ -155,35 +164,74 @@ def mainPage() {
     }
 }
 
-def addHubPage() {
-    log.debug "addHubPage() entered -- newHubName=${newHubName}, newHubModel=${newHubModel}, newHubIp=${newHubIp}, newHubMac=${newHubMac}, newHubMqttHost=${newHubMqttHost}"
-    if (newHubName && newHubModel == "X1S" && newHubIp) {
+def addHubPage(params = [:]) {
+    // Edit mode: entered via a href with params:[editDni: <hub dni>] from
+    // the main page's Edit link. Persisted in state so it survives the
+    // page's own submitOnChange postbacks (params are only present on the
+    // very first navigation in, not later reloads of the same page).
+    if (params?.editDni) {
+        state.editingHubDni = params.editDni
+        state.remove("editHubPrefilled")
+    }
+    String editingDni = state.editingHubDni
+    def bridge = getBridge()
+    def editingHub = editingDni ? bridge?.getChildDevice(editingDni) : null
+
+    if (editingHub && !state.editHubPrefilled) {
+        app.updateSetting("newHubName", [value: editingHub.getLabel(), type: "text"])
+        app.updateSetting("newHubModel", [value: editingHub.currentValue("hubModel"), type: "enum"])
+        if (editingHub.currentValue("hubModel") == "X2") {
+            app.updateSetting("newHubMqttHost", [value: editingHub.currentValue("mqttHost") ?: "", type: "text"])
+            app.updateSetting("newHubMqttPort", [value: editingHub.currentValue("mqttPort") ?: "1883", type: "text"])
+            app.updateSetting("newHubMqttUser", [value: editingHub.currentValue("mqttUser") ?: "", type: "text"])
+        }
+        state.editHubPrefilled = true
+    }
+
+    if (!editingHub && newHubName && newHubModel == "X1S" && newHubIp) {
         log.debug "addHubPage() creating X1S hub '${newHubName}'"
         createHttpHub(newHubName, newHubIp)
         clearHubSettings()
         return mainPage()
     }
-    if (newHubName && newHubModel == "X2" && newHubMac && newHubMqttHost) {
+    if (!editingHub && newHubName && newHubModel == "X2" && newHubMac && newHubMqttHost) {
         log.debug "addHubPage() creating X2 hub '${newHubName}'"
         createMqttHub(newHubName, newHubMac, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass)
         clearHubSettings()
         return mainPage()
     }
+    if (editingHub && newHubName && (editingHub.currentValue("hubModel") == "X1S" || newHubMqttHost)) {
+        log.debug "addHubPage() updating existing hub '${editingDni}'"
+        updateExistingHub(editingHub, newHubName, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass)
+        clearHubSettings()
+        state.remove("editingHubDni")
+        state.remove("editHubPrefilled")
+        return mainPage()
+    }
 
-    dynamicPage(name: "addHubPage", title: "Add a Sofabaton Hub", install: false, uninstall: false) {
+    dynamicPage(name: "addHubPage", title: editingHub ? "Edit ${editingHub.getLabel()}" : "Add a Sofabaton Hub", install: false, uninstall: false) {
         section {
             href name: "cancelAddHub", title: "&larr; Cancel and go back", page: "mainPage"
         }
         section {
             input name: "newHubName", type: "text", title: "Hub Name (e.g. Living Room)", required: true
-            input name: "newHubModel", type: "enum", title: "Hub Model", options: ["X1S", "X2"], required: true, submitOnChange: true
+            if (editingHub) {
+                paragraph "Model: <b>${editingHub.currentValue('hubModel')}</b> (can't be changed here -- remove and re-add if you need a different model)"
+            } else {
+                input name: "newHubModel", type: "enum", title: "Hub Model", options: ["X1S", "X2"], required: true, submitOnChange: true
+            }
         }
-        if (newHubModel == "X1S") {
+        if (!editingHub && newHubModel == "X1S") {
             section {
                 input name: "newHubIp", type: "text", title: "Hub IP Address (set a static DHCP reservation first)", required: true
             }
         }
-        if (newHubModel == "X2") {
+        if (editingHub && editingHub.currentValue("hubModel") == "X1S") {
+            section {
+                paragraph "IP Address: <b>${editingHub.currentValue('remoteIp') ?: 'not set'}</b> (can't be changed here -- remove and re-add if it changed)"
+            }
+        }
+        if ((!editingHub && newHubModel == "X2") || (editingHub && editingHub.currentValue("hubModel") == "X2")) {
             section("MQTT Connection") {
                 paragraph "<b>Before adding an X2 hub, MQTT needs to be running on this Hubitat hub.</b><br>" +
                     "Go to Integrations &rarr; Add Built-In App &rarr; MQTT Import Integration (or Export Integration), enable it, " +
@@ -194,11 +242,15 @@ def addHubPage() {
                     "<b>Sofabaton Hub MAC ID:</b> this is the X2's own MAC (12 hex characters, colons ok, they'll be stripped), " +
                     "NOT your Hubitat hub's MAC. If you don't already have it, connect a tool like MQTT Explorer to the broker, " +
                     "press an activity button on the remote, and read it out of the topic name: activity/&lt;MAC&gt;/activity_control_up"
-                input name: "newHubMac", type: "text", title: "Sofabaton Hub MAC ID (not your Hubitat hub's MAC -- see note above for how to find it)", required: true
+                if (editingHub) {
+                    paragraph "MAC ID: <b>${editingHub.deviceNetworkId}</b> (can't be changed here -- remove and re-add if it changed)"
+                } else {
+                    input name: "newHubMac", type: "text", title: "Sofabaton Hub MAC ID (not your Hubitat hub's MAC -- see note above for how to find it)", required: true
+                }
                 input name: "newHubMqttHost", type: "text", title: "Hubitat Hub's LAN IP (running the broker -- not the Sofabaton hub's IP, not 127.0.0.1)", required: true
                 input name: "newHubMqttPort", type: "text", title: "Broker Port", defaultValue: "1883", required: false
                 input name: "newHubMqttUser", type: "text", title: "Broker Username (leave blank if none)", required: false
-                input name: "newHubMqttPass", type: "password", title: "Broker Password (leave blank if none)", required: false
+                input name: "newHubMqttPass", type: "password", title: "Broker Password (leave blank if none${editingHub ? ' -- leave blank to keep the current password' : ''})", required: false
                 paragraph "One shared MQTT connection is used for all X2 hubs you add -- entering broker details again for a second X2 hub reconnects to the same broker, it doesn't open a second connection."
             }
         }
@@ -208,6 +260,22 @@ def addHubPage() {
 private void clearHubSettings() {
     ["newHubName", "newHubModel", "newHubIp", "newHubMac", "newHubMqttHost", "newHubMqttPort", "newHubMqttUser", "newHubMqttPass"].each {
         app.removeSetting(it)
+    }
+}
+
+// Applies edits to an already-existing hub in place (name always, plus the
+// X2 broker fields if this is an X2 hub -- model, MAC, and X1S IP are
+// intentionally not editable here, see addHubPage()'s notes on why).
+// Password is only overwritten if a new one was actually typed, so leaving
+// it blank on an edit keeps whatever was already saved.
+private void updateExistingHub(def hub, String name, String mqttHost, String mqttPort, String mqttUser, String mqttPass) {
+    hub.setLabel(name)
+    if (hub.currentValue("hubModel") == "X2") {
+        hub.updateSetting("mqttHost", [value: mqttHost, type: "text"])
+        hub.updateSetting("mqttPort", [value: mqttPort, type: "text"])
+        hub.updateSetting("mqttUser", [value: mqttUser ?: "", type: "text"])
+        if (mqttPass) hub.updateSetting("mqttPass", [value: mqttPass, type: "password"])
+        hub.updated()
     }
 }
 
@@ -319,6 +387,22 @@ def addActivityPage() {
 
 def appButtonHandler(String btn) {
     def bridge = getBridge()
+
+    if (btn.startsWith("removeHub_")) {
+        String dni = btn - "removeHub_"
+        bridge?.removeRemoteDevice(dni)
+        return
+    }
+    if (btn.startsWith("removeAct_")) {
+        String rest = btn - "removeAct_"
+        def parts = rest.split("_", 2)
+        if (parts.length == 2) {
+            def hub = bridge?.getChildDevice(parts[0])
+            hub?.removeActivityDeviceByDni(parts[1])
+        }
+        return
+    }
+
     def hub = newActivityHub ? bridge?.getChildDevice(newActivityHub) : null
     if (!hub) return
     if (btn == "learnBtn") {
