@@ -17,6 +17,12 @@
          disarms it. Lets the Add Activity page auto-fill a numeric
          Sofabaton Activity ID by watching the remote get pressed, instead
          of requiring the user to read it out of an external MQTT client.
+        -parse() now calls hub.markMqttMessageSeen() on every recognized
+         message for that hub's MAC, regardless of whether it matches a
+         configured Activity, so the Remote driver can expose a real
+         "last seen" timestamp as a stand-in for true connection status
+         (the X2 has no known keepalive/presence topic, so this is the
+         best available signal: proof of a real message at a known time).
 
     *OVERVIEW
      Grouping anchor for the Sofabaton Integration, and (for X2 hubs) the
@@ -175,6 +181,12 @@ void parse(String description) {
             if (logEnable) log.debug "Sofabaton Bridge: no Remote child matches MAC $mac, ignoring"
             return
         }
+
+        // Any real message for this MAC, regardless of whether it matches
+        // a configured Activity, is proof the hub is actually connected
+        // and talking right now -- stamp it so there's a real "last seen"
+        // readout instead of no visibility at all into connection health.
+        hub.markMqttMessageSeen()
 
         // Activity learn mode: if armed for this MAC and this message is a
         // real activity turning on (not the 255 hub-wide power-off), stash
