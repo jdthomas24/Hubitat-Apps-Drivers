@@ -22,6 +22,10 @@
 		-Added removeActivityDeviceByDni() so the parent app can remove an
 		 Activity child cleanly by its actual DNI, rather than needing to
 		 recompute the name-derived DNI itself.
+		-Added lastMqttMessage attribute + markMqttMessageSeen(), called by
+		 the Bridge on every recognized message for this hub's MAC. Best
+		 available stand-in for real connection status since the X2 has no
+		 known keepalive/presence topic of its own.
 
 	*OVERVIEW
 	 Represents one physical Sofabaton hub. X1S and X2 hubs share this
@@ -74,6 +78,7 @@ metadata {
         attribute "mqttHost", "string"
         attribute "mqttPort", "string"
         attribute "mqttUser", "string"
+        attribute "lastMqttMessage", "string"
         preferences {
             input name: "deviceInfo", type: "paragraph", element: "paragraph", title: "Sofabaton Remote", description: "Driver Version: ${version()}<br>Compatible Hardware: X1S and above"
             input name: "hubModel", type: "enum", title: "Hub Model", options: ["X1S", "X2"], required: true
@@ -327,6 +332,16 @@ String ipToHex(String ipAddress) {
         return null
     }
     return quad.collect { Integer.toHexString(it.toInteger()).padLeft(2,"0").toUpperCase() }.join()
+}
+
+// Called by the Bridge on every recognized MQTT message for this hub's
+// MAC, whether or not it matches a configured Activity. There's no known
+// keepalive/presence topic from the X2 itself, so this timestamp is the
+// best available stand-in for "is the hub actually connected right now" --
+// it proves a real message arrived at a known time, even though the hub
+// only talks when an activity changes, not on a fixed heartbeat.
+void markMqttMessageSeen() {
+    sendEvent(name: "lastMqttMessage", value: new Date().format("yyyy-MM-dd h:mm:ss a"))
 }
 
 // ============================================================
