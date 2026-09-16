@@ -1,5 +1,5 @@
 /*
-    Sofabaton Integration Bridge Driver
+    Sofabaton Integration - Bridge Driver
     Copyright 2026 JDThomas. All Rights Reserved
 
     Credits: part of the Sofabaton Integration, whose X1/X1S local receive
