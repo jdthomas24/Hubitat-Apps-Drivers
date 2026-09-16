@@ -233,16 +233,16 @@ def addHubPage(params = [:]) {
             href name: "cancelAddHub", title: "&larr; Cancel and go back", page: "mainPage"
         }
         section {
-            input name: "newHubName", type: "text", title: "Hub Name (e.g. Living Room)", required: true
+            input name: "newHubName", type: "text", title: "Hub Name (e.g. Living Room)"
             if (editingHub) {
                 paragraph "Model: <b>${editingHub.currentValue('hubModel')}</b> (can't be changed here -- remove and re-add if you need a different model)"
             } else {
-                input name: "newHubModel", type: "enum", title: "Hub Model", options: ["X1S", "X2"], required: true, submitOnChange: true
+                input name: "newHubModel", type: "enum", title: "Hub Model", options: ["X1S", "X2"], submitOnChange: true
             }
         }
         if (!editingHub && newHubModel == "X1S") {
             section {
-                input name: "newHubIp", type: "text", title: "Hub IP Address (set a static DHCP reservation first)", required: true
+                input name: "newHubIp", type: "text", title: "Hub IP Address (set a static DHCP reservation first)"
             }
         }
         if (editingHub && editingHub.currentValue("hubModel") == "X1S") {
@@ -264,9 +264,9 @@ def addHubPage(params = [:]) {
                 if (editingHub) {
                     paragraph "MAC ID: <b>${editingHub.deviceNetworkId}</b> (can't be changed here -- remove and re-add if it changed)"
                 } else {
-                    input name: "newHubMac", type: "text", title: "Sofabaton Hub MAC ID (not your Hubitat hub's MAC -- see note above for how to find it)", required: true
+                    input name: "newHubMac", type: "text", title: "Sofabaton Hub MAC ID (not your Hubitat hub's MAC -- see note above for how to find it)"
                 }
-                input name: "newHubMqttHost", type: "text", title: "Hubitat Hub's LAN IP (running the broker -- not the Sofabaton hub's IP, not 127.0.0.1)", required: true
+                input name: "newHubMqttHost", type: "text", title: "Hubitat Hub's LAN IP (running the broker -- not the Sofabaton hub's IP, not 127.0.0.1)"
                 input name: "newHubMqttPort", type: "text", title: "Broker Port", defaultValue: "1883", required: false
                 input name: "newHubMqttUser", type: "text", title: "Broker Username (leave blank if none)", required: false
                 input name: "newHubMqttPass", type: "password", title: "Broker Password (leave blank if none${editingHub ? ' -- leave blank to keep the current password' : ''})", required: false
@@ -386,12 +386,12 @@ def addActivityPage() {
             href name: "cancelAddActivity", title: "&larr; Cancel and go back", page: "mainPage"
         }
         section {
-            input name: "newActivityHub", type: "enum", title: "Which Hub?", options: hubs.collectEntries { [(it.deviceNetworkId): it.getLabel()] }, required: true, submitOnChange: true
-            input name: "newActivityName", type: "text", title: "Activity Name (e.g. Watch TV)" + (isX2 ? "" : " -- must match the remote's configured user-definable button label exactly, this is how state sync matches it up"), required: true
+            input name: "newActivityHub", type: "enum", title: "Which Hub?", options: hubs.collectEntries { [(it.deviceNetworkId): it.getLabel()] }, submitOnChange: true
+            input name: "newActivityName", type: "text", title: "Activity Name (e.g. Watch TV)" + (isX2 ? "" : " -- must match the remote's configured user-definable button label exactly, this is how state sync matches it up")
         }
         if (selectedHub && !isX2) {
             section {
-                input name: "newActivityUrlOn", type: "text", title: "Start Activity Webhook URL", required: true
+                input name: "newActivityUrlOn", type: "text", title: "Start Activity Webhook URL"
                 input name: "newActivityUrlOff", type: "text", title: "Stop Activity Webhook URL (optional, unconfirmed feature -- leave blank if unsure)", required: false
             }
         }
@@ -404,7 +404,7 @@ def addActivityPage() {
                 } else {
                     input name: "learnBtn", type: "button", title: "Listen for Next Activity"
                 }
-                input name: "newActivitySofabatonId", type: "number", title: "Sofabaton Activity ID", required: true, submitOnChange: true
+                input name: "newActivitySofabatonId", type: "number", title: "Sofabaton Activity ID", submitOnChange: true
             }
         }
         section {
