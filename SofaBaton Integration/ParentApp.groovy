@@ -8,6 +8,10 @@
 
     2026-09-10 jdthomas24
         -Initial publication
+    2026-09-16 jdthomas24
+        -Fixed addHubPage: removed submitOnChange from newHubIp/newHubMac/
+         newHubMqttHost, which was forcing a page postback (and required-
+         field validation reset) on every keystroke into those fields.
 
     *OVERVIEW
      Parent app for the Sofabaton Integration. Manages one or more physical
@@ -124,7 +128,7 @@ def addHubPage() {
         }
         if (newHubModel == "X1/X1S") {
             section {
-                input name: "newHubIp", type: "text", title: "Hub IP Address (set a static DHCP reservation first)", required: true, submitOnChange: true
+                input name: "newHubIp", type: "text", title: "Hub IP Address (set a static DHCP reservation first)", required: true
             }
         }
         if (newHubModel == "X2") {
@@ -135,8 +139,8 @@ def addHubPage() {
                     "The app will show you a host, port, and login -- enter that same information below.<br>" +
                     "Then, in the Sofabaton app, go to Devices &rarr; Add Device &rarr; Wi-Fi &rarr; Add Home Assistant Remote, " +
                     "and enter the same broker details there so the hub connects to the same broker Hubitat does."
-                input name: "newHubMac", type: "text", title: "Hub MAC Address (12 hex characters, e.g. 14639332AA40 -- colons are fine too, they'll be stripped)", required: true, submitOnChange: true
-                input name: "newHubMqttHost", type: "text", title: "Broker Host/IP (not 127.0.0.1 -- use this hub's real LAN address)", required: true, submitOnChange: true
+                input name: "newHubMac", type: "text", title: "Hub MAC Address (12 hex characters, e.g. 14639332AA40 -- colons are fine too, they'll be stripped)", required: true
+                input name: "newHubMqttHost", type: "text", title: "Broker Host/IP (not 127.0.0.1 -- use this hub's real LAN address)", required: true
                 input name: "newHubMqttPort", type: "text", title: "Broker Port", defaultValue: "1883", required: false
                 input name: "newHubMqttUser", type: "text", title: "Broker Username (leave blank if none)", required: false
                 input name: "newHubMqttPass", type: "password", title: "Broker Password (leave blank if none)", required: false
