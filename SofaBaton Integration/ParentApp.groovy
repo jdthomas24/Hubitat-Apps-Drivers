@@ -32,6 +32,9 @@
          values sitting in the form the next time it's opened.
         -Changed the Hub Model dropdown from "X1/X1S" to just "X1S", since
          the plain X1 isn't supported by the underlying driver this forks.
+        -Main page now lists each hub's activities nested underneath it
+         instead of just a count, so with multiple hubs it's clear which
+         activity belongs to which hub.
 
     *OVERVIEW
      Parent app for the Sofabaton Integration. Manages one or more physical
@@ -131,7 +134,14 @@ def mainPage() {
                     def activities = hub.getChildDevices() ?: []
                     String model = hub.currentValue("hubModel") ?: "unknown model"
                     String idShown = model == "X2" ? (hub.currentValue("remoteMac") ?: "no MAC set") : (hub.currentValue("remoteIp") ?: "no IP set")
-                    paragraph "<b>${hub.getLabel()}</b> (${model}, ${idShown}) -- ${activities.size()} activit${activities.size() == 1 ? 'y' : 'ies'}"
+                    paragraph "<b>${hub.getLabel()}</b> (${model}, ${idShown})"
+                    if (!activities) {
+                        paragraph "&nbsp;&nbsp;&nbsp;&nbsp;No activities yet."
+                    } else {
+                        activities.each { act ->
+                            paragraph "&nbsp;&nbsp;&nbsp;&nbsp;&bull; ${act.getLabel()}"
+                        }
+                    }
                 }
             }
             href name: "toAddHub", title: "Add a Hub", page: "addHubPage"
