@@ -35,6 +35,11 @@
 		 against Hubitat's own docs -- that's a platform limitation, not
 		 something this file controls), so X1S and X2 fields will always
 		 both be visible regardless of which model is selected.
+		-Added removeAllActivityDevices(), called by the Bridge before it
+		 deletes this Remote device. Fixes a bug where removing a hub with
+		 Activity children still attached could silently fail to fully
+		 delete the Remote device, leaving an orphaned device that then
+		 blocked re-adding a hub with the same MAC-based DNI.
 
 	*OVERVIEW
 	 Represents one physical Sofabaton hub. X1S and X2 hubs share this
@@ -372,6 +377,23 @@ def createActivityDevice(String name, String urlOn = null, String urlOff = null,
         child.updated()
     }
     return child
+}
+
+// Removes every Activity child of this hub. Must run BEFORE the Bridge
+// deletes this Remote device itself -- Hubitat can refuse (or only
+// partially complete) deleting a device that still has children attached,
+// and a Remote's Activity children are grandchildren of the Bridge, so the
+// Bridge can't reach them directly; it has to ask this device to clean up
+// its own children first.
+void removeAllActivityDevices() {
+    def activityChildren = getChildDevices()?.findAll { it.typeName == "Sofabaton Activity" }
+    activityChildren?.each { act ->
+        try {
+            deleteChildDevice(act.deviceNetworkId)
+        } catch (e) {
+            log.error "$device.label: failed to remove Activity child ${act.getLabel()}: ${e.message}"
+        }
+    }
 }
 
 void removeActivityDevice(String name) {
