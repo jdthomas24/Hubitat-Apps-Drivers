@@ -26,6 +26,15 @@
 		 the Bridge on every recognized message for this hub's MAC. Best
 		 available stand-in for real connection status since the X2 has no
 		 known keepalive/presence topic of its own.
+		-Trimmed and reordered the preferences page: added a top notice that
+		 this device is configured via the parent app (not meant for manual
+		 editing), shortened the X2 MQTT setup paragraph since the app now
+		 duplicates that guidance, and condensed the X1S setup steps and
+		 per-field hints to cut clutter. Note: driver preferences render as
+		 one fixed-layout page with no conditional show/hide (confirmed
+		 against Hubitat's own docs -- that's a platform limitation, not
+		 something this file controls), so X1S and X2 fields will always
+		 both be visible regardless of which model is selected.
 
 	*OVERVIEW
 	 Represents one physical Sofabaton hub. X1S and X2 hubs share this
@@ -80,17 +89,16 @@ metadata {
         attribute "mqttUser", "string"
         attribute "lastMqttMessage", "string"
         preferences {
-            input name: "deviceInfo", type: "paragraph", element: "paragraph", title: "Sofabaton Remote", description: "Driver Version: ${version()}<br>Compatible Hardware: X1S and above"
+            input name: "deviceInfo", type: "paragraph", element: "paragraph", title: "Sofabaton Remote", description: "Driver Version: ${version()}<br><b>Configured via the Sofabaton Integration app -- Add/Edit Hub there, not here.</b> The fields below reflect what the app set and update automatically; manual edits here can get out of sync with the app's records."
             input name: "hubModel", type: "enum", title: "Hub Model", options: ["X1S", "X2"], required: true
-            input name: "appConfig", type: "paragraph", element: "paragraph", title: "X1S: Sofabaton App Configuration", description: "1. In the Sofabaton app, go to Devices and tap Add Device, then select Wi-Fi<br>2. Tap the link at the bottom: 'Create a virtual device for IP control'<br>3. Enter the URL: http://[your Hubitat IP]:39501/<br>4. Set the request method to PUT<br>5. Leave Connect Type and Additional Headers blank<br>6. In the Body field enter either:<br>&nbsp;&nbsp;&nbsp;- A number 1-10 for a numeric button, or 11-20 for a user definable button<br>&nbsp;&nbsp;&nbsp;- Any string (e.g. watchTV) matching a user definable slot<br>&nbsp;&nbsp;&nbsp;- on or off to set this device's switch state<br>7. Repeat for each activity using a unique value each time"
+            input name: "appConfig", type: "paragraph", element: "paragraph", title: "X1S Setup (one-time, in the Sofabaton app)", description: "Devices &rarr; Add Device &rarr; Wi-Fi &rarr; 'Create a virtual device for IP control'. URL: http://[Hubitat IP]:39501/, method PUT, body = a number 1-20 or a string matching a slot below, or on/off. Repeat per activity."
             input name:"ip", type:"text", title: "Remote IP Address (X1S only)"
-            input name: "mqttConfig", type: "paragraph", element: "paragraph", title: "X2: MQTT Configuration", description: "Enable Hubitat's built-in MQTT broker first (Integrations &rarr; Add Built-In App &rarr; MQTT Import Integration), then enter the same broker details below AND in the Sofabaton app's Devices &rarr; Add Device &rarr; Wi-Fi &rarr; Add Home Assistant Remote screen."
-            input name: "mac", type: "text", title: "Hub MAC Address (X2 only, e.g. 14639332AA40, no colons)"
-            input name: "mqttHost", type: "text", title: "MQTT Broker Host/IP (X2 only, not 127.0.0.1)"
+            input name: "mac", type: "text", title: "Hub MAC Address (X2 only)"
+            input name: "mqttHost", type: "text", title: "MQTT Broker Host/IP (X2 only)"
             input name: "mqttPort", type: "text", title: "MQTT Broker Port (X2 only)", defaultValue: "1883"
-            input name: "mqttUser", type: "text", title: "MQTT Broker Username (X2 only, leave blank if none)"
-            input name: "mqttPass", type: "password", title: "MQTT Broker Password (X2 only, leave blank if none)"
-            input name: "userInfo", type: "paragraph", element: "paragraph", title: "User Definable Buttons (X1S only)", description: "Enter the match string the remote sends. Optionally add a pipe | followed by a description e.g. watchTV|Watch TV. The match string must match what you entered in the remote app.<br>These fire button numbers 11-20 (User 1 = button 11, User 10 = button 20). You can also trigger rules on the lastButtonValue or lastButtonLabel custom attributes if you prefer matching the string itself.<br><br>If a slot's description matches the name of a Sofabaton Activity child device (added via the parent app), that Activity device's state is kept in sync automatically."
+            input name: "mqttUser", type: "text", title: "MQTT Broker Username (X2 only)"
+            input name: "mqttPass", type: "password", title: "MQTT Broker Password (X2 only)"
+            input name: "userInfo", type: "paragraph", element: "paragraph", title: "User Definable Buttons (X1S only)", description: "matchString|Description, e.g. watchTV|Watch TV. Fires buttons 11-20. A description matching a Sofabaton Activity child's name keeps that Activity's state synced automatically."
             input name:"usrBtn1", type:"text", title:"User 1 (11):", description:"matchString|Description", required:false
             input name:"usrBtn2", type:"text", title:"User 2 (12):", description:"matchString|Description", required:false
             input name:"usrBtn3", type:"text", title:"User 3 (13):", description:"matchString|Description", required:false
@@ -101,7 +109,7 @@ metadata {
             input name:"usrBtn8", type:"text", title:"User 8 (18):", description:"matchString|Description", required:false
             input name:"usrBtn9", type:"text", title:"User 9 (19):", description:"matchString|Description", required:false
             input name:"usrBtn10", type:"text", title:"User 10 (20):", description:"matchString|Description", required:false
-            input name: "numericInfo", type: "paragraph", element: "paragraph", title: "Numeric Buttons (X1S only)", description: "Labels for buttons triggered by a number (1-10) in the request body."
+            input name: "numericInfo", type: "paragraph", element: "paragraph", title: "Numeric Buttons (X1S only)", description: "Labels for buttons 1-10."
             input name:"btnLabel1", type:"text", title:"1:", description:"Button 1 label", required:false
             input name:"btnLabel2", type:"text", title:"2:", description:"Button 2 label", required:false
             input name:"btnLabel3", type:"text", title:"3:", description:"Button 3 label", required:false
