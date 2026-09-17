@@ -30,6 +30,19 @@
          DNI. Now calls the Remote's new removeAllActivityDevices() first,
          and both delete steps are wrapped so a real failure logs loudly
          instead of leaving a zombie device with no error shown anywhere.
+        -parse() now logs every raw MQTT message it receives (topic +
+         payload) at debug level, before any topic filtering. This means
+         Live Logs, with debug logging enabled on this device, now shows
+         ANY traffic arriving from the broker -- no need for a separate
+         tool like MQTT Explorer just to confirm whether the X2 is
+         publishing at all.
+        -Added an explicit success log on subscribe(), and a new
+         forceReconnectMqtt() command (button on the Commands tab) that
+         does a full disconnect + reconnect + resubscribe cycle.
+         ensureMqttConnected() normally skips reconnecting when the broker
+         URL hasn't changed, so a subscribe that silently failed once
+         would otherwise never get retried, leaving mqttStatus stuck on
+         "connected" forever with no messages ever actually arriving.
 
     *OVERVIEW
      Grouping anchor for the Sofabaton Integration, and (for X2 hubs) the
@@ -59,6 +72,7 @@ metadata {
     definition (name: "Sofabaton Integration Bridge", namespace: "jdthomas24", author: "Jason Thomas") {
         capability "Actuator"
         attribute "mqttStatus", "string"
+        command "forceReconnectMqtt"
     }
     preferences {
         input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: false
@@ -169,12 +183,34 @@ void mqttClientStatus(String message) {
         sendEvent(name: "mqttStatus", value: "connected")
         try {
             interfaces.mqtt.subscribe("activity/+/activity_control_up")
+            if (txtEnable) log.info "Sofabaton Bridge: MQTT subscribed to activity/+/activity_control_up"
         } catch (e) {
             log.error "Sofabaton Bridge: MQTT subscribe failed: ${e.message}"
         }
         return
     }
     if (logEnable) log.debug "Sofabaton Bridge: MQTT status -- $message"
+}
+
+// Manual admin command (shows as a button on the Commands tab): forces a
+// full disconnect + reconnect + resubscribe cycle. ensureMqttConnected()
+// normally skips reconnecting if the broker URL hasn't changed, so if a
+// subscribe ever silently failed while the connection itself stayed up,
+// mqttStatus would keep showing "connected" forever with no messages ever
+// actually arriving, and nothing would ever retry it on its own. This
+// clears that stuck state and re-triggers a clean connect+subscribe by
+// asking an X2 Remote child to resupply its broker credentials.
+void forceReconnectMqtt() {
+    log.info "Sofabaton Bridge: forcing MQTT reconnect"
+    try { interfaces.mqtt.disconnect() } catch (e) { }
+    state.mqttConnected = false
+    state.remove("mqttUrl")
+    def x2Hub = getChildDevices()?.find { it.currentValue("hubModel") == "X2" }
+    if (x2Hub) {
+        x2Hub.updated()
+    } else {
+        log.warn "Sofabaton Bridge: no X2 hub child found to resupply broker credentials for reconnect"
+    }
 }
 
 // interfaces.mqtt.parseMessage() incoming handler. Confirmed real payload
@@ -185,6 +221,7 @@ void mqttClientStatus(String message) {
 void parse(String description) {
     try {
         def msg = interfaces.mqtt.parseMessage(description)
+        if (logEnable) log.debug "Sofabaton Bridge: MQTT message received -- topic=${msg.topic}, payload=${msg.payload}"
         String topic = msg.topic
         String payload = msg.payload
         def parts = topic.split("/")
