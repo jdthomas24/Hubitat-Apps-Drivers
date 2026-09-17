@@ -43,6 +43,39 @@
          URL hasn't changed, so a subscribe that silently failed once
          would otherwise never get retried, leaving mqttStatus stuck on
          "connected" forever with no messages ever actually arriving.
+        -FIXED: forceReconnectMqtt() needed an explicit command "..."
+         declaration in the metadata block to actually appear as a button
+         on the Commands tab (matches the same pattern already used
+         correctly for syncOn/syncOff in the Activity driver -- missed it
+         here on first pass).
+        -MAJOR FINDING, LATE TONIGHT: a real, actively-maintained Home
+         Assistant integration (yomonpet/ha-sofabaton-hub) documents
+         activity_control_up as the COMMAND/publish topic and
+         activity_control_down as the STATE-BROADCAST/subscribe topic --
+         the opposite of what this file assumed (based on an earlier
+         direct MQTT Explorer observation on this same hardware showing
+         traffic on _up when pressing the remote). Rather than commit to
+         either direction, now subscribes to BOTH _up and _down, and
+         parse() logs which suffix each message actually arrives on. This
+         is the next real test to run: if messages start arriving on
+         _down, our whole subscribe/publish direction has been backwards.
+         Outbound publish direction (publishMqttActivityControl) left
+         unchanged pending that result, to avoid changing two unverified
+         things at once.
+        -SECOND FINDING from the same source: its documented startup
+         sequence actively PUBLISHES a request (to .../list_request) after
+         subscribing, rather than only passively waiting for broadcasts --
+         never tried before tonight. Added a subscribe to activity/+/list
+         and, right after connecting, an untested publish of an empty
+         message to activity/{mac}/list_request for each known X2 hub, to
+         test whether the hub only starts talking to a client that first
+         announces itself this way.
+        -FIXED: uninstalled() deleted each Remote child without first
+         clearing ITS Activity children -- the same "device still has
+         children" bug already fixed in removeRemoteDevice() earlier
+         tonight, just never applied here too. Now calls
+         removeAllActivityDevices() on each Remote before deleting it, so
+         a full app removal genuinely leaves nothing orphaned behind.
 
     *OVERVIEW
      Grouping anchor for the Sofabaton Integration, and (for X2 hubs) the
@@ -99,6 +132,16 @@ void logsOff() {
 void uninstalled() {
     try { interfaces.mqtt.disconnect() } catch (e) { }
     getChildDevices()?.each { child ->
+        // Must clear each Remote's own Activity children FIRST -- same
+        // reasoning as removeRemoteDevice() below: Hubitat can refuse or
+        // only partially complete deleting a device that still has
+        // children attached. Missed applying this fix here earlier
+        // tonight even though it was already fixed in removeRemoteDevice().
+        try {
+            child.removeAllActivityDevices()
+        } catch (e) {
+            log.warn "Failed to clear Activity children of ${child.displayName} on uninstall: ${e.message}"
+        }
         try {
             deleteChildDevice(child.deviceNetworkId)
         } catch (e) {
@@ -182,10 +225,36 @@ void mqttClientStatus(String message) {
         state.mqttConnected = true
         sendEvent(name: "mqttStatus", value: "connected")
         try {
+            // 2026-09-16 late addition: this file originally only
+            // subscribed to activity_control_up, based on an earlier
+            // direct MQTT Explorer observation on this hardware. A real,
+            // working HA integration (yomonpet/ha-sofabaton-hub) documents
+            // the OPPOSITE direction: _up as the command-publish topic,
+            // _down as the state-broadcast/subscribe topic. Rather than
+            // pick one and risk being wrong again, subscribe to BOTH so
+            // whichever direction is actually correct gets caught, and log
+            // exactly which suffix each message arrives on for a
+            // definitive answer.
             interfaces.mqtt.subscribe("activity/+/activity_control_up")
-            if (txtEnable) log.info "Sofabaton Bridge: MQTT subscribed to activity/+/activity_control_up"
+            interfaces.mqtt.subscribe("activity/+/activity_control_down")
+            interfaces.mqtt.subscribe("activity/+/list")
+            if (txtEnable) log.info "Sofabaton Bridge: MQTT subscribed to activity/+/activity_control_up, activity/+/activity_control_down, and activity/+/list"
         } catch (e) {
             log.error "Sofabaton Bridge: MQTT subscribe failed: ${e.message}"
+        }
+        // yomonpet/ha-sofabaton-hub's documented startup sequence actively
+        // REQUESTS data after subscribing (publishing to .../list_request)
+        // rather than only passively waiting for broadcasts. Never tried
+        // before tonight -- worth testing whether the hub only starts
+        // talking to a client that first announces itself this way.
+        try {
+            getChildDevices()?.findAll { it.currentValue("hubModel") == "X2" }?.each { x2 ->
+                String requestTopic = "activity/${x2.deviceNetworkId}/list_request"
+                interfaces.mqtt.publish(requestTopic, "{}")
+                if (txtEnable) log.info "Sofabaton Bridge: published empty request to $requestTopic (untested -- seeing if this prompts the hub to respond)"
+            }
+        } catch (e) {
+            log.error "Sofabaton Bridge: list_request publish failed: ${e.message}"
         }
         return
     }
@@ -225,10 +294,11 @@ void parse(String description) {
         String topic = msg.topic
         String payload = msg.payload
         def parts = topic.split("/")
-        if (parts.length < 3 || parts[0] != "activity" || parts[2] != "activity_control_up") {
+        if (parts.length < 3 || parts[0] != "activity" || !(parts[2] in ["activity_control_up", "activity_control_down", "list"])) {
             if (logEnable) log.debug "Sofabaton Bridge: ignoring unrecognized topic $topic"
             return
         }
+        if (txtEnable) log.info "Sofabaton Bridge: message arrived on suffix '${parts[2]}' -- this tells us which direction is actually correct"
         String mac = parts[1]
         def json = new JsonSlurper().parseText(payload)
         Integer activityId = json.activity_id as Integer
