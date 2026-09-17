@@ -68,6 +68,71 @@
          pages; the app's own logic already gates real creation on those
          fields being present, so nothing is lost except the native red
          asterisk/validation nudge.
+        -FIXED A FOURTH REAL BUG: Edit used an href with params to reach
+         addHubPage(), but the main page also has a plain "Add a Hub" href
+         to that same page name with no params -- Hubitat has a confirmed
+         platform bug where multiple hrefs targeting the same page name
+         with different params can mix up or drop those params. Replaced
+         Edit (and Cancel, for consistency and to let it properly exit
+         edit mode) with buttons that set/clear state directly instead,
+         the same button+state pattern already proven reliable tonight
+         for Remove and Listen mode.
+        -FIXED A FIFTH REAL BUG: Edit's prefill step and its save-check ran
+         in the same page pass -- the prefill echoed the hub's own current
+         values into the form fields, and the very next lines immediately
+         re-read those same fields as if the user had just submitted them,
+         silently saving (a no-op, since it was the hub's own data) and
+         returning to the main page before the form was ever shown. Added
+         a justPrefilled guard so the save-check only fires on an actual
+         later postback (the Save button), not the same pass as prefill.
+        -Wrapped each hub's summary line in a bordered/pill-styled box
+         (model shown as a small badge) instead of plain text, so multiple
+         hubs read as distinct cards rather than a flat list.
+        -Styled the model badge blue, capped the card's width instead of
+         stretching full-page, and put Edit/Remove side by side (width: 6
+         each) instead of stacked, using Hubitat's input width grid.
+        -FIXED A SIXTH REAL BUG (same family as the Hub Edit one, caught
+         proactively before it surfaced): if the Activity Name was typed
+         before pressing Listen, the auto-refresh that captures the ID
+         would read it as a real submission on that same pass and silently
+         create the Activity before the user ever saw the captured ID.
+         Added the same justCaptured-style guard so a captured ID only
+         fills the field; creation still requires an explicit later click
+         of "Add This Activity".
+        -Main page now shows each X2 activity's Sofabaton Activity ID
+         inline next to its name (e.g. "Watch TV (ID: 101)"), so it's
+         visible without opening the device page.
+        -FIXED A SEVENTH REAL BUG, confirmed by live logs this time: the
+         page's refreshInterval (meant to auto-poll while Listening) was
+         bouncing straight back to mainPage() every cycle instead of
+         reloading addActivityPage() -- matches a known class of Hubitat
+         auto-refresh bug (confirmed via community reports of the same
+         "bounces back unexpectedly" behavior). Removed refreshInterval
+         entirely rather than fight an unreliable platform mechanism;
+         Listen mode now relies on state persisting across navigation
+         instead -- press Listen, press the remote whenever, then simply
+         reopen Add an Activity and the captured ID will already be there.
+        -SUPERSEDED the justPrefilled/justCapturedLearn patches above with
+         a more fundamental fix, after a live test showed the underlying
+         bug family wasn't actually closed: any field becoming non-null on
+         its own (Edit's prefill, Listen's capture) could still trigger a
+         save on a LATER, unrelated page reload, not just the exact same
+         pass -- because the save logic only ever checked "are the fields
+         full", never "did the user actually just click Save". Both
+         addHubPage() and addActivityPage() now gate all creation/update
+         behind an explicit state.hubSaveRequested / state.
+         activitySaveRequested flag, set only by the Save button's own
+         click handler and consumed (cleared) the instant it's checked.
+         Field values being present is no longer sufficient on its own,
+         under any circumstance, to trigger a save. A saveError message
+         now also shows on the page if Save is clicked with required
+         fields still missing, instead of silently doing nothing.
+        -FIXED: added a missing uninstalled() method. Without it, removing
+         the app left the Bridge device (and everything under it) orphaned
+         on the hub with nothing to clean it up, guaranteeing a DNI
+         conflict on the next install. Now explicitly deletes the Bridge
+         child, which triggers its own uninstalled() to tear down MQTT and
+         its children in turn.
 
     *OVERVIEW
      Parent app for the Sofabaton Integration. Manages one or more physical
@@ -124,6 +189,23 @@ def updated() {
     initialize()
 }
 
+// Without this, removing the app leaves the Bridge (and everything under
+// it) orphaned on the hub -- nothing would ever clean it up, and the next
+// install would immediately hit the same DNI-conflict mess this whole
+// project fought through tonight. Explicitly delete the Bridge child here;
+// deleting it triggers the Bridge driver's own uninstalled(), which is
+// responsible for tearing down MQTT and its own children in turn.
+def uninstalled() {
+    def bridge = getBridge()
+    if (bridge) {
+        try {
+            deleteChildDevice(bridge.deviceNetworkId)
+        } catch (e) {
+            log.error "Sofabaton Integration: failed to remove Bridge device on uninstall: ${e.message}"
+        }
+    }
+}
+
 def initialize() {
     if (!getBridge()) {
         addChildDevice("jdthomas24", "Sofabaton Integration Bridge", bridgeDni(), [label: "Sofabaton Integration Bridge"])
@@ -149,11 +231,22 @@ def getBridge() {
 }
 
 def mainPage() {
+    log.debug "mainPage() entered -- state.editingHubDni=${state.editingHubDni}"
+    // Edit mode is entered by a button (editHub_<dni>) rather than an
+    // href with params -- Hubitat has a known bug where multiple hrefs on
+    // one page targeting the SAME page name with different params can mix
+    // up or drop those params. A button + state sidesteps it entirely.
+    if (state.editingHubDni) {
+        return addHubPage()
+    }
+
     // Wipe any half-entered Add Hub / Add Activity fields whenever we land
-    // back here, so a cancelled attempt doesn't leave stale values sitting
-    // in those forms the next time they're opened.
+    // back here normally, so a cancelled attempt doesn't leave stale
+    // values sitting in those forms the next time they're opened.
     clearHubSettings()
     clearActivitySettings()
+    state.remove("learnStartedFor")
+    state.remove("activitySaveRequested")
 
     dynamicPage(name: "mainPage", title: "Sofabaton Integration", install: true, uninstall: true) {
         def bridge = getBridge()
@@ -167,14 +260,17 @@ def mainPage() {
                     def activities = hub.getChildDevices() ?: []
                     String model = hub.currentValue("hubModel") ?: "unknown model"
                     String idShown = model == "X2" ? (hub.currentValue("remoteMac") ?: "no MAC set") : (hub.currentValue("remoteIp") ?: "no IP set")
-                    paragraph "<b>${hub.getLabel()}</b> (${model}, ${idShown})"
-                    href name: "editHub_${hub.deviceNetworkId}", title: "Edit ${hub.getLabel()}", page: "addHubPage", params: [editDni: hub.deviceNetworkId]
-                    input name: "removeHub_${hub.deviceNetworkId}", type: "button", title: "Remove ${hub.getLabel()}"
+                    paragraph "<div style='display:inline-block;max-width:420px;border:1px solid #ccc;border-radius:10px;padding:10px 14px;margin-bottom:8px;background:#fafafa'>" +
+                        "<b>${hub.getLabel()}</b> <span style='background:#1976d2;color:#fff;border-radius:8px;padding:1px 8px;font-size:0.85em'>${model}</span> " +
+                        "<span style='color:#888;font-size:0.9em'>${idShown}</span></div>"
+                    input name: "editHub_${hub.deviceNetworkId}", type: "button", title: "Edit ${hub.getLabel()}", width: 6
+                    input name: "removeHub_${hub.deviceNetworkId}", type: "button", title: "Remove ${hub.getLabel()}", width: 6
                     if (!activities) {
                         paragraph "&nbsp;&nbsp;&nbsp;&nbsp;No activities yet."
                     } else {
                         activities.each { act ->
-                            paragraph "&nbsp;&nbsp;&nbsp;&nbsp;&bull; ${act.getLabel()}"
+                            String idInfo = model == "X2" ? " <span style='color:#888'>(ID: ${act.currentValue('sofabatonActivityId') ?: '?'})</span>" : ""
+                            paragraph "&nbsp;&nbsp;&nbsp;&nbsp;&bull; ${act.getLabel()}${idInfo}"
                             input name: "removeAct_${hub.deviceNetworkId}_${act.deviceNetworkId}", type: "button", title: "&nbsp;&nbsp;&nbsp;&nbsp;Remove ${act.getLabel()}"
                         }
                     }
@@ -192,7 +288,15 @@ def mainPage() {
 }
 
 def addHubPage(params = [:]) {
-    log.debug "addHubPage() entered -- newHubName=${newHubName}, newHubModel=${newHubModel}, newHubIp=${newHubIp}, newHubMac=${newHubMac}, newHubMqttHost=${newHubMqttHost}, params=${params}, state.editingHubDni=${state.editingHubDni}"
+    log.debug "addHubPage() entered -- newHubName=${newHubName}, newHubModel=${newHubModel}, newHubIp=${newHubIp}, newHubMac=${newHubMac}, newHubMqttHost=${newHubMqttHost}, params=${params}, state.editingHubDni=${state.editingHubDni}, state.hubSaveRequested=${state.hubSaveRequested}"
+    if (state.hubPageCancelled) {
+        state.remove("hubPageCancelled")
+        state.remove("editingHubDni")
+        state.remove("editHubPrefilled")
+        state.remove("hubSaveRequested")
+        clearHubSettings()
+        return mainPage()
+    }
     // Edit mode: entered via a href with params:[editDni: <hub dni>] from
     // the main page's Edit link. Persisted in state so it survives the
     // page's own submitOnChange postbacks (params are only present on the
@@ -216,30 +320,48 @@ def addHubPage(params = [:]) {
         state.editHubPrefilled = true
     }
 
-    if (!editingHub && newHubName && newHubModel == "X1S" && newHubIp) {
-        log.debug "addHubPage() creating X1S hub '${newHubName}'"
-        createHttpHub(newHubName, newHubIp)
-        clearHubSettings()
-        return mainPage()
-    }
-    if (!editingHub && newHubName && newHubModel == "X2" && newHubMac && newHubMqttHost) {
-        log.debug "addHubPage() creating X2 hub '${newHubName}'"
-        createMqttHub(newHubName, newHubMac, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass)
-        clearHubSettings()
-        return mainPage()
-    }
-    if (editingHub && newHubName && (editingHub.currentValue("hubModel") == "X1S" || newHubMqttHost)) {
-        log.debug "addHubPage() updating existing hub '${editingDni}'"
-        updateExistingHub(editingHub, newHubName, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass)
-        clearHubSettings()
-        state.remove("editingHubDni")
-        state.remove("editHubPrefilled")
-        return mainPage()
+    // ONLY an explicit click of "Add This Hub" / "Save Changes" -- which
+    // sets state.hubSaveRequested in appButtonHandler -- is ever treated
+    // as a real submission. Fields being non-null is not enough on its
+    // own: they can become non-null from Edit's prefill, or simply because
+    // the user filled them in earlier and the page reloaded for an
+    // unrelated reason (an auto-refresh, a stray postback). Gating on an
+    // explicit flag instead of "are the fields full" closes off that
+    // whole bug family at once rather than patching each trigger path
+    // individually.
+    String saveError = null
+    if (state.hubSaveRequested) {
+        state.remove("hubSaveRequested")
+        if (!editingHub && newHubName && newHubModel == "X1S" && newHubIp) {
+            log.debug "addHubPage() creating X1S hub '${newHubName}'"
+            createHttpHub(newHubName, newHubIp)
+            clearHubSettings()
+            return mainPage()
+        } else if (!editingHub && newHubName && newHubModel == "X2" && newHubMac && newHubMqttHost) {
+            log.debug "addHubPage() creating X2 hub '${newHubName}'"
+            createMqttHub(newHubName, newHubMac, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass)
+            clearHubSettings()
+            return mainPage()
+        } else if (editingHub && newHubName && (editingHub.currentValue("hubModel") == "X1S" || newHubMqttHost)) {
+            log.debug "addHubPage() updating existing hub '${editingDni}'"
+            updateExistingHub(editingHub, newHubName, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass)
+            clearHubSettings()
+            state.remove("editingHubDni")
+            state.remove("editHubPrefilled")
+            return mainPage()
+        } else {
+            saveError = "Please fill in all required fields before saving."
+        }
     }
 
     dynamicPage(name: "addHubPage", title: editingHub ? "Edit ${editingHub.getLabel()}" : "Add a Sofabaton Hub", install: false, uninstall: false) {
         section {
-            href name: "cancelAddHub", title: "&larr; Cancel and go back", page: "mainPage"
+            input name: "cancelHubBtn", type: "button", title: "&larr; Cancel and go back"
+        }
+        if (saveError) {
+            section {
+                paragraph "<b style='color:#c00'>${saveError}</b>"
+            }
         }
         section {
             input name: "newHubName", type: "text", title: "Hub Name (e.g. Living Room)"
@@ -357,6 +479,7 @@ private void createMqttHub(String name, String mac, String host, String port, St
 }
 
 def addActivityPage() {
+    log.debug "addActivityPage() entered -- newActivityHub=${newActivityHub}, newActivityName=${newActivityName}, newActivitySofabatonId=${newActivitySofabatonId}, state.learnStartedFor=${state.learnStartedFor}, state.activitySaveRequested=${state.activitySaveRequested}"
     def bridge = getBridge()
     def hubs = bridge?.getChildDevices() ?: []
     def selectedHub = newActivityHub ? bridge?.getChildDevice(newActivityHub) : null
@@ -377,22 +500,38 @@ def addActivityPage() {
         }
     }
 
-    if (newActivityHub && newActivityName) {
-        if (!isX2 && newActivityUrlOn) {
+    // ONLY an explicit click of "Add This Activity" -- which sets
+    // state.activitySaveRequested in appButtonHandler -- is ever treated
+    // as a real submission. A captured Listen result filling in the ID
+    // field is not enough on its own to create the Activity; the user
+    // still has to review and click Add. This closes off the same bug
+    // family as addHubPage()'s explicit-save gate, for the same reason:
+    // fields becoming non-null by themselves (here, via Listen capture)
+    // must never be treated as equivalent to a real user submission.
+    String saveError = null
+    if (state.activitySaveRequested) {
+        state.remove("activitySaveRequested")
+        if (!isX2 && newActivityHub && newActivityName && newActivityUrlOn) {
             createActivity(newActivityHub, newActivityName, newActivityUrlOn, newActivityUrlOff, null)
             clearActivitySettings()
             return mainPage()
-        }
-        if (isX2 && newActivitySofabatonId != null) {
+        } else if (isX2 && newActivityHub && newActivityName && newActivitySofabatonId != null) {
             createActivity(newActivityHub, newActivityName, null, null, newActivitySofabatonId as Integer)
             clearActivitySettings()
             return mainPage()
+        } else {
+            saveError = "Please fill in all required fields before saving."
         }
     }
 
-    dynamicPage(name: "addActivityPage", title: "Add an Activity", install: false, uninstall: false, refreshInterval: listening ? 3 : 0) {
+    dynamicPage(name: "addActivityPage", title: "Add an Activity", install: false, uninstall: false) {
         section {
             href name: "cancelAddActivity", title: "&larr; Cancel and go back", page: "mainPage"
+        }
+        if (saveError) {
+            section {
+                paragraph "<b style='color:#c00'>${saveError}</b>"
+            }
         }
         section {
             input name: "newActivityHub", type: "enum", title: "Which Hub?", options: hubs.collectEntries { [(it.deviceNetworkId): it.getLabel()] }, submitOnChange: true
@@ -406,9 +545,9 @@ def addActivityPage() {
         }
         if (selectedHub && isX2) {
             section {
-                paragraph "X2 hubs use MQTT, not a webhook. Press Listen below, then press the activity's button on the physical remote to auto-fill the ID below -- or enter it manually if you already know it (e.g. from MQTT Explorer)."
+                paragraph "X2 hubs use MQTT, not a webhook. Press Listen below, press the activity's button on the physical remote, then come back to this page (see note below) to see the ID auto-filled -- or enter it manually if you already know it (e.g. from MQTT Explorer)."
                 if (listening) {
-                    paragraph "<b>Listening...</b> press the activity's button on the physical remote now. This page refreshes automatically every few seconds."
+                    paragraph "<b>Listening...</b> press the activity's button on the physical remote now. This page does NOT auto-refresh (Hubitat's own auto-refresh was unreliable here) -- once you've pressed the button, leave this page and come back (tap Add an Activity again, or Cancel and reopen it) and the captured ID will already be filled in below."
                     input name: "cancelLearnBtn", type: "button", title: "Cancel"
                 } else {
                     input name: "learnBtn", type: "button", title: "Listen for Next Activity"
@@ -423,10 +562,23 @@ def addActivityPage() {
 }
 
 def appButtonHandler(String btn) {
+    log.debug "appButtonHandler() received btn=${btn}"
     def bridge = getBridge()
 
     if (btn == "saveHubBtn") {
-        log.debug "addHubPage() Save button pressed -- page will re-run and process current field values"
+        state.hubSaveRequested = true
+        return
+    }
+    if (btn == "cancelHubBtn") {
+        state.remove("editingHubDni")
+        state.remove("editHubPrefilled")
+        state.hubPageCancelled = true
+        return
+    }
+    if (btn.startsWith("editHub_")) {
+        String dni = btn - "editHub_"
+        state.editingHubDni = dni
+        state.remove("editHubPrefilled")
         return
     }
     if (btn.startsWith("removeHub_")) {
@@ -447,7 +599,7 @@ def appButtonHandler(String btn) {
     def hub = newActivityHub ? bridge?.getChildDevice(newActivityHub) : null
     if (!hub) return
     if (btn == "saveActivityBtn") {
-        log.debug "addActivityPage() Save button pressed -- page will re-run and process current field values"
+        state.activitySaveRequested = true
         return
     }
     if (btn == "learnBtn") {
