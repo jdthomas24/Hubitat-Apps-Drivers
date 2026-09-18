@@ -1,0 +1,100 @@
+/*
+    MQTT Minimal Test Driver
+    Purpose: isolate whether Hubitat's interfaces.mqtt actually delivers
+    messages to parse(), independent of the Sofabaton Integration's
+    Bridge/Remote/Activity device hierarchy entirely.
+
+    No parent app, no child devices, no Bridge -- just connect, subscribe,
+    and log absolutely everything that arrives (or doesn't).
+
+    USE:
+    1. Install this driver.
+    2. Create one new Virtual Device using it.
+    3. Open the device, go to Preferences, fill in the broker host/port/
+       user/pass (same values as the working Sofabaton Bridge), Save.
+    4. Go to Commands tab, hit "Connect".
+    5. Turn on debug logging, open Live Logs for this device.
+    6. Press a button on the Sofabaton remote.
+    7. Watch for ANY log line here. If nothing shows up, this is a real
+       platform-level interfaces.mqtt issue, not anything in the Sofabaton
+       Integration's own code.
+*/
+
+metadata {
+    definition (name: "MQTT Minimal Test", namespace: "jdthomas24", author: "Jason Thomas") {
+        capability "Actuator"
+        attribute "mqttStatus", "string"
+        attribute "lastMessage", "string"
+        command "connectMqtt"
+        command "disconnectMqtt"
+    }
+    preferences {
+        input name: "mqttHost", type: "text", title: "Broker Host/IP", defaultValue: "192.168.1.129"
+        input name: "mqttPort", type: "text", title: "Broker Port", defaultValue: "1883"
+        input name: "mqttUser", type: "text", title: "Broker Username", defaultValue: "hubitat"
+        input name: "mqttPass", type: "password", title: "Broker Password"
+        input name: "testTopic", type: "text", title: "Topic to subscribe to (exact, no wildcard)", defaultValue: "activity/14639332AA40/activity_control_up"
+        input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: true
+    }
+}
+
+void installed() {
+    log.info "MQTT Minimal Test installed"
+}
+
+void updated() {
+    log.info "MQTT Minimal Test updated"
+}
+
+void connectMqtt() {
+    String url = "tcp://${mqttHost}:${mqttPort}"
+    log.info "MQTT Minimal Test: connecting to $url, will subscribe to '${testTopic}'"
+    try {
+        String clientId = "sofabaton-minimal-test-${device.id}"
+        interfaces.mqtt.connect(url, clientId, mqttUser ?: null, mqttPass ?: null)
+    } catch (e) {
+        log.error "MQTT Minimal Test: connect failed: ${e.message}"
+        sendEvent(name: "mqttStatus", value: "connect failed")
+    }
+}
+
+void disconnectMqtt() {
+    try {
+        interfaces.mqtt.disconnect()
+    } catch (e) { }
+    sendEvent(name: "mqttStatus", value: "disconnected")
+    log.info "MQTT Minimal Test: disconnected"
+}
+
+void mqttClientStatus(String message) {
+    log.info "MQTT Minimal Test: mqttClientStatus -- $message"
+    if (message.startsWith("Error")) {
+        sendEvent(name: "mqttStatus", value: "error")
+        return
+    }
+    if (message.contains("Connection succeeded")) {
+        sendEvent(name: "mqttStatus", value: "connected")
+        try {
+            interfaces.mqtt.subscribe(testTopic)
+            log.info "MQTT Minimal Test: subscribed to '${testTopic}'"
+        } catch (e) {
+            log.error "MQTT Minimal Test: subscribe failed: ${e.message}"
+        }
+    }
+}
+
+// The whole point of this driver: log literally everything that reaches
+// this method, with zero filtering, zero topic matching, zero JSON
+// parsing. If a real message from the hub never shows up here, the
+// problem is not in the Sofabaton Integration's own parse()/topic-filter
+// logic -- it's upstream of that, in interfaces.mqtt itself.
+void parse(String description) {
+    log.warn "MQTT Minimal Test: *** MESSAGE RECEIVED *** raw description: $description"
+    try {
+        def msg = interfaces.mqtt.parseMessage(description)
+        log.warn "MQTT Minimal Test: topic=${msg.topic}, payload=${msg.payload}"
+        sendEvent(name: "lastMessage", value: "${msg.topic} = ${msg.payload}")
+    } catch (e) {
+        log.error "MQTT Minimal Test: failed to parse message: ${e.message}"
+    }
+}
