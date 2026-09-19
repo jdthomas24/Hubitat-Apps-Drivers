@@ -1,6 +1,6 @@
 /**
  * Reolink Standalone Devices (Internal Group Driver)
- * Version: 1.4.6
+ * Version: 1.5.0
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- exactly ONE instance total, shared across every
@@ -129,6 +129,16 @@ def componentSetSiren(child, Boolean on, String dni = null) { parent?.componentS
 def componentSetPir(child, Boolean on, String dni = null) { parent?.componentSetPir(child, on, dni) }
 def componentCheckBattery(child, String dni = null) { parent?.componentCheckBattery(child, dni) }
 def componentCheckAbilities(child, String dni = null) { parent?.componentCheckAbilities(child, dni) }
+/**
+ * v1.5.0: same root cause as the v1.4.3/1.4.6 fixes above --
+ * componentCheckRecordingSchedule() didn't exist yet when either of those
+ * hotfixes shipped, so there was no prior moment this file could have
+ * caught it. Now that the Camera/Doorbell drivers have a real
+ * checkRecordingSchedule() command, this passthrough is required or
+ * running it on any standalone (non-Hub) camera/doorbell throws
+ * MissingMethodException inside the bridge before ever reaching the app.
+ */
+def componentCheckRecordingSchedule(child, String dni = null) { parent?.componentCheckRecordingSchedule(child, dni) }
 def componentCalibratePtz(child, String dni = null) { parent?.componentCalibratePtz(child, dni) }
 def componentCheckPtzCalibrationStatus(child, String dni = null) { parent?.componentCheckPtzCalibrationStatus(child, dni) }
 def componentSetPollInterval(child, Integer seconds, String dni = null) { parent?.componentSetPollInterval(child, seconds, dni) }
