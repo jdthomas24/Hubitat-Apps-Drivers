@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.4.6
+ * Version: 1.5.0
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -18,47 +18,102 @@
  * Device-specific findings/limitations/setup gotchas live in the README and
  * in-app Tips page, not duplicated here. TODO markers mark spots needing
  * exact command/param names verified against firmware (field names can
- * drift by version). Full history prior to 1.3.8 is in GitHub commit history.
+ * drift by version). Full history prior to 1.3.6 is in GitHub commit history.
  *
  * BREAKING CHANGE (v1.3.8): every camera/doorbell became a child of a new
  * per-source "Reolink Device Bridge" instead of a child of this app directly
  * -- existing installs had to delete/recreate devices (and repoint
  * dashboards/rules) via re-discovery under each source.
  *
- * v1.4.5 -- HOTFIX: a hub reboot could leave a source's event subscription
- * silently dead indefinitely, with connectionStatus still showing
- * "connected" and no polling fallback kicking in either. Root cause:
- * state.sourceConnMode (tracks whether a source's event connection is
- * running) is APP-level state, which Hubitat persists across a reboot --
- * but the actual rawSocket TCP connection does NOT survive a reboot.
- * ensureSourceBridge()'s guard ("only reconnect if not already running")
- * trusted the stale leftover "connected" value and silently skipped
- * reconnecting. Confirmed via real logs: the reboot handler fired
- * correctly, then 20+ minutes of complete silence (no keepalives, no
- * events) until manually stopping the subscription forced the stale state
- * to clear and everything to resume. systemStartHandler() now clears
- * sourceConnMode unconditionally before calling initialize(), since a
- * genuine reboot is a hard boundary where "was connected" can never be
- * trusted regardless of what got persisted.
- *
- * v1.4.4 -- HOTFIX (ReolinkDeviceBridge.groovy only): a separate connection
- * problem -- an event connection could report "connected" indefinitely
- * while actually dead (half-open TCP, no close/error ever received) if
- * something silently dropped the connection without a proper socket-level
- * signal. Fixed by tracking the last genuinely received message and forcing
- * a reconnect if nothing arrives for 90s despite regular keepalives. See
- * that file for the full design.
- *
- * v1.4.3 -- HOTFIX (StandaloneDevices.groovy only): a standalone source's
- * bridge has the "Reolink Standalone Devices" group device as its real
- * Hubitat parent, not this app directly -- so every componentX() command a
- * device sends upward (Take Snapshot, Refresh, PTZ, spotlight, etc.) threw
- * MissingMethodException inside the bridge, before ever reaching the app.
- * Only logNormal()/logFull() had ever been forwarded (the v1.4.1 fix below);
- * the rest were missing since the v1.3.8 restructuring. Fixed by adding the
- * full componentX() passthrough set to that file, mirroring the bridge's
- * own forwarding to the app. Reported against a standalone doorbell whose
- * snapshotUrl never populated.
+ * v1.5.0 -- NVR recording control: a master record on/off switch, plus
+ * named per-channel schedule presets loaded on demand. Confirmed against a
+ * real RLN16-410 NVR (6 Elite Wifi floodlights + 1 Gen2 battery wifi
+ * doorbell, hub is a C-8 Pro) across many rounds of live testing before
+ * release.
+ *  - componentSetRecordingEnabled() flips the NVR's master record switch
+ *    (SetRecV20 with NO channel field) -- CONFIRMED this call is genuinely
+ *    untargeted at the API level: it always applies to every channel of the
+ *    source at once, there is no per-channel version of it. The per-camera
+ *    "Enable Record" screen in the Reolink app does nothing for NVR-side
+ *    recording; it only controls onboard SD-card recording, which these
+ *    cameras don't have.
+ *  - componentLoadPreset() writes a named, per-channel 168-char hourly
+ *    schedule (defined on the in-app Recording Presets page) to the NVR,
+ *    one channel at a time, via a fresh read-modify-write (fetch the
+ *    channel's current full schedule, flip only the relevant field(s),
+ *    send the whole thing back) -- CONFIRMED a minimal/partial Rec object
+ *    is silently accepted (rspCode 200) but produces NO actual change, so
+ *    the full read-modify-write is required, not optional. A channel with
+ *    no string saved for a given preset is skipped entirely, which is how
+ *    a battery-class channel (e.g. a WiFi doorbell) stays excluded from a
+ *    preset meant for wired channels.
+ *  - A permanent per-device "Exclude from ALL recording presets" lock
+ *    (excludeFromRecordingPresets on the Camera/Doorbell drivers) is
+ *    enforced here inside componentLoadPreset() -- a locked channel is
+ *    skipped on every preset load regardless of what that preset specifies
+ *    for it, distinct from the ordinary "skipped (no data)" case (a
+ *    channel simply left blank in one particular preset). presetsPage()
+ *    greys out a locked channel's picker with a 🔒 instead of rendering an
+ *    editable input for it. Direct manual commands aimed at a locked
+ *    device are unaffected -- only preset-driven writes are blocked.
+ *  - Schedule API generation: GetRecV20 is tried first regardless of any
+ *    GetAbility capability flag, falling back to classic GetRec only if
+ *    V20 itself returns no usable value -- CONFIRMED GetAbility's own
+ *    scheduleVersion field doesn't reliably predict which generation a
+ *    given NVR actually needs. scheduleEnable is a TOP-LEVEL field on Rec
+ *    (sibling to "schedule"), NOT nested inside schedule.enable -- source:
+ *    reading reolink_aio's (Home Assistant's Reolink integration library)
+ *    actual set_recording() implementation, confirmed against real raw
+ *    schedule dumps. Every key already present in the device's OWN
+ *    returned schedule.table gets set, rather than assuming a specific key
+ *    name like "TIMING" -- real hardware showed this can't be assumed.
+ *  - Ordering: the master enable call must fire AFTER every per-channel
+ *    schedule write, not before -- CONFIRMED writing a per-channel
+ *    schedule silently re-flips the master enable flag back on as a side
+ *    effect, so sending master-enable=0 before per-channel writes gets
+ *    undone by them. A ~300ms pause between per-channel writes
+ *    (REC_CHANNEL_SETTLE_MS) is also required -- back-to-back writes
+ *    closer together than that produced intermittent per-channel misses
+ *    on real hardware (6 WiFi floodlight channels).
+ *  - Preset button numbers (componentBridgeButtonPushed(),
+ *    getOrAssignButtonNumber()/retireButtonNumber()) are assigned once per
+ *    preset, permanently, from a per-source counter that never resets or
+ *    reuses a retired number -- deliberately avoids a positional/numbered-
+ *    button scheme's fragility: a deleted preset's old Rule Machine
+ *    trigger just goes inert instead of ever silently firing whatever
+ *    different preset happens to reuse its old number.
+ *  - The Recording Presets page's default UI is a plain-language picker
+ *    (Continuous / "Never record" / a daily time range / don't manage)
+ *    that generates the 168-char string automatically; an opt-in
+ *    "Advanced" toggle reveals the raw string field for a schedule the
+ *    simple picker can't express. "Don't manage" leaves whatever schedule
+ *    already exists untouched; "Never record" actively writes an all-zero
+ *    schedule -- a real distinction the reporting user's own workaround
+ *    surfaced during development.
+ *  - checkRecordingSchedule() is a read-only diagnostic (Camera/Doorbell
+ *    drivers and their bridge/standalone passthroughs) that reads and logs
+ *    a channel's current schedule without writing anything -- useful for
+ *    confirming a channel's schedule shape before defining a preset
+ *    against it.
+ *  - Two earlier designs were built, tested, and fully abandoned during
+ *    development in favor of the above: a cache-and-restore recording
+ *    toggle (replayed a schedule snapshot from the first time it was ever
+ *    used, which went stale the moment a real custom schedule was set
+ *    later), and a set of separate virtual child devices for the master
+ *    switch/preset buttons (replaced by adding Switch/PushableButton
+ *    capabilities directly to the bridge itself, since exactly one bridge
+ *    already exists per source). Neither exists in the code anymore.
+ *  - Two confirmed Hubitat/Rule Machine platform quirks worth remembering
+ *    for future driver work: (1) a bridge command declared with
+ *    description-only metadata (no real argument) renders fine on that
+ *    device's own Commands tab, but Rule Machine's Custom Action treats it
+ *    as a real argument slot and passes through whatever's typed -- a risk
+ *    for any genuinely zero-argument command (on()/off()/
+ *    loadSelectedPreset() are declared bare for this reason; see
+ *    ReolinkDeviceBridge.groovy). (2) Rule Machine hands a NUMBER-type
+ *    command argument to a method as BigDecimal, not Integer, and Groovy
+ *    does not auto-coerce between them in that call context -- push(btn)
+ *    takes BigDecimal accordingly.
  *
  * v1.4.2 -- HOTFIX: Camera/Doorbell driver preferences used bare
  * paragraph("text") calls, which is App-DSL-only and doesn't compile on a
@@ -108,23 +163,62 @@
  *     Different failure modes, same conclusion: battery-class devices need
  *     a Home Hub or NVR.
  *
- * v1.3.9 -- real-world use behind a 23-channel NVR: fixed the discovery-time
- * battery probe marking a whole source falsely "unreachable" on the expected
- * failure of a wired camera; fixed Check Battery succeeding but the
- * attribute never updating (nested vs. flat field read); added a Full-tier
- * keepalive heartbeat log; reverted an unconfirmed Login field after a real
- * rspCode:-7 rejection; fixed ensureSourceBridge() crashing the whole app
- * page on an orphaned-device DNI collision; added explicit uninstalled()
- * teardown instead of relying solely on Hubitat's cascade-delete.
+ * v1.3.9 -- real-world use behind a 23-channel NVR:
+ *  1. The discovery-time battery probe (guessIsBattery()) was marking a
+ *     whole source "unreachable" on the EXPECTED failure of a wired camera
+ *     (~half of all cameras) -- doReolinkApiCall() now takes a `quiet` flag
+ *     so a probe failure logs at Full tier only, no source-health impact.
+ *  2. Check Battery could succeed but the attribute never updated --
+ *     receiveBatteryInfo() was reading batteryPercent flat instead of
+ *     nested under Battery.batteryPercent (the confirmed reolink_aio
+ *     field). Now checks nested first.
+ *  3. Bridge keepalive (25s) now logs a Full-tier heartbeat so a quiet-but-
+ *     healthy event connection doesn't look identical to a silently stuck
+ *     one, throttled to once per connection.
+ *  4. Reverted Login's "action: 0" field (added 1.3.8, never confirmed for
+ *     Login specifically) after a real rspCode:-7 login rejection --
+ *     disproven as the cause (recurred without the field too) but reverted
+ *     anyway since unconfirmed; every other command's action:0 is
+ *     unaffected and separately confirmed.
+ *  5. ensureSourceBridge() could throw a raw DuplicateDNIException and
+ *     crash the whole app page if an orphaned device shared its bridge's
+ *     DNI -- now caught, logs the DNI to search/delete, returns null
+ *     gracefully.
+ *  6. Added explicit uninstalled() walking removeSource() for every source
+ *     instead of relying solely on Hubitat's automatic cascade-delete --
+ *     likely root cause of the orphaned-bridge DNI collision in #5, since
+ *     the 1.3.8 bridge restructuring made the device tree 2-3 levels deep.
  *
- * v1.3.8 -- real-time event-driven updates (persistent per-source
- * connection, polling fallback, per-source toggle); PIR enable/disable for
- * cameras; fixed a login bug masking real auth failures; fixed Login missing
- * the "action" field every other command sends; bridge logging routed
- * through the app's Log level instead of bypassing it; standalone sources
- * nested under a shared "Reolink Standalone Devices" group device.
+ * v1.3.8:
+ *  1. Real-time event-driven updates -- persistent per-source connection,
+ *     falls back to polling automatically on drop/failure, resumes event
+ *     mode silently on reconnect. Per-source toggle, defaults on.
+ *  2. PIR enable/disable for cameras (pirOn/pirOff, pirEnabled attribute),
+ *     doorbells unaffected.
+ *  3. Fixed a login bug where "new token acquired" logged even without a
+ *     usable Token.name (masking real auth failures) -- success now only
+ *     logs on a real token; failure logs the raw response.
+ *  4. Fixed Login missing the "action" field every other command sends.
+ *  5. Magic-header resync logging stays at debug tier (confirmed benign,
+ *     self-recovering Hub-side noise via soak testing); still warns after
+ *     20 failed resync attempts or a genuinely unrecognized message type.
+ *  6. Bridge device previously logged directly via log.info/log.debug,
+ *     bypassing the app's Log level entirely -- now routed through
+ *     logNormal()/logFull() like the rest of the app.
+ *  7. Standalone (non-Hub) cameras/doorbells now nest under a shared
+ *     "Reolink Standalone Devices" entry instead of each bridge appearing
+ *     separately -- matching how NVR/Hub channels already group. Each
+ *     standalone camera still holds its own independent event connection
+ *     (rawSocket is one-connection-per-driver-instance); only the nesting
+ *     changed.
  *
- * Full history prior to 1.3.8 is in GitHub commit history.
+ * v1.3.6 -- discoverPage() fixes: unchecking an existing single-channel
+ * device to remove it never actually fired (only checking-on did) -- now
+ * fires either direction. Multi-channel apply-toggle relabeled for clarity;
+ * each row now says Existing/New Device. Danger-zone wording clarified.
+ * Hub/NVR channel type detection now uses the channel's own name (API
+ * returns no model field), fixing a mislabeled doorbell. Added a note about
+ * removing devices from this page, not Hubitat's Devices page.
  */
 
 import groovy.transform.Field
@@ -143,7 +237,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.4.5"
+@Field static final String APP_VERSION = "1.5.0"
 
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 
@@ -160,10 +254,70 @@ definition(
 // Always use this constant for the event socket, never src.port.
 @Field static final Integer BAICHUAN_PORT = 9000
 
+// Pause between per-channel recording-schedule writes in
+// componentLoadPreset()'s loop -- see the top-of-file v1.5.0 note for why.
+// Not user-configurable; adjust here if 300ms proves too short/long in
+// practice.
+@Field static final int REC_CHANNEL_SETTLE_MS = 300
+
+// A recording preset's per-channel schedule string is exactly 168
+// characters: 24 hours x 7 days, one digit per hour (Sunday 12am first),
+// 1 = record, 0 = don't. Used to validate presetsPage() input.
+@Field static final int REC_SCHEDULE_LENGTH = 168
+
+// Plain-language hour labels for the simple time-range picker (index 0 =
+// 12:00 AM ... index 23 = 11:00 PM) -- REC_HOUR_LABELS[h] is what's shown
+// in the dropdown, indexOf(label) converts a selection back to an hour
+// number for buildRangeBitstring().
+@Field static final List<String> REC_HOUR_LABELS = [
+    "12:00 AM", "1:00 AM", "2:00 AM", "3:00 AM", "4:00 AM", "5:00 AM",
+    "6:00 AM", "7:00 AM", "8:00 AM", "9:00 AM", "10:00 AM", "11:00 AM",
+    "12:00 PM", "1:00 PM", "2:00 PM", "3:00 PM", "4:00 PM", "5:00 PM",
+    "6:00 PM", "7:00 PM", "8:00 PM", "9:00 PM", "10:00 PM", "11:00 PM"
+]
+
+// Four choices in the simple per-channel picker. Used as both the enum
+// option text AND the internal mode marker, so there's no separate mapping
+// to keep in sync.
+@Field static final String REC_MODE_OFF = "Don't manage (leave to Reolink app)"
+@Field static final String REC_MODE_NEVER = "Never record"
+@Field static final String REC_MODE_CONTINUOUS = "Continuous (24/7)"
+@Field static final String REC_MODE_RANGE = "Time range each day"
+
+/** All-1s, 168 characters -- the simple picker's "Continuous" choice. */
+private String buildContinuousBitstring() {
+    return "1" * REC_SCHEDULE_LENGTH
+}
+
+/** All-0s, 168 characters -- the simple picker's "Never record" choice. Distinct from REC_MODE_OFF: this actively writes a silent schedule, rather than leaving whatever schedule the channel already had untouched. */
+private String buildNeverBitstring() {
+    return "0" * REC_SCHEDULE_LENGTH
+}
+
+/**
+ * Builds a 168-char schedule string for "record from startHour to endHour,
+ * every day the same way." Handles an overnight window (e.g. 18 to 6)
+ * automatically -- the active hours simply wrap past midnight. Equal
+ * start/end is treated as an empty (all-zero) window rather than either
+ * "all day" or a single instant, since there's no unambiguous way to read
+ * "6 PM to 6 PM" otherwise; the picker's UI text calls this out.
+ */
+private String buildRangeBitstring(int startHour, int endHour) {
+    if (startHour == endHour) return "0" * REC_SCHEDULE_LENGTH
+    def dayBits = (0..23).collect { h ->
+        boolean active = (startHour < endHour) ?
+            (h >= startHour && h < endHour) :
+            (h >= startHour || h < endHour)
+        return active ? "1" : "0"
+    }.join()
+    return dayBits * 7
+}
+
 preferences {
     page(name: "mainPage")
     page(name: "addSourcePage")
     page(name: "discoverPage")
+    page(name: "presetsPage")
     page(name: "tipsPage")
 }
 
@@ -200,12 +354,21 @@ def mainPage() {
             paragraph pillHeader("Sources")
             paragraph "<b>A source is one camera, one NVR, or one Home Hub -- anything with its own IP/login.</b>"
             (state.sources ?: []).each { src ->
+                def deviceCount = childrenForSource(src.id).size()
+                def typeLine = src.isHub ?
+                    "<span style='color:#1565C0;font-weight:700;'>Hub/NVR · ${deviceCount} device(s)</span>" :
+                    "Standalone · ${deviceCount} device(s)"
                 href name: "src_${src.id}", title: "${src.label} (${src.host})",
-                    description: "${src.isHub ? 'Hub/NVR' : 'Standalone'} · ${childrenForSource(src.id).size()} device(s)",
+                    description: typeLine,
                     page: "discoverPage", params: [sourceId: src.id]
             }
-        }
-        section {
+            // Kept in the SAME section as the sources list above (rather
+            // than its own separate section) -- Hubitat's vertical gap
+            // between two sections is noticeably wider than the gap
+            // between two elements inside one section, so this tightens
+            // the visual space between the last source and "Add a source"
+            // without needing any custom CSS Hubitat's own page framework
+            // doesn't expose control over.
             href name: "addSource", title: "➕ Add a source...",
                 description: "Standalone camera, NVR, or Home Hub", page: "addSourcePage"
         }
@@ -219,11 +382,9 @@ def mainPage() {
             paragraph logLevelPill("Full") + " Everything, including every routine poll step. " +
                 "<b>Automatically reverts to Normal after 60 minutes.</b>"
         }
-        section {
-            href name: "tips", title: "Tips, limitations & what works so far", page: "tipsPage",
-                description: "Troubleshooting, known device quirks, and confirmed capabilities"
-        }
         section("<b>Help & Support</b>") {
+            href name: "tips", title: "<b>Tips & Troubleshooting</b>", page: "tipsPage",
+                description: "Known device quirks, setup gotchas, and confirmed capabilities"
             paragraph rawHtml: true, """
 <div style='padding:4px 0;'>
   <a href='https://community.hubitat.com/t/release-reolink-integration-cameras-doorbells-nvrs-home-hubs/165352' target='_blank'
@@ -270,196 +431,172 @@ private String logLevelPill(String level) {
 
 def tipsPage() {
     dynamicPage(name: "tipsPage", title: "Tips & Notes") {
+        // All topics merged into ONE section instead of one section per
+        // topic -- Hubitat's own gap between separate sections is wider
+        // than the gap between elements inside one, so this tightens the
+        // page overall. A thin divider paragraph between each topic keeps
+        // them visually distinct despite the tighter spacing, rather than
+        // relying on whitespace alone to separate them.
         section {
             paragraph pillHeader("What a source is")
-            paragraph "A source is one camera, one NVR, or one Home Hub -- anything with its own IP/login."
-            paragraph "A standalone camera always has one channel: 0."
-            paragraph "An NVR/Home Hub has one channel per paired camera. Run discovery to see what it finds."
-        }
-        section {
+            paragraph "A source is one camera, one NVR, or one Home Hub -- anything with its own IP/login. " +
+                "A standalone camera always has one channel: 0. An NVR/Home Hub has one channel per paired " +
+                "camera -- run discovery to see what it finds."
+            paragraph tipsDivider()
+
             paragraph pillHeader("Before adding any camera")
             paragraph "Check the camera's own Network > Advanced (or Server) settings and make sure HTTP, " +
-                "HTTPS, and ONVIF are enabled."
-            paragraph "These are often off by default on every model tested so far -- not just Reolink's E1 " +
-                "line. This is the single most common reason a source fails to connect, and it's worth " +
-                "checking before assuming a device needs a Hub/NVR or isn't supported."
-        }
-        section {
+                "HTTPS, and ONVIF are enabled. These are often off by default on every model tested so far -- " +
+                "not just Reolink's E1 line -- and this is the single most common reason a source fails to " +
+                "connect, before assuming a device needs a Hub/NVR or isn't supported."
+            paragraph tipsDivider()
+
             paragraph pillHeader("Why a device's ID number looks out of order")
-            paragraph "Each device's internal ID (visible in Hubitat's device list as part of its DNI, e.g. " +
-                "'reolink-4-0') is just a counter that only ever goes up. It never reuses a number, even after " +
-                "you delete a source and its device."
-            paragraph "So gaps in the numbering (4, 5, 8, 9 instead of 1, 2, 3, 4) just mean some source got " +
-                "removed and re-added at some point along the way -- normal, and nothing to fix. It doesn't " +
-                "affect how anything works."
-        }
-        section {
+            paragraph "Each device's internal ID (part of its DNI, e.g. 'reolink-4-0') only ever goes up, " +
+                "never reused. Gaps in the numbering just mean a source was removed and re-added at some " +
+                "point -- normal, and nothing to fix."
+            paragraph tipsDivider()
+
+            paragraph pillHeader("Deleting a device the wrong way (Hubitat's Devices page instead of this app)")
+            paragraph "Always remove a Camera/Doorbell from its source's Discover page (toggle it off + " +
+                "Apply), not Hubitat's own Devices page. Hubitat gives apps no way to be notified when a " +
+                "device is deleted directly from there, so deleting one outside this app leaves it thinking " +
+                "the device still exists."
+            paragraph "<b>What's handled automatically:</b> the next time you open that source's Discover " +
+                "page, it notices the device is actually gone, corrects the stuck-on checkbox back to " +
+                "off, and cleans up its poll/snapshot/battery-check scheduling entries for it. Not instant " +
+                "-- only self-heals on that next page view -- but it stops the stale state from sitting " +
+                "there indefinitely."
+            paragraph "⚠️ <b>What's NOT handled:</b> deleting a source's \"Reolink Device Bridge\" device " +
+                "itself this way, instead of using \"Remove this ENTIRE source\" below. The bridge holds " +
+                "the live event connection and is the real parent of every Camera/Doorbell under it -- " +
+                "Hubitat will likely cascade-delete those children along with it, but this app's own record " +
+                "of that source would still think it exists, with no bridge left to find. This case isn't " +
+                "specifically handled -- always remove a whole source via \"Remove this ENTIRE source,\" never " +
+                "by deleting its bridge device directly."
+            paragraph tipsDivider()
+
             paragraph pillHeader("Devices that won't work standalone")
             paragraph "⚠️ <b>Battery-class cameras/doorbells</b> (Argus line, Doorbell Battery, Gen 2 " +
-                "doorbells) -- as a rule, treat these as requiring a Home Hub or NVR. Add the Hub/NVR as the " +
-                "source instead, and the device shows up as one of its channels -- confirmed working well " +
-                "across a real multi-device battery fleet as of v1.4.1."
-            paragraph "It does NOT depend on how the device is powered. Even a battery-class device running " +
-                "continuously on a DC adapter (not just trickle-charging) is affected, because this is a " +
-                "firmware/network-stack limitation, not a charging-mode setting. \"Wired Power Mode\" in the " +
-                "Reolink app only changes charging behavior, never the network API."
-            paragraph "The exact failure mode varies by model, confirmed via two real, different units tested " +
-                "standalone (no Hub):"
-            paragraph "&nbsp;&nbsp;• <b>Argus 4 Pro</b> -- no local network API at ALL. Confirmed directly " +
-                "against real hardware: both the HTTP CGI API (port 443, what discovery/every poll uses) AND " +
-                "the separate Baichuan event-subscription port (9000, what real-time push events use) " +
-                "actively refuse the connection. There is nothing on this unit's own IP for this app -- or " +
-                "any local tool -- to talk to standalone, full stop."
-            paragraph "&nbsp;&nbsp;• <b>Doorbell 2K Gen 2</b> -- DOES have enough of a local API to pair and " +
-                "poll standalone (confirmed: shows up in the integration, GetDevInfo/HTTP works). The problem " +
-                "here is different: the device's own sleep/battery behavior makes real-time event delivery " +
-                "unreliable, so motion/AI state goes stale rather than never connecting at all."
-            paragraph "Bottom line either way: a battery-class device behind a Home Hub or NVR works " +
-                "reliably (the Hub does 100% of the actual network talking on the camera's behalf, so the " +
-                "camera's own local API story stops mattering entirely). Standalone is not supported for this " +
-                "device class, for one reason or the other depending on the specific model -- don't spend time " +
-                "chasing a standalone connection for any battery device before checking this section."
-            paragraph "⚠️ <b>E1, E1 Pro, and Lumus</b> -- Reolink's own docs on whether these support local " +
-                "HTTP/HTTPS are inconsistent, and don't fully agree with each other model to model."
-            paragraph "Don't rely on the model name to decide. <b>Check the camera's own Network > Advanced " +
-                "(or Server) settings</b> for HTTP/HTTPS/ONVIF toggles -- that tells you directly whether this " +
-                "specific unit can do it, regardless of what any doc claims for the line in general. That's " +
-                "exactly how a real E1 Pro here turned out to support HTTP fine, just off by default."
-            paragraph "Everything else -- PoE cameras, WiFi cameras outside the E1 line -- works standalone."
-        }
-        section {
+                "doorbells) -- treat these as requiring a Home Hub or NVR. Add the Hub/NVR as the source " +
+                "instead, and the device shows up as one of its channels. This does NOT depend on how the " +
+                "device is powered -- even one running continuously on a DC adapter is affected, since it's " +
+                "a firmware/network-stack limitation, not a charging-mode setting. Confirmed working well " +
+                "behind a Hub/NVR across a real multi-device battery fleet."
+            paragraph "⚠️ <b>E1, E1 Pro, and Lumus</b> -- Reolink's own docs on local HTTP/HTTPS support are " +
+                "inconsistent for this line. Don't rely on the model name -- check the camera's own Network > " +
+                "Advanced (or Server) settings for HTTP/HTTPS/ONVIF toggles directly. Everything else -- PoE " +
+                "cameras, WiFi cameras outside the E1 line -- works standalone."
+            paragraph tipsDivider()
+
             paragraph pillHeader("Poll interval")
-            paragraph "Wired devices can be polled tight: a few seconds is fine."
-            paragraph "Battery devices should be polled loose -- they only wake for their own events or an " +
-                "occasional self check-in, at most once an hour or so."
-            paragraph "Polling a battery device harder doesn't get fresher data -- it just drains the battery " +
-                "for no benefit."
-            paragraph "This still holds once a battery device is behind a Hub: you're asking the Hub for its " +
-                "last-known state, not the device directly. The device's own check-in cadence is still the " +
-                "real limit."
-            paragraph "When a source's event connection is active, its children are updated in real time and " +
-                "polling is skipped entirely for as long as that connection stays healthy -- polling only " +
-                "resumes automatically if the event connection drops."
-        }
-        section {
+            paragraph "Wired devices can be polled tight (a few seconds). Battery devices should stay loose " +
+                "-- they only wake for their own events or an occasional check-in, and polling harder doesn't " +
+                "get fresher data, it just drains the battery. This still holds behind a Hub, since you're " +
+                "asking the Hub for its last-known state, not the device directly."
+            paragraph "When a source's event connection is active/healthy, its children update in real time " +
+                "and polling is skipped entirely -- polling only resumes automatically if that connection drops."
+            paragraph tipsDivider()
+
+            paragraph pillHeader("\"Use event-driven updates\" toggle (on each source's Discover page)")
+            paragraph "On by default, and for almost every source there's nothing to do here -- a source " +
+                "that supports it gets real-time updates, and if the connection ever drops, it retries " +
+                "automatically (backing off over 10 attempts) before settling into plain polling on its own. " +
+                "No toggle needed for that case; it self-recovers."
+            paragraph "This toggle matters for ONE specific case: a source that structurally can't do event " +
+                "mode at all -- port 9000 blocked by a firewall, or older firmware that doesn't speak the " +
+                "event protocol. That source will still go through all 10 reconnect attempts (and their " +
+                "logging) every time the hub restarts or the app re-initializes, before eventually giving up " +
+                "and polling anyway. If you already know a source falls into this category, turning this off " +
+                "skips that runway entirely and goes straight to polling -- a convenience, not a different " +
+                "outcome, since it lands in the same place either way."
+            paragraph tipsDivider()
+
             paragraph pillHeader("Sleep status")
-            paragraph "<b>Awake</b> -- the last poll actually got a response."
-            paragraph "<b>Asleep</b> -- the last poll got no response at all."
-            paragraph "For a battery device, asleep is normal, not an error -- it just hasn't checked in since " +
-                "its last event or self-wake."
-            paragraph "⚠️ For a <b>wired/PoE device</b>, asleep is NOT normal -- it means a poll genuinely got " +
-                "no response, which points to a real connectivity or load issue worth investigating."
-            paragraph "Motion/person/vehicle/etc. keep their last-known value when this happens, rather than " +
-                "resetting to inactive."
-        }
-        section {
+            paragraph "<b>Awake</b> -- the last poll got a response. <b>Asleep</b> -- it didn't. For a " +
+                "battery device, asleep is normal, not an error. ⚠️ For a <b>wired/PoE device</b>, asleep is " +
+                "NOT normal -- it points to a real connectivity or load issue. Motion/person/vehicle/etc. " +
+                "keep their last-known value rather than resetting to inactive when this happens."
+            paragraph tipsDivider()
+
             paragraph pillHeader("Known older-firmware bug: false 'asleep' from garbled responses")
-            paragraph "⚠️ Some E1-series cameras on ~2021-era firmware (e.g. build 21120806, v3.0.0.748) have a " +
-                "known bug where the camera's web server intermittently returns corrupted/garbled data instead " +
-                "of a real response -- not encryption, not a real connectivity problem, just bad data back from " +
-                "the camera itself. This app can't tell that apart from a genuinely unreachable device, so it " +
-                "gets reported as <b>asleep</b> even though the camera is actually online and responding."
-            paragraph "How to tell: if a wired/PoE device keeps flipping to asleep with no real pattern, and Full " +
-                "logging shows parse errors on GetAiState/GetMdState rather than plain timeouts, this is likely " +
-                "it rather than an actual network issue."
-            paragraph "Confirmed via a 2021-firmware E1 Outdoor -- newer firmware (e.g. 2024-era, v3.1.0.3429) on " +
-                "the same camera line does not show this problem."
-            paragraph "Two things worth trying, in order: (1) In the Reolink app, turn off HTTP/HTTPS under this " +
-                "camera's Network settings, reboot the camera, then turn HTTP/HTTPS back on -- this reinitializes " +
-                "the camera's web server and can clear it up without a firmware change. (2) If that doesn't help, " +
-                "check for a firmware update for this exact camera/hardware version via the Reolink desktop app's " +
-                "Download Center, or contact Reolink support directly with your model and firmware version. When " +
-                "updating, avoid any 'reset configuration' option unless you actually want to reset the camera."
-        }
-        section {
+            paragraph "⚠️ Some E1-series cameras on ~2021-era firmware have a known bug where the camera's " +
+                "web server intermittently returns corrupted data instead of a real response -- not a " +
+                "connectivity problem, just bad data from the camera itself, reported as <b>asleep</b> even " +
+                "though it's online. Tell-tale sign: flips to asleep with no real pattern, and Full logging " +
+                "shows parse errors on GetAiState/GetMdState rather than plain timeouts. Newer firmware on " +
+                "the same camera line doesn't show this."
+            paragraph "Fix, in order: (1) In the Reolink app, toggle this camera's HTTP/HTTPS off then back " +
+                "on under Network settings and reboot it -- reinitializes the web server. (2) If that doesn't " +
+                "help, check for a firmware update via the Reolink desktop app's Download Center, or contact " +
+                "Reolink support with your model/firmware version. Avoid any 'reset configuration' option " +
+                "unless you actually want to reset the camera."
+            paragraph tipsDivider()
+
             paragraph pillHeader("PTZ")
-            paragraph "Reolink has no 'Home' command. The real equivalent is a saved preset."
-            paragraph "Use <b>savePresetHere</b> once (commonly preset ID 1) to save wherever the camera is " +
-                "currently pointed."
-            paragraph "Use <b>ptzGoToPreset</b> with that same ID any time you want it to return there."
-        }
-        section {
+            paragraph "Reolink has no 'Home' command -- the equivalent is a saved preset. Use " +
+                "<b>savePresetHere</b> once (commonly preset ID 1) to save wherever the camera is currently " +
+                "pointed, then <b>ptzGoToPreset</b> with that ID any time to return there."
+            paragraph tipsDivider()
+
             paragraph pillHeader("PTZ calibration")
-            paragraph "⚠️ <b>Only applies to PTZ-capable cameras</b> (e.g. Trackmix, E1 Zoom). Non-PTZ cameras " +
-                "will just return an error if you try it -- harmless, but there's nothing to calibrate."
-            paragraph "Use <b>calibratePtz</b> if preset recall starts drifting off target over time. Check " +
-                "progress with <b>checkPtzCalibrationStatus</b> -- Required means it hasn't been calibrated, " +
-                "Running means it's in progress (takes a few seconds), Done means it's ready."
-        }
-        section {
+            paragraph "⚠️ Only applies to PTZ-capable cameras (e.g. Trackmix, E1 Zoom) -- non-PTZ cameras " +
+                "just harmlessly error if you try it. Use <b>calibratePtz</b> if preset recall starts " +
+                "drifting off target over time; check progress with <b>checkPtzCalibrationStatus</b> " +
+                "(Required / Running / Done)."
+            paragraph tipsDivider()
+
             paragraph pillHeader("PIR (motion trigger) on/off -- cameras only")
-            paragraph "Use <b>pirOn</b>/<b>pirOff</b> to enable or disable a camera's PIR motion trigger " +
-                "without removing the device. This does NOT stop an in-progress recording -- it removes the " +
-                "trigger that would have woken a battery camera to record in the first place. If anything else " +
-                "on that camera is separately configured for continuous/scheduled recording outside PIR " +
-                "triggering, that recording is unaffected."
-            paragraph "Manual on/off only -- there's no auto-revert timer. For something like \"turn PIR off " +
-                "below battery threshold X and back on above threshold Y,\" build that with Rule Machine using " +
-                "the existing battery attribute; no extra plumbing is needed here."
-        }
-        section {
+            paragraph "Use <b>pirOn</b>/<b>pirOff</b> to enable or disable a camera's PIR trigger without " +
+                "removing the device. Does NOT stop an in-progress recording -- it removes the trigger that " +
+                "would have woken a battery camera to record. Manual only, no auto-revert timer -- build " +
+                "battery-threshold automation with Rule Machine using the existing battery attribute."
+            paragraph tipsDivider()
+
+            paragraph pillHeader("Recording presets (NVR/Hub master switch + per-channel schedules)")
+            paragraph "Two independent controls: the bridge device's own <b>On/Off switch</b> is the NVR's " +
+                "master switch (every channel at once -- no per-channel targeting, that's a hardware/API " +
+                "limitation). Loading a <b>preset</b> writes a named, per-channel schedule from the Recording " +
+                "Presets page. In practice: turn the master switch on once and leave it, then use presets to " +
+                "control what each channel actually records. A channel left as \"Don't manage\" in a preset " +
+                "is skipped -- its existing schedule stays untouched -- which is how to keep a battery-class " +
+                "channel out of a preset meant for wired ones. Every preset write is a fresh read-modify-write " +
+                "against the channel's current schedule, never a cached/restored snapshot."
+            paragraph "⚠️ <b>A preset's schedule covers continuous and AI/motion-triggered recording " +
+                "together, not separately.</b> Confirmed against real hardware: a channel has one time-table " +
+                "for continuous (\"TIMING\") and separate tables per AI type -- but a preset here sets all of " +
+                "them to the same hours. So \"Continuous 6pm-6am\" also limits AI-triggered clips to that same " +
+                "window. To get continuous-only-at-certain-hours while still catching AI events any time, use " +
+                "two presets (e.g. \"Daytime\"/\"Nighttime\") switched by a time-based Rule Machine schedule."
+            paragraph tipsDivider()
+
             paragraph pillHeader("Snapshot tiles on dashboards")
-            paragraph "Snapshot URLs point at a local relay endpoint on this app, not directly at the camera. " +
-                "The camera itself is only ever contacted on its own snapshot interval (device preference, " +
-                "separate from poll interval) -- the relay endpoint just serves whatever image was cached " +
-                "from that last fetch."
-            paragraph "That means a dashboard tile can refresh as often as you like, but the picture it shows " +
-                "only actually changes as often as that device's snapshot interval. A dashboard tile's own " +
-                "refresh setting has no effect on how often the image itself changes."
-            paragraph "Snapshot interval is intentionally kept separate from poll interval. Poll interval " +
-                "controls motion/AI state and should generally stay tight for responsive automations. " +
-                "Snapshot interval controls image freshness only, and can stay looser (default 30s) without " +
-                "affecting motion responsiveness at all."
-            paragraph "If a camera's tile feels slow to update, lower that device's snapshot interval (device " +
-                "page, or the setSnapshotInterval command) -- not the poll interval, and not the dashboard " +
-                "tile's own refresh setting."
-        }
-        section {
+            paragraph "Snapshot URLs point at a local relay endpoint on this app, not the camera directly -- " +
+                "the camera is only contacted on its own snapshot interval (separate from poll interval), and " +
+                "the relay just serves whatever's cached. A dashboard tile can refresh as often as you like, " +
+                "but the picture only actually changes as often as that device's snapshot interval -- the " +
+                "tile's own refresh setting doesn't matter. Poll interval should stay tight for responsive " +
+                "motion automations; snapshot interval only affects image freshness and can stay looser " +
+                "(default 30s). If a tile feels slow to update, lower the device's snapshot interval, not the " +
+                "poll interval."
+            paragraph tipsDivider()
+
             paragraph pillHeader("Log levels")
             paragraph logLevelPill("Errors Only") + " Default. Warnings and errors only."
-            paragraph logLevelPill("Normal") + " Errors, plus meaningful one-time events and changes: " +
-                "a fresh login, a device flipping asleep/awake, a device created, a config change. Routine " +
-                "polls that succeed with no change don't log anything."
+            paragraph logLevelPill("Normal") + " Errors, plus meaningful one-time events: logins, " +
+                "asleep/awake, devices created, config changes. Routine unchanged polls log nothing."
             paragraph logLevelPill("Full") + " Everything, including every routine poll step. " +
-                "<b>Automatically reverts to Normal after 60 minutes</b> so it doesn't stay noisy indefinitely."
-            paragraph "⚠️ It's normal for <b>Errors Only</b> and <b>Normal</b> to show nothing at all for " +
-                "long stretches -- that means nothing worth flagging has happened, not that the app has " +
-                "stopped working. If you want to confirm it's actually running, switch to <b>Full</b> " +
-                "temporarily and you'll see continuous poll activity."
-        }
-        section {
-            paragraph pillHeader("Supported Features (new in v1.3.0)")
-            paragraph "Every device now has a read-only <b>supportedFeatures</b> attribute, populated " +
-                "automatically at discovery time from the camera's own reported capabilities (Reolink's " +
-                "GetAbility API) -- e.g. \"PTZ, Spotlight, Night Vision, Person Detection, Vehicle Detection, " +
-                "Pet Detection\" for a full-featured PTZ camera with a light, or \"Night Vision, Status LED, " +
-                "Person Detection, Vehicle Detection, Package Detection\" for a doorbell with IR night vision " +
-                "and a button light but no true spotlight."
-            paragraph "⚠️ This is informational only -- it does NOT hide or disable any commands. Hubitat " +
-                "has no way to remove a command from an individual device instance, so every command still " +
-                "appears on every device regardless of what supportedFeatures says. Trying a command the " +
-                "device doesn't actually support (e.g. PTZ on a fixed camera) will just harmlessly error, " +
-                "same as before -- check supportedFeatures first to know what's actually worth trying."
-            paragraph "Use the <b>Check Abilities</b> command any time to refresh this -- useful after a " +
-                "firmware update that might add a capability, or for a device created before this feature " +
-                "existed."
-            paragraph "Package detection is doorbell-specific (cameras don't have it) and its exact field " +
-                "name is still being confirmed against real doorbell hardware -- it may not always show up " +
-                "correctly on every doorbell yet. Battery-status detection isn't part of this feature yet " +
-                "either (still relies on the existing wired/battery detection at discovery time, unrelated " +
-                "to supportedFeatures)."
-        }
-        section {
-            paragraph pillHeader("Confidence level on newer commands")
-            paragraph "<b>Confirmed working</b> against real hardware: PtzCtrl -- move, and ToPos (preset recall)."
-            paragraph "<b>Built but not yet tested</b> against this setup's actual firmware: SetPtzPreset " +
-                "(save), SetWhiteLed (spotlight), SetIrLights (night vision), AudioAlarmPlay (siren), " +
-                "GetBatteryInfo (battery %), PtzCheck/GetPtzCheckState (calibration), SetPirInfo (PIR on/off)."
-            paragraph "These are built from consistent patterns across several independent Reolink API " +
-                "references. If one doesn't work as expected, check Logs with the log level set to Full -- " +
-                "the exact response usually points to which field name needs adjusting for this device."
+                "<b>Automatically reverts to Normal after 60 minutes.</b>"
+            paragraph "⚠️ It's normal for Errors Only/Normal to show nothing for long stretches -- that means " +
+                "nothing worth flagging happened, not that the app stopped working. Switch to Full temporarily " +
+                "to confirm it's actually running."
         }
     }
+}
+
+/** Thin horizontal rule between Tips topics -- see tipsPage()'s note for why this replaced one-section-per-topic. */
+private String tipsDivider() {
+    return "<hr style='border:none;border-top:1px solid #ddd;margin:14px 0 10px 0;'>"
 }
 
 def addSourcePage(params) {
@@ -495,9 +632,6 @@ def addSourcePage(params) {
             input "newIsHub", "bool", title: "This is an NVR or Home Hub (multiple channels)", defaultValue: false
             paragraph "Fill in Label, IP address, Username, and Password, then tap Next to save. " +
                 "Leaving any of those blank just returns you to the Sources list without creating anything."
-            paragraph "<span style='color:#5F5E5A;font-size:12px;'>ℹ️ After tapping Next, especially for an " +
-                "NVR/Home Hub with several channels, it can take up to 30 seconds or so before the discover " +
-                "page finishes loading -- it's checking each channel individually. This is normal, not stuck.</span>"
         }
     }
 }
@@ -507,22 +641,22 @@ def discoverPage(params) {
     state.currentDiscoverySourceId = sourceId
     def src = getSource(sourceId)
 
-    // v1.3.9 FIX: this previously called ensureSourceBridge() unconditionally
-    // on EVERY page load, including the very first time this page is opened
-    // before any channel has ever been toggled on -- meaning just VIEWING
-    // the discover page created a real device and attempted a live socket
-    // connection, before the user had expressed any intent to add anything.
-    // Every read on this page (existing/new pill status, single-channel
-    // auto-apply check, connection status display) already handles a
-    // missing bridge safely via getSourceBridge()'s null-safe lookup, so
-    // nothing here actually needs the bridge to exist yet. It's created
-    // lazily now, at the moment real intent exists -- createSelectedChildren()
-    // already calls ensureSourceBridge() itself, right before creating the
-    // first camera/doorbell, which is the natural point for it to exist.
-    // This also meaningfully reduces exposure to orphaned-device risk: fewer
-    // needless bridge creations means less surface area for something to go
-    // wrong during a botched removal/reinstall (see uninstalled() above for
-    // the actual guarantee against that, which this doesn't replace).
+    // ensureSourceBridge() is NOT called unconditionally on every page load
+    // -- doing so would mean just VIEWING the discover page (before any
+    // channel has ever been toggled on) creates a real device and attempts
+    // a live socket connection, before the user has expressed any intent
+    // to add anything. Every read on this page (existing/new pill status,
+    // single-channel auto-apply check, connection status display) already
+    // handles a missing bridge safely via getSourceBridge()'s null-safe
+    // lookup, so nothing here actually needs the bridge to exist yet. It's
+    // created lazily instead, at the moment real intent exists --
+    // createSelectedChildren() already calls ensureSourceBridge() itself,
+    // right before creating the first camera/doorbell, which is the
+    // natural point for it to exist. This also meaningfully reduces
+    // exposure to orphaned-device risk: fewer needless bridge creations
+    // means less surface area for something to go wrong during a botched
+    // removal/reinstall (see uninstalled() below for the actual guarantee
+    // against that, which this doesn't replace).
 
     // Auto-run discovery the first time this source's Discover page is opened
     // (no cached results yet for this source), in addition to an explicit
@@ -543,11 +677,10 @@ def discoverPage(params) {
         app.updateSetting("confirmCreate", [type: "bool", value: false])
     }
 
-    // v1.3.6 FIX: this used to only fire when the checkbox was TRUE, which
-    // meant unchecking an EXISTING device to remove it never triggered
-    // anything. Now fires on EITHER direction: checking an absent device
-    // (create) or unchecking a present one (remove), by comparing the
-    // checkbox state against whether the device currently exists.
+    // Fires on EITHER direction of the per-channel checkbox: checking an
+    // absent device (create) or unchecking a present one (remove), by
+    // comparing the checkbox state against whether the device currently
+    // exists -- not just on checking-on.
     if (channelCount == 1 && src) {
         def ch = lastDiscovery[0]
         def dni = childDni(sourceId, ch.channel)
@@ -581,62 +714,116 @@ def discoverPage(params) {
                 paragraph "<span style='color:${statusColor};font-weight:700;font-size:12px;'>Status: ${connStatus}</span>"
             }
             section {
-                // v1.3.6: explicit warning added after a real-world case where a
+                // Explicit warning here after a real-world case where a
                 // device deleted from Hubitat's Devices page (instead of this
-                // page) left the app's own checkbox state stale.
+                // page) left the app's own checkbox state stale. Shortened
+                // to just point people to the recommended path and the
+                // fuller explanation, since the stuck-toggled-on part is
+                // now self-healing (see the "Deleting a device the wrong
+                // way" Tips topic for what's actually handled vs. still
+                // risky).
                 paragraph "<span style='display:inline-block;background:#FFEBEE;color:#C62828;font-weight:700;" +
                     "padding:2px 10px;border-radius:10px;font-size:11px;margin-right:6px;'>HEADS UP</span>" +
-                    "<b>Remove devices from THIS page, not Hubitat's Devices page.</b> Deleting there can " +
-                    "bring a device back on its own or leave it stuck toggled-on."
+                    "<b>Remove devices from THIS page, not Hubitat's Devices page</b> -- see the Tips page " +
+                    "for what happens either way."
                 href name: "runDiscovery", title: "Re-run discovery",
                     description: "Discovery already ran automatically when this page opened. Use this to " +
                         "refresh the channel list, e.g. after pairing a new camera to an NVR/Home Hub.",
                     page: "discoverPage", params: [sourceId: sourceId, run: true]
-                paragraph "<span style='color:#5F5E5A;font-size:12px;'>ℹ️ Discovery can take up to 30 " +
-                    "seconds or so on a brand-new source, especially one with several channels -- it's " +
-                    "checking each channel individually. This is normal, not stuck; already-added channels " +
-                    "re-discover much faster on future runs.</span>"
 
                 if (state.lastDiscoveryError) {
                     paragraph "⚠️ ${state.lastDiscoveryError}"
                 }
 
-                lastDiscovery.each { ch ->
+                // Collapsible -- on a source with many channels, this list
+                // was the single biggest chunk of the page, pushing
+                // everything below it well below the fold. Collapsed by
+                // default only once a source already has at least one
+                // device (nothing to hide on a brand-new source with zero
+                // channels added yet).
+                def anyExisting = channelCount > 0 && lastDiscovery.any { ch ->
                     def dni = childDni(sourceId, ch.channel)
-                    def bridgeForList = getSourceBridge(sourceId)
-                    def exists = bridgeForList?.getChildDevice(dni) != null
-                    def doorbellTag = ch.deviceType == "doorbell" ? " (Doorbell)" : ""
-                    input "create_${sourceId}_${ch.channel}", "bool",
-                        title: "Ch ${ch.channel}: ${ch.name}${doorbellTag}",
-                        defaultValue: exists, submitOnChange: true
-                    if (exists) {
-                        paragraph "<div style='margin:-8px 0 0 32px;border-left:3px solid #378ADD;" +
-                            "padding-left:10px;'><span style='display:inline-block;background:#B5D4F4;color:#042C53;" +
-                            "font-weight:500;font-size:11px;letter-spacing:0.3px;padding:2px 10px;" +
-                            "border-radius:20px;margin-right:6px;'>EXISTING DEVICE</span>" +
-                            "<span style='color:#5F5E5A;font-size:13px;'>Toggle off + apply to remove it</span></div>"
-                    } else {
-                        paragraph "<div style='margin:-8px 0 0 32px;border-left:3px solid #639922;" +
-                            "padding-left:10px;'><span style='display:inline-block;background:#C0DD97;color:#173404;" +
-                            "font-weight:500;font-size:11px;letter-spacing:0.3px;padding:2px 10px;" +
-                            "border-radius:20px;margin-right:6px;'>NEW DEVICE</span>" +
-                            "<span style='color:#5F5E5A;font-size:13px;'>Toggle on + apply to create it</span></div>"
-                    }
-                    paragraph "<div style='height:1px;background:#e0e0e0;margin:12px 0 12px 32px;'></div>"
+                    getSourceBridge(sourceId)?.getChildDevice(dni) != null
                 }
+                input "hideChannelList_${sourceId}", "bool",
+                    title: "Collapse the channel list below (just adds/removes devices -- collapse once you're done)",
+                    defaultValue: anyExisting, submitOnChange: true
+                def channelListHidden = settings["hideChannelList_${sourceId}"] ?: false
 
-                if (channelCount > 1) {
-                    paragraph rawHtml: true, """
-<div style='border:2px solid #185FA5;border-radius:8px;background:#E6F1FB;padding:10px 14px;margin-top:14px;'>
-  <div style='color:#042C53;font-weight:700;font-size:14px;'>Apply changes</div>
-  <div style='color:#0C447C;font-size:12px;margin-top:2px;'>Creates every device toggled on above and removes every device toggled off. Toggling a device by itself does not apply anything until you toggle this.</div>
-</div>
-"""
-                    input "confirmCreate", "bool", title: "Apply changes now",
-                        defaultValue: false, submitOnChange: true
-                } else if (channelCount == 1) {
-                    paragraph "Standalone source, one channel -- toggling it applies immediately (toggled on " +
-                        "creates it, toggled off removes it), no separate apply step needed."
+                if (!channelListHidden) {
+                    // A full-width paragraph after each toggle (an earlier
+                    // colored badge design) forces the next item to a new
+                    // row, which is what prevented the two-per-row
+                    // width:6 layout below from packing -- colored emoji
+                    // baked directly into the toggle's own title text
+                    // sidesteps that entirely (no separate element, so
+                    // nothing to force a row break) while still giving a
+                    // real color cue, since emoji render as actual color
+                    // regardless of whether Hubitat treats a title as
+                    // plain text or HTML.
+                    paragraph "<span style='color:#5F5E5A;font-size:12px;'>ℹ️ \uD83D\uDFE2 marks a channel " +
+                        "that already has a device (toggle off + apply to remove it); \uD83C\uDD95 marks one " +
+                        "that doesn't have a device yet (toggle on + apply to create it).<br><b>Toggling a " +
+                        "device by itself doesn't apply anything -- use \"Apply changes now\" below once " +
+                        "you're done toggling.</b></span>"
+                    lastDiscovery.each { ch ->
+                        def dni = childDni(sourceId, ch.channel)
+                        def bridgeForList = getSourceBridge(sourceId)
+                        def exists = bridgeForList?.getChildDevice(dni) != null
+                        // Self-healing check for the exact stale-toggle
+                        // trap the HEADS UP warning above exists to
+                        // prevent. Hubitat has no callback that notifies a
+                        // parent app when a child device is deleted
+                        // directly from the Devices page -- once a toggle
+                        // here is set to true, Hubitat remembers that
+                        // value permanently regardless of whether the
+                        // device still exists (defaultValue only applies
+                        // the FIRST time a setting is ever touched). So a
+                        // device deleted externally would otherwise show a
+                        // stuck 🟢 forever. This corrects it every time the
+                        // page loads: if the setting says "on" but the
+                        // device is actually gone, reset the setting back
+                        // to off so the checkbox and status tag reflect
+                        // reality instead of stale state. Not real-time --
+                        // only self-heals on the next page view -- but that
+                        // beats staying wrong indefinitely.
+                        def settingKey = "create_${sourceId}_${ch.channel}"
+                        if (!exists && settings[settingKey] == true) {
+                            app.updateSetting(settingKey, [type: "bool", value: false])
+                            // Matches what normal removal (uncheck + Apply)
+                            // already does via createSelectedChildren() --
+                            // without this, an externally-deleted device's
+                            // entries in nextPollDue/nextSnapshotDue/
+                            // nextBatteryCheckDue/lastEventBatteryCheck
+                            // would linger in state forever, since nothing
+                            // else would ever clear them for a device that
+                            // was never removed through the app's own path.
+                            forgetSchedulingState(dni)
+                        }
+                        def doorbellTag = ch.deviceType == "doorbell" ? " (Doorbell)" : ""
+                        def statusTag = exists ? " \uD83D\uDFE2" : " \uD83C\uDD95"
+                        input settingKey, "bool",
+                            title: "Ch ${ch.channel}: ${ch.name}${doorbellTag}${statusTag}",
+                            defaultValue: exists, submitOnChange: true, width: 6
+                    }
+
+                    if (channelCount > 1) {
+                        // A thin divider + a distinct icon/label (rather
+                        // than a plain "Ch N: Name"-shaped row) so this
+                        // doesn't visually blend into the channel toggles
+                        // directly above it -- easy to mistake for just
+                        // another device without some separation, since
+                        // it's the exact same input type.
+                        paragraph "<hr style='border:none;border-top:1px solid #ddd;margin:10px 0;'>"
+                        input "confirmCreate", "bool", title: "<b>✅ Apply changes now</b>",
+                            defaultValue: false, submitOnChange: true
+                    } else if (channelCount == 1) {
+                        paragraph "Standalone source, one channel -- toggling it applies immediately (toggled on " +
+                            "creates it, toggled off removes it), no separate apply step needed."
+                    }
+                } else {
+                    paragraph "<span style='color:#5F5E5A;font-size:12px;'>Channel list collapsed -- ${channelCount} " +
+                        "channel(s) found. Toggle the box above to expand it.</span>"
                 }
             }
             section {
@@ -645,6 +832,299 @@ def discoverPage(params) {
                     title: "Remove this ENTIRE source and ALL ${childrenForSource(sourceId as Integer).size()} of its device(s) -- unrelated to the toggles above",
                     defaultValue: false, submitOnChange: true
             }
+            // Recording Control is placed at the bottom of the page, below
+            // Danger Zone -- most people set an "Away"/"Present"-style
+            // preset once and never touch this again, so it shouldn't
+            // compete with the add/remove-devices workflow everyone
+            // actually uses every visit. Danger Zone stays last-but-one
+            // rather than last since it's specifically about the devices
+            // listed just above it; Recording Control is a separate,
+            // unrelated feature that belongs after it, not before.
+            if (src.isHub) {
+                section {
+                    paragraph pillHeader("Recording Control")
+                    paragraph "Set what each channel records and when -- a completely separate thing from " +
+                        "adding/removing devices above. Most people only need to visit this once or twice to " +
+                        "define \"Away\"/\"Present\"-style presets, then trigger them from Rule Machine going " +
+                        "forward."
+                    href name: "presetsFromDiscover", title: "Recording Presets",
+                        description: "Define what each channel records and when, and load it from Rule Machine",
+                        page: "presetsPage", params: [sourceId: sourceId]
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Define named, per-channel recording schedule presets for a source. Each
+ * preset is a Map of channel-number-string -> 168-char schedule string,
+ * stored in state.recPresets[sourceId][presetName]. A channel with no
+ * entry is left alone when the preset is loaded -- see componentLoadPreset()
+ * below. Presets are edited a whole preset at a time (every channel's field
+ * is on the page together, one "Save changes" toggle per preset) rather
+ * than saving field-by-field, since Hubitat's dynamicPage only submits/
+ * redraws on a submitOnChange input.
+ */
+def presetsPage(params) {
+    def sourceId = params?.sourceId ?: state.currentPresetsSourceId
+    state.currentPresetsSourceId = sourceId
+    def src = getSource(sourceId)
+    def channels = childrenForSource(sourceId as Integer)
+
+    if (newPresetName) {
+        def presetsAll = state.recPresets ?: [:]
+        def bySource = presetsAll[sourceId.toString()] ?: [:]
+        if (!bySource.containsKey(newPresetName)) {
+            bySource[newPresetName] = [:]
+            presetsAll[sourceId.toString()] = bySource
+            state.recPresets = presetsAll
+            logNormal "Reolink source ${sourceId}: created preset '${newPresetName}'"
+        }
+        app.removeSetting("newPresetName")
+    }
+
+    def presets = (state.recPresets ?: [:])[sourceId.toString()] ?: [:]
+
+    // Per-source, off by default -- reveals the original raw 168-char text
+    // field instead of the simple picker below. Read before the
+    // save-handling loop since saving branches on it.
+    def advancedMode = settings["advancedScheduleEditing_${sourceId}"] ?: false
+
+    // Handle any pending save/delete toggles for existing presets before
+    // rendering, same pattern as discoverPage()'s confirmCreate handling.
+    presets.keySet().toList().each { name ->
+        if (settings["savePreset_${name}"]) {
+            def updated = [:]
+            def simpleUpdated = [:]
+            channels.each { ch ->
+                def channelNum = ch.getDataValue("channel")
+                // A locked channel never gets an entry in this preset's
+                // saved data at all, regardless of whatever was stored
+                // here before it was locked -- without this, a channel
+                // locked AFTER already having a real schedule saved in
+                // this preset would keep that old value sitting in
+                // state.recPresets (invisible, since presetsPage() no
+                // longer renders a picker for it), even though
+                // componentLoadPreset() correctly refuses to ever write it.
+                // Enforcement was already safe without this; this just
+                // keeps the stored data itself honest.
+                if (ch.getSetting("excludeFromRecordingPresets") == true) return
+                if (advancedMode) {
+                    def val = settings["preset_${sourceId}_${name}_${channelNum}"]
+                    if (val) {
+                        if (val.length() == REC_SCHEDULE_LENGTH && val ==~ /[01]+/) {
+                            updated[channelNum] = val
+                        } else {
+                            log.warn "Reolink source ${sourceId}: preset '${name}' ch ${channelNum} schedule " +
+                                "invalid (need exactly ${REC_SCHEDULE_LENGTH} chars of 0/1, got ${val.length()}) -- not saved"
+                        }
+                    }
+                } else {
+                    def mode = settings["presetMode_${sourceId}_${name}_${channelNum}"] ?: REC_MODE_OFF
+                    if (mode == REC_MODE_CONTINUOUS) {
+                        updated[channelNum] = buildContinuousBitstring()
+                        simpleUpdated[channelNum] = [mode: REC_MODE_CONTINUOUS]
+                    } else if (mode == REC_MODE_NEVER) {
+                        updated[channelNum] = buildNeverBitstring()
+                        simpleUpdated[channelNum] = [mode: REC_MODE_NEVER]
+                    } else if (mode == REC_MODE_RANGE) {
+                        def startLabel = settings["presetStart_${sourceId}_${name}_${channelNum}"] ?: REC_HOUR_LABELS[18]
+                        def endLabel = settings["presetEnd_${sourceId}_${name}_${channelNum}"] ?: REC_HOUR_LABELS[6]
+                        def startHour = REC_HOUR_LABELS.indexOf(startLabel)
+                        def endHour = REC_HOUR_LABELS.indexOf(endLabel)
+                        updated[channelNum] = buildRangeBitstring(startHour, endHour)
+                        simpleUpdated[channelNum] = [mode: REC_MODE_RANGE, start: startHour, end: endHour]
+                    }
+                    // REC_MODE_OFF -- leave this channel out of `updated`
+                    // entirely, same as an old blank text field: skipped,
+                    // existing schedule untouched. Distinct from
+                    // REC_MODE_NEVER above, which actively WRITES an
+                    // all-zero schedule instead of leaving whatever was
+                    // there alone -- see that mode's own comment.
+                }
+            }
+            def presetsAll = state.recPresets ?: [:]
+            def bySource = presetsAll[sourceId.toString()] ?: [:]
+            bySource[name] = updated
+            presetsAll[sourceId.toString()] = bySource
+            state.recPresets = presetsAll
+
+            if (!advancedMode) {
+                // Remember the friendly picker choice itself (not just the
+                // bitstring it generated) so the page can show "6:00 PM to
+                // 6:00 AM" again next time, instead of trying to
+                // reverse-engineer a plain-English range back out of an
+                // arbitrary 168-char string.
+                def simpleAll = state.recPresetSimpleConfig ?: [:]
+                def simpleBySource = simpleAll[sourceId.toString()] ?: [:]
+                simpleBySource[name] = simpleUpdated
+                simpleAll[sourceId.toString()] = simpleBySource
+                state.recPresetSimpleConfig = simpleAll
+            }
+
+            app.updateSetting("savePreset_${name}", [type: "bool", value: false])
+            logNormal "Reolink source ${sourceId}: preset '${name}' saved (${updated.size()}/${channels.size()} channels set)"
+        }
+        if (settings["deletePreset_${name}"]) {
+            def presetsAll = state.recPresets ?: [:]
+            def bySource = presetsAll[sourceId.toString()] ?: [:]
+            bySource.remove(name)
+            presetsAll[sourceId.toString()] = bySource
+            state.recPresets = presetsAll
+            def simpleAll = state.recPresetSimpleConfig ?: [:]
+            def simpleBySource = simpleAll[sourceId.toString()] ?: [:]
+            simpleBySource.remove(name)
+            simpleAll[sourceId.toString()] = simpleBySource
+            state.recPresetSimpleConfig = simpleAll
+            app.removeSetting("deletePreset_${name}")
+            // Retire (don't reassign) this preset's button number -- see
+            // getOrAssignButtonNumber()/retireButtonNumber()'s comments
+            // for why the number must never come back into use.
+            retireButtonNumber(sourceId, name)
+            logNormal "Reolink source ${sourceId}: preset '${name}' deleted"
+        }
+    }
+
+    // Re-fetch after any save/delete above so the page renders current data.
+    presets = (state.recPresets ?: [:])[sourceId.toString()] ?: [:]
+
+    // Every ACTIVE preset gets a permanent button number if it doesn't have
+    // one yet -- idempotent, so this also backfills numbers for presets
+    // created before this feature existed, on the next time this page
+    // happens to render. The bridge's numberOfButtons attribute is kept at
+    // the highest number ever assigned (see getOrAssignButtonNumber()'s
+    // comment for why it never shrinks).
+    presets.keySet().each { name -> getOrAssignButtonNumber(sourceId, name) }
+    def bridgeForButtons = getSourceBridge(sourceId)
+    def highestButton = (state.recNextButtonNumber ?: [:])[sourceId.toString()] as Integer ?: 0
+    bridgeForButtons?.receiveNumberOfButtons(highestButton)
+
+    // Pushes a quick-reference summary (preset name + its permanent button
+    // number) to the bridge's own state, so it shows up in that device's
+    // State Variables panel without needing to open this app page at all.
+    // Recomputed and re-sent every time this page renders, so it can't go
+    // stale relative to what's actually saved.
+    def presetsSummaryText = presets.keySet().collect { name ->
+        def num = (state.recPresetButtonNumbers ?: [:])[sourceId.toString()]?.get(name)
+        num ? "${name} (Button ${num})" : name
+    }.join(", ")
+    bridgeForButtons?.receivePresetsSummary(presetsSummaryText ?: "(none defined yet)")
+
+    dynamicPage(name: "presetsPage", title: "Recording Presets - ${src?.label ?: ''}") {
+        section {
+            paragraph pillHeader("Rule Machine shortcuts")
+            paragraph "This source's bridge device (\"Reolink Device Bridge (${src?.label ?: ''})\") also " +
+                "exposes standard Switch and Button capabilities now, so both of these are available in Rule " +
+                "Machine's simple pickers -- no Custom Action needed:"
+            paragraph "&nbsp;&nbsp;• <b>Turn the bridge switch on/off</b> \u2192 the NVR's master record " +
+                "switch."
+            paragraph "&nbsp;&nbsp;• <b>Push the bridge's button N</b> \u2192 loads whichever preset is shown " +
+                "as \"Button N\" below."
+            paragraph "Each preset's button number is assigned once, permanently, and is never reused even " +
+                "if that preset is later deleted -- so a rule built around a button number stays pointed at " +
+                "the SAME preset for as long as it exists, and just does nothing (rather than firing a " +
+                "different preset) if that preset is ever removed."
+        }
+        section {
+            paragraph pillHeader("What this does")
+            paragraph "Each preset controls what a source's channels record, per channel: leave a channel " +
+                "alone (Reolink's own app stays in control of it), actively silence it, set it to continuous, " +
+                "or give it a daily time window (e.g. 6:00 PM to 6:00 AM every night). Loading a preset -- via " +
+                "the bridge device's \"Load Selected Preset\" command, its Push button, or Rule Machine -- " +
+                "applies whatever you've set here to the real NVR."
+            paragraph "<b>\"Don't manage\" is the default for every channel</b> -- a channel you never touch " +
+                "stays completely untouched by this preset, which is the recommended way to exclude a " +
+                "battery-class channel (e.g. a WiFi doorbell) from a preset meant for wired channels, or to " +
+                "just let Reolink's own app handle a channel entirely. <b>\"Never record\" is different</b> -- " +
+                "it actively writes a silent (all-zero) schedule to that channel, rather than leaving whatever " +
+                "was already there alone."
+            paragraph "This is separate from the NVR's master recording switch (the bridge device's own " +
+                "On/Off) -- that switch applies to every channel at once and has no per-channel targeting at " +
+                "the API level. The usual pattern is: turn the master switch on once and leave it on, then " +
+                "use presets to control what each channel actually records."
+            input "advancedScheduleEditing_${sourceId}", "bool",
+                title: "Advanced: edit raw per-hour schedule strings directly (power users only)",
+                defaultValue: false, submitOnChange: true
+            if (advancedMode) {
+                paragraph "<span style='display:inline-block;background:#FFF3E0;color:#E65100;font-weight:700;" +
+                    "padding:2px 10px;border-radius:10px;font-size:11px;margin-right:6px;'>WARNING</span>" +
+                    "You're editing raw 168-character schedule strings (one digit per hour of the week, " +
+                    "Sunday 12am first, 1=record/0=don't) instead of the simple picker. Almost nobody needs " +
+                    "this -- it exists only for a schedule the simple picker can't express, like different " +
+                    "hours on different days. A malformed string is rejected on save (exact length, only 0/1 " +
+                    "characters), but a well-formed WRONG string will be written to your NVR exactly as typed."
+            }
+        }
+        section {
+            paragraph pillHeader("Add a preset")
+            input "newPresetName", "text", title: "New preset name (e.g. 'Away', 'Present')", submitOnChange: true
+        }
+        presets.each { name, chMap ->
+            def btnNum = (state.recPresetButtonNumbers ?: [:])[sourceId.toString()]?.get(name)
+            section("Preset: ${name}${btnNum ? " (Button ${btnNum})" : ""}") {
+                if (advancedMode) {
+                    channels.each { ch ->
+                        def channelNum = ch.getDataValue("channel")
+                        // A locked channel gets no input at all -- rendering
+                        // a disabled-looking input that Hubitat's own
+                        // dynamicPage framework can't actually prevent
+                        // submission on would be worse than no input, since
+                        // it'd look interactive but silently do nothing. A
+                        // plain paragraph makes the lock visually
+                        // unmistakable and genuinely un-editable.
+                        if (ch.getSetting("excludeFromRecordingPresets") == true) {
+                            paragraph "🔒 <b>${ch.label ?: ch.name} (ch ${channelNum})</b> -- excluded from all " +
+                                "presets (locked on the device's own preferences page). This preset will never " +
+                                "write a schedule to it."
+                            return
+                        }
+                        def key = "preset_${sourceId}_${name}_${channelNum}"
+                        input key, "text", title: "${ch.label ?: ch.name} (ch ${channelNum})",
+                            defaultValue: chMap[channelNum] ?: ""
+                    }
+                } else {
+                    def simpleForPreset = (state.recPresetSimpleConfig ?: [:])[sourceId.toString()]?.get(name) ?: [:]
+                    channels.each { ch ->
+                        def channelNum = ch.getDataValue("channel")
+                        // Same lock check as the advanced branch above --
+                        // see that comment for why this is a paragraph,
+                        // not a disabled input.
+                        if (ch.getSetting("excludeFromRecordingPresets") == true) {
+                            paragraph "🔒 <b>${ch.label ?: ch.name} (ch ${channelNum})</b> -- excluded from all " +
+                                "presets (locked on the device's own preferences page). This preset will never " +
+                                "write a schedule to it."
+                            return
+                        }
+                        def simpleCfg = simpleForPreset[channelNum]
+                        def modeKey = "presetMode_${sourceId}_${name}_${channelNum}"
+                        def currentMode = settings[modeKey] ?: simpleCfg?.mode ?: REC_MODE_OFF
+                        input modeKey, "enum", title: "${ch.label ?: ch.name} (ch ${channelNum})",
+                            options: [REC_MODE_OFF, REC_MODE_NEVER, REC_MODE_CONTINUOUS, REC_MODE_RANGE],
+                            defaultValue: simpleCfg?.mode ?: REC_MODE_OFF, submitOnChange: true
+                        if (currentMode == REC_MODE_RANGE) {
+                            def defaultStart = simpleCfg?.start != null ? REC_HOUR_LABELS[simpleCfg.start as Integer] : REC_HOUR_LABELS[18]
+                            def defaultEnd = simpleCfg?.end != null ? REC_HOUR_LABELS[simpleCfg.end as Integer] : REC_HOUR_LABELS[6]
+                            input "presetStart_${sourceId}_${name}_${channelNum}", "enum",
+                                title: "&nbsp;&nbsp;&nbsp;&nbsp;Start recording at",
+                                options: REC_HOUR_LABELS, defaultValue: defaultStart, submitOnChange: true
+                            input "presetEnd_${sourceId}_${name}_${channelNum}", "enum",
+                                title: "&nbsp;&nbsp;&nbsp;&nbsp;Stop recording at",
+                                options: REC_HOUR_LABELS, defaultValue: defaultEnd, submitOnChange: true
+                            paragraph "<span style='color:#5F5E5A;font-size:12px;margin-left:16px;'>ℹ️ Same " +
+                                "window every day. An end time earlier than the start time (e.g. 6:00 PM to " +
+                                "6:00 AM) is treated as overnight, wrapping past midnight.</span>"
+                        }
+                    }
+                }
+                input "savePreset_${name}", "bool", title: "Save changes to '${name}'",
+                    defaultValue: false, submitOnChange: true
+                input "deletePreset_${name}", "bool", title: "Delete preset '${name}'",
+                    defaultValue: false, submitOnChange: true
+            }
+        }
+        section {
+            href name: "backToDiscoverFromPresets", title: "« Back", page: "discoverPage", params: [sourceId: sourceId]
         }
     }
 }
@@ -754,6 +1234,14 @@ def removeSource(id) {
     state.sources.removeAll { it.id == (id as Integer) }
     state.sourceUnreachable?.remove(id.toString())
     state.sourceConnMode?.remove(id.toString())
+    // Clean up any presets defined for this source too, so state doesn't
+    // accumulate dead entries forever.
+    state.recPresets?.remove(id.toString())
+    // Same cleanup for button-number bookkeeping.
+    state.recPresetButtonNumbers?.remove(id.toString())
+    state.recNextButtonNumber?.remove(id.toString())
+    // Same cleanup for the simple picker's remembered choices.
+    state.recPresetSimpleConfig?.remove(id.toString())
     logNormal "Removed source ${id}"
 }
 
@@ -775,19 +1263,18 @@ private String reolinkLogin(sourceId) {
     }
 
     logFull "Reolink source ${sourceId}: cached token missing/expired, logging in fresh"
-    // v1.3.9 REVERT (2026-08-17): the "action: 0" field added here in 1.3.8
-    // was NEVER actually confirmed against real hardware for Login
-    // specifically -- it was added purely by inference/symmetry with every
-    // OTHER command, which all genuinely do send action:0 and have since
-    // been independently confirmed working across 5+ real devices. Login
-    // never got that same confirmation. Real-world reports on 2026-08-17
-    // (multiple sources, confirmed-correct credentials, a hard rspCode:-7
-    // "login failed" rejection -- not a timeout, not a parsing gap, an
-    // explicit reject) match exactly what you'd expect if some Reolink
-    // firmware is stricter about an unexpected field on Login than this app
-    // assumed. Reverted to the pre-1.3.8 body (no action field) as the
-    // prime regression suspect -- every OTHER command keeps action:0
-    // unchanged, since those are separately confirmed and unrelated.
+    // The "action: 0" field some other commands send was never confirmed
+    // against real hardware for Login specifically -- it was added purely
+    // by inference/symmetry with every OTHER command, which all genuinely
+    // do send action:0 and have since been independently confirmed working
+    // across 5+ real devices. Login never got that same confirmation, and a
+    // real-world rspCode:-7 "login failed" rejection on multiple sources
+    // (confirmed-correct credentials, a hard reject, not a timeout) matched
+    // exactly what you'd expect if some Reolink firmware is stricter about
+    // an unexpected field on Login than assumed. Reverted to the body with
+    // no action field as the prime regression suspect -- every OTHER
+    // command keeps action:0 unchanged, since those are separately
+    // confirmed and unrelated.
     def body = [[cmd: "Login", param: [User: [userName: src.username, password: src.password]]]]
     def resp = reolinkRawPost(src, body)
     if (resp == null) {
@@ -804,14 +1291,12 @@ private String reolinkLogin(sourceId) {
     src.token = token
     src.tokenExpires = now() + (leaseSec * 1000L) - 30000L
 
-    // v1.3.8 FIX: this success log previously fired unconditionally, as soon
-    // as the response parsed at all -- so a Login response that came back
-    // WITHOUT a usable Token.name (bad credentials, or an unexpected shape
-    // on some firmware) still logged "new token acquired" every time,
-    // masking the real failure and making every following "no token
-    // available" abort look inexplicable. Now only logs success when a real
-    // token came back; otherwise logs the raw response so the actual field
-    // shape/error is visible.
+    // This success log only fires when a real token actually came back --
+    // logging "new token acquired" on any parsed response, even one
+    // without a usable Token.name (bad credentials, or an unexpected shape
+    // on some firmware), used to mask the real failure and make every
+    // following "no token available" abort look inexplicable. Failure logs
+    // the raw response so the actual field shape/error is visible.
     if (token) {
         logNormal "Reolink source ${sourceId}: new token acquired, leaseTime=${leaseSec}s"
         markSourceReachable(sourceId)
@@ -947,7 +1432,14 @@ private Map doReolinkApiCall(src, sourceId, String cmd, String token, Map param,
         if (value == null) {
             logFull "Reolink source ${sourceId}: ${cmd} (ch ${channel}) HTTP ok but no usable value -- raw: ${result?.toString()?.take(300)}"
         } else {
-            logFull "Reolink source ${sourceId}: ${cmd} (ch ${channel}) succeeded"
+            // Includes the actual returned value at Full tier, not just
+            // "succeeded" -- useful for diagnosing a real question like
+            // "does GetAiState's raw response change at all when the
+            // doorbell button is pressed, and under what field name."
+            // Full tier already means "everything, very verbose" by its
+            // own definition, so including the raw value here doesn't
+            // change what tier this belongs at, just what's visible in it.
+            logFull "Reolink source ${sourceId}: ${cmd} (ch ${channel}) succeeded -- raw: ${value?.toString()?.take(300)}"
         }
         markSourceReachable(sourceId)
         return [value: value, rspCode: rspCode, parseFailure: false]
@@ -1044,29 +1536,26 @@ private String guessChannelDeviceType(ch) {
  * and on some wired firmware, "nothing usable" is an outright timeout
  * rather than a clean unsupported-command response.
  *
- * FIXED (2026-08-17): a real PoE camera timing out on this specific probe
- * was marking its whole SOURCE unreachable (markSourceUnreachable() is a
- * per-source flag, not per-command), which then immediately flipped back to
- * "connection restored" on the very next unrelated successful call -- noisy
- * and misleading, since every other command for that source was working
- * fine the whole time. This probe is EXPECTED to fail for roughly half of
- * all cameras (any wired one) -- that's not a source-health signal, it's
- * routine. Calls doReolinkApiCall() directly with quiet=true instead of
- * going through the public reolinkApiCall() wrapper, so a failure here logs
- * at Full tier only and never touches source-reachable state.
+ * This probe is EXPECTED to fail for roughly half of all cameras (any
+ * wired one) -- that's not a source-health signal, it's routine. Calls
+ * doReolinkApiCall() directly with quiet=true instead of going through the
+ * public reolinkApiCall() wrapper, so a failure here logs at Full tier
+ * only and never touches source-reachable state (a real PoE camera timing
+ * out on this specific probe was previously marking its whole SOURCE
+ * unreachable, then immediately flipping back to "connection restored" on
+ * the very next unrelated successful call -- noisy and misleading, since
+ * every other command for that source was working fine the whole time).
  *
- * FIXED (2026-08-17, same day): also passes a short 3s timeout instead of
- * the normal 10s. discoverChannels() calls this once per NEW channel,
- * sequentially, synchronously, within a single page render -- on a large
- * Hub/NVR's FIRST-EVER discovery (every channel is "new" at once), a wired
- * channel timing out here is the expected, common case, not rare. At 10s
- * each, a 24-channel Hub with many wired cameras could block for minutes
- * inside one page load, plausibly exceeding Hubitat's own execution-time
- * limit and crashing the whole page ("Unexpected Error") -- confirmed
- * plausible against real logs showing frequent "Read timed out" on this
- * exact probe for this exact Hub. A slow rejection and a fast one mean the
- * same thing here (not battery), so shortening the timeout loses no real
- * information while cutting worst-case blocking time roughly 3x.
+ * Also passes a short 3s timeout instead of the normal 10s -- this is
+ * called once per NEW channel, sequentially, synchronously, within a
+ * single page render, and on a large Hub/NVR's FIRST-EVER discovery
+ * (every channel is "new" at once), a wired channel timing out here is
+ * the expected, common case, not rare. At 10s each, a 24-channel Hub with
+ * many wired cameras could block for minutes inside one page load,
+ * plausibly exceeding Hubitat's own execution-time limit and crashing the
+ * whole page ("Unexpected Error"). A slow rejection and a fast one mean
+ * the same thing here (not battery), so shortening the timeout loses no
+ * real information while cutting worst-case blocking time roughly 3x.
  */
 private Boolean guessIsBattery(sourceId, channel) {
     def src = getSource(sourceId)
@@ -1118,16 +1607,12 @@ private int abilityPermit(Map abilityChn, String key) {
  * 8+ cameras / 6+ models / firmware 2021-2024, cross-checked against
  * Reolink's own officially-backed reolink_aio library:
  *   - PTZ: ptzType > 0 (checked via abilityPermit()'s existing max(permit,
- *     ver) logic). CORRECTED 2026-08-14: previously keyed off ptzCtrl > 0,
- *     which turned out to report whether ANY PTZ-style command channel
- *     exists (apparently including basic digital zoom on some fixed
- *     cameras), not actual pan-tilt hardware -- confirmed via a real
- *     RLC-1240A (no physical PTZ) showing ptzCtrl permit:7, ver:64, both
- *     nonzero, a false positive. ptzType correctly read permit:0, ver:0 on
- *     that same camera. The E1 Pro's documented ptzType values (permit:0,
- *     ver nonzero) are exactly the case abilityPermit()'s check-both logic
- *     was built for, so switching to ptzType keeps the E1 Pro correctly
- *     detected while fixing the RLC-1240A false positive.
+ *     ver) logic) -- confirmed via a real RLC-1240A (no physical PTZ)
+ *     showing ptzType permit:0/ver:0 while ptzCtrl (a false-positive signal
+ *     that reports any PTZ-style command channel, including basic digital
+ *     zoom on some fixed cameras) showed nonzero on both. The E1 Pro's
+ *     documented ptzType values (permit:0, ver nonzero) are exactly the
+ *     case abilityPermit()'s check-both logic is built for.
  *   - PTZ Calibration: supportPtzCheck > 0 OR supportPtzCalibration > 0.
  *   - Spotlight: supportFLswitch > 0 OR floodLight > 0 (camera-only).
  *   - Night Vision (IR): ledControl > 0.
@@ -1179,13 +1664,13 @@ private String childDni(sourceId, channel) {
  * safe to call on every page load or initialize().
  *
  * A Hub/NVR source's bridge is created as a direct child of the app, same
- * as always. A standalone source's bridge is instead created as a child of
- * the shared "Reolink Standalone Devices" group device (lazily created on
- * first use) -- since each standalone camera still needs its own
- * independent event connection (Hubitat's rawSocket interface is one-
- * connection-per-driver-instance, so that part can't be shared), but
- * nesting them all under one shared parent avoids N separate unnested
- * bridges cluttering the Devices list the way they would otherwise.
+ * as always. A standalone source's bridge instead lives under the shared
+ * "Reolink Standalone Devices" group device (lazily created on first use)
+ * -- since each standalone camera still needs its own independent event
+ * connection (Hubitat's rawSocket interface is one-connection-per-driver-
+ * instance, so that part can't be shared), but nesting them all under one
+ * shared parent avoids N separate unnested bridges cluttering the Devices
+ * list the way they would otherwise.
  */
 def ensureSourceBridge(sourceId) {
     def src = getSource(sourceId)
@@ -1206,22 +1691,19 @@ def ensureSourceBridge(sourceId) {
             }
             logNormal "Reolink source ${sourceId}: bridge device created"
         } catch (com.hubitat.device.exception.DuplicateDNIException e) {
-            // FIXED (2026-08-17): Hubitat enforces device network IDs as
-            // GLOBALLY unique across the ENTIRE hub, not just unique among
-            // one parent's children -- but getSourceBridge() above only
-            // checks the two places a bridge is supposed to live (direct
-            // app child, or under the standalone group device). If a device
-            // with this exact DNI exists ANYWHERE else on the hub (most
-            // likely an orphan left behind by a partial removal, a stale
-            // HPM-vs-manual driver mismatch, or an interrupted
-            // reinstall/wipe), that lookup finds nothing, concludes no
-            // bridge exists, tries to create one, and Hubitat rejects it --
-            // which previously crashed the ENTIRE page render with a bare
-            // "Unexpected Error," giving no indication what actually went
-            // wrong or how to fix it. Now fails loudly but safely instead:
-            // logs a clear, actionable warning and returns null so the
-            // caller can handle a missing bridge gracefully rather than the
-            // whole page throwing.
+            // Hubitat enforces device network IDs as GLOBALLY unique across
+            // the ENTIRE hub, not just unique among one parent's children --
+            // but getSourceBridge() above only checks the two places a
+            // bridge is supposed to live (direct app child, or under the
+            // standalone group device). If a device with this exact DNI
+            // exists ANYWHERE else on the hub (most likely an orphan left
+            // behind by a partial removal, a stale HPM-vs-manual driver
+            // mismatch, or an interrupted reinstall/wipe), that lookup
+            // finds nothing, concludes no bridge exists, tries to create
+            // one, and Hubitat rejects it. Caught here rather than crashing
+            // the whole page render with a bare "Unexpected Error": logs a
+            // clear, actionable warning and returns null so the caller can
+            // handle a missing bridge gracefully.
             log.warn "Reolink source ${sourceId}: a device with DNI '${dni}' already exists somewhere on " +
                 "this hub but isn't reachable as this source's bridge -- likely an orphaned device from an " +
                 "earlier partial removal or reinstall. Search your full Devices list for Device Network Id " +
@@ -1290,19 +1772,19 @@ def componentEventChannelUpdate(child, sourceId, channelId, String status, Strin
 }
 
 /**
- * NEW (2026-08-19): a battery-mode device only ever answers GetBatteryInfo
- * (or anything else) when it's genuinely awake -- that's the whole reason
+ * A battery-mode device only ever answers GetBatteryInfo (or anything else)
+ * when it's genuinely awake -- that's the whole reason
  * batteryCheckIntervalHours exists on a long, conservative interval, so the
- * periodic scheduler doesn't waste battery forcing a wake just to ask.
- * But a REAL event push (this method's caller) means the device is ALREADY
+ * periodic scheduler doesn't waste battery forcing a wake just to ask. But
+ * a REAL event push (this method's caller) means the device is ALREADY
  * awake and already talking to us right now, for a completely unrelated
  * reason -- piggybacking a battery/charging check onto that costs
  * essentially nothing extra, unlike the scheduler's own artificial checks.
- * Not doing this was a real gap: chargingStatus (see CameraDriver.groovy)
- * could only ever update on the next scheduled check (up to
- * batteryCheckIntervalHours away, default 12h) or a manual Check Battery
- * run, even though the device may have been awake and reachable dozens of
- * times in between via real motion/AI events.
+ * Without this, chargingStatus (see CameraDriver.groovy) could only ever
+ * update on the next scheduled check (up to batteryCheckIntervalHours away,
+ * default 12h) or a manual Check Battery run, even though the device may
+ * have been awake and reachable dozens of times in between via real
+ * motion/AI events.
  *
  * OFF by default (checkBatteryOnEventWake device preference) -- even though
  * the marginal cost of piggybacking is low, it's still a behavior change
@@ -1383,22 +1865,16 @@ def createSelectedChildren(sourceId) {
             def driverName = ch.deviceType == "doorbell" ? "Reolink Doorbell" : "Reolink Camera"
             def pollDefault = ch.isBattery ? DEFAULT_BATTERY_POLL_SEC : DEFAULT_WIRED_POLL_SEC
             def child = bridge.createChannelDevice(driverName, dni, ch.name, pollDefault as Integer, ch.supportedFeatures ?: [])
-            // v1.3.9: batteryMode was declared as a device attribute but
-            // never actually populated anywhere -- the device had no way to
-            // know or expose whether it's battery-powered. This is the one
+            // batteryMode is declared as a device attribute but only ever
+            // populated here, once, at creation time -- this is the one
             // moment ch.isBattery holds a real, freshly-probed value (it's
             // null on a re-discovery of an already-existing channel, by
-            // design -- see discoverChannels()), so it's set here, once, at
-            // creation time. Set on both device types -- both now also get
-            // the periodic auto-check (see schedulerTick(), gated on
-            // hasCapability("Battery"), which both drivers declare).
-            // v1.4.1: even with this in place, a real device (created after
-            // 1.3.9 shipped, this exact call path confirmed reachable since
-            // its supportedFeatures WAS populated correctly) still ended up
-            // with batteryMode never set -- exact trigger not reproducible
-            // from code alone. schedulerTick() now self-heals that case
-            // going forward (see its v1.4.1 comment below) rather than
-            // relying solely on this single creation-time call succeeding.
+            // design -- see discoverChannels()). Set on both device types --
+            // both get the periodic auto-check (see schedulerTick(), gated
+            // on hasCapability("Battery"), which both drivers declare).
+            // schedulerTick() below self-heals any device that still ends
+            // up without batteryMode set, rather than relying solely on
+            // this single creation-time call succeeding.
             if (child) {
                 child.receiveBatteryMode(ch.isBattery ? "battery" : "wired")
             }
@@ -1418,29 +1894,26 @@ def installed() { initialize() }
 def updated() { initialize() }
 
 /**
- * v1.3.9 NEW: explicit teardown on full app removal. Without this,
- * removing the entire app instance (via Hubitat's Apps list, NOT the
- * in-app "Remove this ENTIRE source" toggle) relied purely on Hubitat's
- * own built-in cascade-delete of app-owned children -- platform behavior
- * this app doesn't control or fully verify, especially now that the
- * v1.3.8 bridge restructuring made the device tree 2-3 levels deep for the
- * first time (App -> Bridge -> Camera, or for standalone: App -> Group
- * Device -> Bridge -> Camera) instead of the flat one-level tree this app
- * had before. A genuine production DuplicateDNIException was traced to an
- * orphaned bridge device surviving what should have been a full removal --
- * unclear whether that's a platform edge case with multi-level cascade
- * delete under heavy/rapid churn, or something else, but this closes the
- * gap either way: every source now goes through the SAME explicit,
- * already-defensive removeSource() teardown (stop subscription, delete
- * children, delete bridge) that the per-source Danger Zone toggle already
- * uses and has been reliable, rather than trusting an implicit mechanism
- * this app can't inspect or guarantee.
+ * Explicit teardown on full app removal. Without this, removing the entire
+ * app instance (via Hubitat's Apps list, NOT the in-app "Remove this
+ * ENTIRE source" toggle) relies purely on Hubitat's own built-in
+ * cascade-delete of app-owned children -- platform behavior this app
+ * doesn't control or fully verify, especially given the device tree is
+ * 2-3 levels deep (App -> Bridge -> Camera, or for standalone: App ->
+ * Group Device -> Bridge -> Camera) rather than a flat one-level tree. A
+ * genuine production DuplicateDNIException was once traced to an orphaned
+ * bridge device surviving what should have been a full removal -- this
+ * closes that gap either way: every source now goes through the SAME
+ * explicit, already-defensive removeSource() teardown (stop subscription,
+ * delete children, delete bridge) that the per-source Danger Zone toggle
+ * already uses and has been reliable, rather than trusting an implicit
+ * mechanism this app can't inspect or guarantee.
  */
 def uninstalled() {
-    // FIXED (2026-08-17, same day as introduced): removeSource() mutates
-    // state.sources internally (state.sources.removeAll {...}) -- iterating
-    // that SAME live list here while it's being mutated mid-loop is exactly
-    // what ConcurrentModificationException guards against. .collect() snapshots
+    // removeSource() mutates state.sources internally
+    // (state.sources.removeAll {...}) -- iterating that SAME live list
+    // here while it's being mutated mid-loop is exactly what
+    // ConcurrentModificationException guards against. .collect() snapshots
     // the list once up front, so removeSource()'s mutation of the real
     // state.sources no longer affects the iteration in progress.
     (state.sources ?: []).collect().each { src ->
@@ -1458,26 +1931,9 @@ def uninstalled() {
  * in this app gets called on boot -- without this, a hub reboot could leave
  * every camera silently un-polled until someone happened to open the app and
  * hit Done/Update, with no error or indication anything was wrong.
- *
- * v1.4.5 FIX: real-world testing found this alone wasn't enough --
- * state.sourceConnMode (tracks whether each source's event connection is
- * currently running) is APP-level state, which Hubitat persists across a
- * hub reboot. The actual rawSocket TCP connection the bridge holds does NOT
- * survive a reboot (it's a real OS-level connection) -- but a leftover
- * "connected" value here made ensureSourceBridge()'s guard ("only call
- * startEventSubscription() if not already running") believe a live
- * connection still existed, so it silently skipped reconnecting entirely.
- * Confirmed via real logs: "hub restarted, resuming polling" fired
- * correctly, then 20 minutes of complete silence (no keepalives, no
- * events, nothing) until manually stopping the subscription forced the
- * stale state to clear and polling to resume immediately. Cleared
- * unconditionally on every restart now, since a genuine reboot is a hard
- * boundary where any previously "connected" state can no longer be
- * trusted regardless of what was persisted.
  */
 def systemStartHandler(evt) {
     logNormal "Reolink Integration: hub restarted, resuming polling"
-    state.sourceConnMode = [:]
     initialize()
 }
 
@@ -1502,15 +1958,16 @@ def initialize() {
 }
 
 /**
- * One-time upgrade migration (since v1.4.1), guarded by
- * state.lastKnownAppVersion so it runs once per version transition, not on
- * every Done/Update save. The old broken battery-check gate kept advancing
+ * One-time upgrade migration, guarded by state.lastKnownAppVersion so it
+ * runs once per version transition, not on every Done/Update save. An
+ * older, now-fixed battery-check gate used to keep advancing
  * nextBatteryCheckDue a full interval every tick even while silently
  * skipping the check, so that stale schedule would otherwise delay
- * schedulerTick()'s batteryMode backfill fix by up to a full
- * batteryCheckIntervalHours after upgrading. This clears nextBatteryCheckDue
- * for every device with no batteryMode set, so the backfill runs on the very
- * next tick (~1s) instead. Devices with a valid batteryMode are untouched.
+ * schedulerTick()'s batteryMode backfill by up to a full
+ * batteryCheckIntervalHours after upgrading. This clears
+ * nextBatteryCheckDue for every device with no batteryMode set, so the
+ * backfill runs on the very next tick (~1s) instead. Devices with a valid
+ * batteryMode are untouched.
  */
 private void runMigrations() {
     if (state.lastKnownAppVersion == APP_VERSION) return
@@ -1529,9 +1986,21 @@ private void runMigrations() {
     }
     state.nextBatteryCheckDue = battDue
     if (cleared > 0) {
-        logNormal "Reolink Integration: v1.4.1 migration -- cleared stale battery-check schedule for " +
+        logNormal "Reolink Integration: migration -- cleared stale battery-check schedule for " +
             "${cleared} device(s) with no batteryMode set, so the fix takes effect on the next tick " +
             "instead of waiting out an old schedule"
+    }
+
+    // state.recScheduleCache (an old, now-retired cache-and-restore
+    // recording design's stale-snapshot mechanism) is cleared here too, so
+    // any leftover entries from an earlier install don't linger in state
+    // forever doing nothing.
+    if (state.recScheduleCache) {
+        int clearedRec = state.recScheduleCache.size()
+        state.remove("recScheduleCache")
+        logNormal "Reolink Integration: cleared ${clearedRec} leftover cached recording schedule(s) from the " +
+            "old cache-and-restore design (${fromVersion} -> ${APP_VERSION}) -- recording schedules are now " +
+            "managed via named presets (see the Recording Presets page)"
     }
 
     logNormal "Reolink Integration: upgraded ${fromVersion} -> ${APP_VERSION}"
@@ -1564,19 +2033,15 @@ def initializePolling() {
     def snapDue = state.nextSnapshotDue ?: [:]
     def battDue = state.nextBatteryCheckDue ?: [:]
     (state.sources ?: []).each { src ->
-        // v1.3.9 FIX: this previously called ensureSourceBridge() for
-        // EVERY configured source unconditionally, on every Done/Update
-        // click -- creating a real bridge device (and attempting a live
-        // connection) for a source that had just been added, before the
-        // user had ever opened its discover page or selected a single
-        // channel. Same class of premature-creation bug as the one fixed
-        // in discoverPage() above, just triggered by "Done" instead of by
-        // viewing the page. Now only re-establishes a bridge that ALREADY
-        // exists (a source that was genuinely set up before this
-        // Done/Update cycle) -- a brand-new source with nothing selected
-        // yet stays completely untouched until real intent exists via
-        // createSelectedChildren(), which is the only place a bridge
-        // should ever get created.
+        // ensureSourceBridge() is only called here for a source that
+        // ALREADY has a bridge -- calling it unconditionally for every
+        // configured source on every Done/Update click would create a
+        // real bridge device (and attempt a live connection) for a source
+        // that had just been added, before the user had ever opened its
+        // discover page or selected a single channel. A brand-new source
+        // with nothing selected yet stays completely untouched until real
+        // intent exists via createSelectedChildren(), which is the only
+        // place a bridge should ever get created.
         if (!getSourceBridge(src.id)) return
         def bridge = ensureSourceBridge(src.id)
         bridge?.getChildDevices()?.each { child ->
@@ -1621,37 +2086,32 @@ def schedulerTick() {
             (bridge.getChildDevices() ?: []).each { child ->
                 def dni = child.deviceNetworkId
                 try {
-                    // v1.3.9: battery level is NEVER delivered via the
-                    // event push path (only motion/AI is), so this check
-                    // deliberately runs regardless of sourceConnected --
-                    // placed before that early-return below, unlike poll/
-                    // snapshot which correctly skip while event mode is
-                    // healthy. hasCapability("Battery") scopes this to
-                    // whichever devices actually declare it -- both Camera
-                    // and Doorbell drivers do, as of v1.3.9.
+                    // Battery level is NEVER delivered via the event push
+                    // path (only motion/AI is), so this check deliberately
+                    // runs regardless of sourceConnected -- placed before
+                    // that early-return below, unlike poll/snapshot which
+                    // correctly skip while event mode is healthy.
+                    // hasCapability("Battery") scopes this to whichever
+                    // devices actually declare it -- both Camera and
+                    // Doorbell drivers do.
                     if (child.hasCapability("Battery") && nowMs >= ((battDue[dni] ?: 0) as Long)) {
-                        // v1.4.1 FIX: a device stuck with batteryMode never
-                        // set silently and permanently skipped this gate
+                        // A device stuck with batteryMode never set would
+                        // otherwise silently and permanently skip this gate
                         // (due-time still advanced, nothing logged, battery
                         // never updated short of a manual check). Missing
-                        // batteryMode is now "unknown, go find out" rather
-                        // than "not battery, skip forever" -- backfilled via
-                        // a live probe, once. Self-heals on the next tick.
+                        // batteryMode is treated as "unknown, go find out"
+                        // rather than "not battery, skip forever" --
+                        // backfilled via a live probe, once. Self-heals on
+                        // the next tick.
                         def batteryMode = child.currentValue("batteryMode")
                         if (batteryMode == null) {
                             log.warn "Reolink Integration: ${child.displayName} (${dni}) has no batteryMode set -- " +
-                                "backfilling via a live probe (see v1.4.1 release notes)"
+                                "backfilling via a live probe"
                             componentCheckBattery(child)
                             def backfilled = child.currentValue("battery") != null ? "battery" : "wired"
                             child.receiveBatteryMode(backfilled)
                             batteryMode = backfilled
                         }
-                        // v1.4.1: replaced the old hours=0-means-disabled
-                        // convention with an explicit batteryCheckEnabled
-                        // toggle (OFF by default), same pattern as the new
-                        // checkBatteryOnEventWake setting -- clearer than a
-                        // magic number, and consistent across both battery-
-                        // check preferences on the device page.
                         def checkEnabled = child.getSetting("batteryCheckEnabled") == true
                         def hours = (child.getSetting("batteryCheckIntervalHours") ?: 12) as Integer
                         if (checkEnabled && hours > 0 && batteryMode == "battery") {
@@ -1982,8 +2442,8 @@ def componentSetSiren(child, Boolean on, String dni = null) {
 }
 
 /**
- * v1.3.8 NEW: PIR enable/disable, cameras only. Field names unconfirmed
- * against real hardware -- built following the same naming convention as
+ * PIR enable/disable, cameras only. Field names unconfirmed against real
+ * hardware -- built following the same naming convention as
  * GetIrLights/SetIrLights, see the Tips page's "built but not tested" list.
  */
 def componentSetPir(child, Boolean on, String dni = null) {
@@ -2059,6 +2519,278 @@ def componentSetSnapshotInterval(child, Integer seconds, String dni = null) {
     if (c.deviceNetworkId) markSnapshotDueNow(c.deviceNetworkId)
 }
 
+// ============================================================================
+// v1.5.0 -- NVR/source recording control. Master-switch and read-modify-
+// write schedule mechanics confirmed against a real RLN16-410 (see the
+// top-of-file version history). Called by the bridge device's on()/
+// off()/push()/loadSelectedPreset()/loadPreset().
+// ============================================================================
+
+/**
+ * Master NVR-level record enable/disable ONLY -- no per-channel schedule
+ * writes at all. CONFIRMED: this host-level SetRecV20 call with no channel
+ * is genuinely the master switch -- turning it on starts recording on
+ * every channel, including one whose own per-channel schedule was OFF, and
+ * this is untargeted at the protocol level: there is no channel field on
+ * this specific call, so it always applies to every channel of the source
+ * at once. There is no way to target one channel with this call -- that's
+ * an API/hardware limitation, not something this app can work around.
+ * Per-channel targeting is achieved separately, via componentLoadPreset()
+ * below and each preset's per-channel schedule.
+ */
+def componentSetRecordingEnabled(child, sourceId, Boolean enabled) {
+    def bridge = getSourceBridge(sourceId)
+    try {
+        def hostResult = reolinkApiCall(sourceId, "SetRecV20", [Rec: [enable: enabled ? 1 : 0]])
+        logNormal "Reolink source ${sourceId}: host-level SetRecV20 enable=${enabled ? 1 : 0} -- rspCode=${hostResult?.rspCode}"
+        bridge?.receiveRecordingEnabled(enabled)
+    } catch (e) {
+        logNormal "Reolink source ${sourceId}: host-level SetRecV20 failed -- ${e.message}"
+    }
+}
+
+/**
+ * Writes a named preset's per-channel schedule strings to the NVR. Always
+ * does a FRESH read-modify-write per channel per call -- no stale snapshot,
+ * no "restores whatever was cached the first time this ever ran" trap. A
+ * channel with no string saved for this preset is skipped (existing
+ * schedule left alone), which also serves as the mechanism for excluding a
+ * battery-class channel from a preset meant for wired channels -- just
+ * leave that channel's field blank on the Recording Presets page.
+ */
+/**
+ * Read-only lookup used by the bridge's Preferences page to populate a
+ * live "Preset to load" dropdown -- see ReolinkDeviceBridge.groovy's
+ * getAvailablePresetNames(). Returns the current preset names for this
+ * source, sorted for a stable dropdown order across page loads.
+ */
+def componentGetPresetNames(sourceId) {
+    def presets = (state.recPresets ?: [:])[sourceId.toString()] ?: [:]
+    return presets.keySet().sort()
+}
+
+def componentLoadPreset(child, sourceId, String presetName) {
+    def bridge = getSourceBridge(sourceId)
+    if (!bridge) {
+        log.warn "Reolink source ${sourceId}: no bridge device, cannot load preset"
+        return
+    }
+    def channels = childrenForSource(sourceId as Integer)
+    if (!channels) {
+        log.warn "Reolink source ${sourceId}: no channel devices found, nothing to change"
+        return
+    }
+    def chMap = (state.recPresets ?: [:])[sourceId.toString()]?.get(presetName)
+    if (chMap == null) {
+        log.warn "Reolink source ${sourceId}: preset '${presetName}' not found -- check the Recording Presets page"
+        bridge.receiveRecordingResult("Preset '${presetName}' not found")
+        return
+    }
+
+    int okCount = 0
+    def failedChannels = []
+    def skipped = []
+    // Channels locked out entirely, distinct from `skipped` (a channel
+    // simply left blank in THIS particular preset) -- a locked channel is
+    // protected from EVERY preset, not just this one.
+    def locked = []
+    channels.each { ch ->
+        def channelNum = ch.getDataValue("channel") as Integer
+        def bitstring = chMap[channelNum.toString()]
+        if (ch.getSetting("excludeFromRecordingPresets") == true) {
+            // Enforced here regardless of whether this preset even has
+            // data for this channel -- the whole point of the lock is that
+            // it can't be bypassed by a future preset that DOES set
+            // something for this channel, intentionally or by mistake.
+            locked << channelNum
+        } else if (!bitstring) {
+            skipped << channelNum
+        } else {
+            try {
+                if (applyPresetToChannel(sourceId, channelNum, bitstring)) {
+                    okCount++
+                } else {
+                    failedChannels << channelNum
+                }
+            } catch (e) {
+                log.warn "Reolink source ${sourceId} ch ${channelNum}: preset apply failed -- ${e.message}"
+                failedChannels << channelNum
+            }
+        }
+        // Settle delay between per-channel writes -- see
+        // REC_CHANNEL_SETTLE_MS's declaration and the top-of-file v1.5.0
+        // note for why.
+        pauseExecution(REC_CHANNEL_SETTLE_MS)
+    }
+
+    def parts = ["${okCount}/${channels.size()} OK"]
+    if (failedChannels) parts << "failed: ${failedChannels.collect { "ch${it}" }.join(', ')}"
+    if (skipped) parts << "skipped (no data): ${skipped.collect { "ch${it}" }.join(', ')}"
+    // Reported separately from "skipped (no data)" so it's clear at a
+    // glance THIS was a deliberate, permanent lock, not just an unset
+    // field in this one preset.
+    if (locked) parts << "locked: ${locked.collect { "ch${it}" }.join(', ')}"
+    def summary = parts.join(', ')
+    logNormal "Reolink source ${sourceId}: preset '${presetName}' loaded -- ${summary}"
+    bridge.receiveRecordingMode(presetName)
+    bridge.receiveRecordingResult(summary)
+}
+
+/**
+ * Fresh read-modify-write of one channel's schedule table to the given
+ * 168-char bitstring. Every key already present in the device's own
+ * returned schedule table gets set (the actual trigger-table key name(s)
+ * can't be assumed to be "TIMING" -- real hardware testing showed this),
+ * and scheduleEnable is a TOP-LEVEL field on Rec, not nested inside
+ * schedule.enable. See fetchRecSchedule()/deepCopyRec() below.
+ */
+private boolean applyPresetToChannel(sourceId, Integer channel, String bitstring) {
+    def fetched = fetchRecSchedule(sourceId, channel)
+    if (fetched == null) {
+        log.warn "Reolink source ${sourceId} ch ${channel}: could not read current schedule via GetRecV20 or " +
+            "classic GetRec, skipping preset write for this channel"
+        return false
+    }
+    def recParam = deepCopyRec(fetched.rec as Map)
+    if (fetched.isV20) {
+        recParam.channel = channel
+        recParam.scheduleEnable = 1
+        recParam.schedule = (recParam.schedule ?: [:]) as Map
+        recParam.schedule.channel = channel
+        recParam.schedule.table = (recParam.schedule.table ?: [:]) as Map
+        if (recParam.schedule.table) {
+            recParam.schedule.table.keySet().toList().each { key -> recParam.schedule.table[key] = bitstring }
+        } else {
+            recParam.schedule.table.TIMING = bitstring
+        }
+    } else {
+        recParam.channel = channel
+        recParam.enable = 1
+        recParam.table = bitstring
+    }
+    def cmd = fetched.isV20 ? "SetRecV20" : "SetRec"
+    def result = reolinkApiCall(sourceId, cmd, [Rec: recParam], channel as Integer)
+    return result?.rspCode == 200 || result?.rspCode == 0
+}
+
+/**
+ * Reads the channel's CURRENT actual recording schedule. Tries GetRecV20
+ * first regardless of any GetAbility capability flag, and only falls back
+ * to classic GetRec if V20 itself returns no usable value -- CONFIRMED
+ * against a real RLN16-410 that GetAbility's own scheduleVersion.ver field
+ * doesn't reliably predict which generation this hardware actually needs.
+ * Returns [rec: Map, isV20: boolean] so the caller knows which API
+ * generation actually worked, or null if both failed.
+ */
+private Map fetchRecSchedule(sourceId, channel) {
+    def v20Result = reolinkApiCall(sourceId, "GetRecV20", [:], channel as Integer)
+    if (v20Result?.Rec != null) return [rec: v20Result.Rec, isV20: true]
+    logFull "Reolink source ${sourceId} ch ${channel}: GetRecV20 returned no usable value, trying classic GetRec"
+    def classicResult = reolinkApiCall(sourceId, "GetRec", [:], channel as Integer)
+    if (classicResult?.Rec != null) return [rec: classicResult.Rec, isV20: false]
+    return null
+}
+
+/**
+ * Deep-clones a Map/List structure via a JSON round-trip -- Groovy Maps
+ * assign by reference, and applyPresetToChannel() above must NOT mutate the
+ * freshly-fetched schedule in place beyond what's intentional. Cheap and
+ * reliable in this sandboxed environment (JsonSlurper/JsonOutput are
+ * already used elsewhere in this app for the same reason -- see
+ * reolinkRawPost()/parseReolinkResponse()).
+ */
+private Map deepCopyRec(Map source) {
+    return new groovy.json.JsonSlurper().parseText(groovy.json.JsonOutput.toJson(source)) as Map
+}
+
+/**
+ * Read-only sanity check, does NOT call SetRec/SetRecV20 or touch any
+ * preset data. Logs which API generation actually worked (or that neither
+ * did) for this channel -- useful for confirming a channel's schedule shape
+ * before defining a preset against it.
+ */
+def componentCheckRecordingSchedule(child, String dni = null) {
+    def c = resolveChild(child, dni)
+    def sourceId = c.getDataValue("sourceId") as Integer
+    def channel = c.getDataValue("channel") as Integer
+    def result = fetchRecSchedule(sourceId, channel)
+    if (result == null) {
+        logNormal "Reolink source ${sourceId} ch ${channel}: neither GetRecV20 nor classic GetRec returned a usable schedule"
+    } else {
+        logNormal "Reolink source ${sourceId} ch ${channel}: ${result.isV20 ? 'GetRecV20' : 'GetRec (classic)'} succeeded -- raw Rec: ${result.rec}"
+    }
+}
+
+// ============================================================================
+// Persistent per-preset button numbering and push dispatch for the bridge's
+// own PushableButton capability (see ReolinkDeviceBridge.groovy's push()).
+// No child devices involved -- the bridge itself is what Rule Machine
+// points at.
+// ============================================================================
+
+/**
+ * Returns this preset's permanently-assigned button number, assigning one
+ * from the per-source monotonic counter if it doesn't have one yet.
+ * Idempotent -- safe to call every time the Recording Presets page renders,
+ * which is also how a preset created before this feature existed gets
+ * backfilled with a number the first time the page happens to load after
+ * upgrading, with no special migration step required.
+ * The counter (state.recNextButtonNumber) only ever increments -- see
+ * retireButtonNumber() below for why a deleted preset's number must never
+ * be handed back out to a different preset later.
+ */
+private Integer getOrAssignButtonNumber(sourceId, String presetName) {
+    def key = sourceId.toString()
+    def mapAll = state.recPresetButtonNumbers ?: [:]
+    def bySource = mapAll[key] ?: [:]
+    if (bySource.containsKey(presetName)) return bySource[presetName] as Integer
+    def counters = state.recNextButtonNumber ?: [:]
+    def next = ((counters[key] ?: 0) as Integer) + 1
+    counters[key] = next
+    state.recNextButtonNumber = counters
+    bySource[presetName] = next
+    mapAll[key] = bySource
+    state.recPresetButtonNumbers = mapAll
+    return next
+}
+
+/**
+ * Removes a deleted preset's entry from the ACTIVE button-number mapping --
+ * deliberately does NOT touch state.recNextButtonNumber (the counter), so
+ * that number can never be assigned to a different preset later. A rule
+ * built around that number simply stops doing anything (componentBridge
+ * ButtonPushed() below finds no active preset for it and logs a no-op)
+ * instead of ever silently firing whatever preset happens to occupy that
+ * number next -- that's the entire point of this design over a plain
+ * positional numbering scheme.
+ */
+private void retireButtonNumber(sourceId, String presetName) {
+    def mapAll = state.recPresetButtonNumbers ?: [:]
+    def key = sourceId.toString()
+    def bySource = mapAll[key] ?: [:]
+    bySource.remove(presetName)
+    mapAll[key] = bySource
+    state.recPresetButtonNumbers = mapAll
+}
+
+/**
+ * Called by the bridge when its own push(btn) command fires (Rule Machine's
+ * "button pushed" trigger, or a manual push from the device page). Looks up
+ * which preset -- if any -- currently holds this button number and loads
+ * it; a number with no active preset (retired via a deletion, or simply
+ * never assigned) logs a no-op warning rather than guessing.
+ */
+def componentBridgeButtonPushed(child, sourceId, Integer btn) {
+    def bySource = (state.recPresetButtonNumbers ?: [:])[sourceId.toString()] ?: [:]
+    def presetName = bySource.find { name, num -> num == btn }?.key
+    if (!presetName) {
+        log.warn "Reolink source ${sourceId}: button ${btn} pushed but no active preset is currently assigned " +
+            "to it (may belong to a deleted preset) -- ignoring"
+        return
+    }
+    componentLoadPreset(child, sourceId, presetName)
+}
+
 // ---------- Logging ----------
 
 /** Rank of the current logLevel setting within LOG_LEVELS (0=Errors Only, 1=Normal, 2=Full). Defaults to Normal if unset/unrecognized. */
@@ -2075,11 +2807,7 @@ private int logLevelRank() {
  * parent?.logNormal(...) so its own connection-status logging (starting,
  * connected, reconnecting) obeys the app's Log level setting instead of
  * writing to the hub log unconditionally, same as everything else in this
- * app. (v1.3.8 FIX: the bridge previously used raw log.info/log.debug
- * throughout, bypassing this tiering entirely -- at Full this reproduced
- * the exact log-flooding pattern from BETA testing, and switching the app
- * back to Errors Only did nothing to quiet it, since the bridge never
- * checked that setting at all.)
+ * app.
  */
 void logNormal(msg) {
     if (logLevelRank() >= 1) log.debug msg
