@@ -1,185 +1,146 @@
 /**
- * Reolink Doorbell (Component Driver)
- * Version: 1.4.6
+ * Reolink Standalone Devices (Internal Group Driver)
+ * Version: 1.5.0
  *
- * Same delegation pattern as Reolink Camera, plus a "visitor" (button press)
- * event so Rule Machine can trigger straight off "pushed 1" for a doorbell
- * ring, separate from AI person/motion detection.
+ * NOT user-facing. Created and managed automatically by the Reolink
+ * Integration parent app -- exactly ONE instance total, shared across every
+ * standalone (non-Hub/NVR) source.
  *
- * v1.4.2 -- HOTFIX: bare paragraph("text") calls in preferences are App-DSL
- * only and don't exist on a driver's compiled script -- caused a fatal
- * "No signature of method: Script1.paragraph()" on save/update, blocking the
- * 1.4.1 update entirely (same bug as CameraDriver.groovy). Fixed via
- * input(type: "paragraph").
- * v1.4.1 -- Added chargingStatus attribute (charging/not_charging/unknown)
- * from GetBatteryInfo's Battery.chargeStatus, same confirmed field as the
- * camera driver. batteryMode self-heal was app-side only, no change needed
- * here.
- * v1.3.9 -- Added Battery capability so a battery-powered doorbell can show
- * a percentage and get pulled into the app's auto battery-check scheduler
- * (keyed off hasCapability("Battery"), no app-side change needed for that
- * part). Added receiveBatteryInfo() with the confirmed nested
- * Battery.batteryPercent field, and receiveBatteryMode() (called once at
- * device creation).
- * Full history prior to 1.3.9 is in GitHub commit history.
+ * Purpose: purely a nesting anchor in the Devices list. Each standalone
+ * camera/doorbell still gets its own independent "Reolink Device Bridge"
+ * (its own persistent event connection -- Hubitat's rawSocket is one-
+ * connection-per-driver-instance, so that part can't be shared). What CAN
+ * be shared is where those bridges nest: instead of each standalone bridge
+ * sitting directly under the app (unnested, unlike an NVR/Hub's channels
+ * which all nest under one shared bridge), every standalone source's bridge
+ * becomes a child of THIS device instead -- one collapsible entry holding
+ * every standalone camera/doorbell's bridge, instead of N separate unnested
+ * bridges.
+ *
+ * v1.4.6 -- HOTFIX: a standalone wired doorbell was throwing
+ * MissingMethodException on componentEventChannelUpdate() for every real-
+ * time event push. Same root cause as the v1.4.3 fix, just a different
+ * method: ReolinkDeviceBridge.groovy's own componentEventChannelUpdate()
+ * calls parent?.componentEventChannelUpdate(...), which for a standalone
+ * source resolves to THIS device -- and this driver never forwarded that
+ * one method, only the componentX() set that existed as of 1.4.3. That set
+ * predates componentEventChannelUpdate(), which was added to the app/bridge
+ * later for the real-time push path and never got mirrored here. Motion/AI
+ * polling was unaffected (push-based, doesn't route through this passthrough
+ * at all), but every real event push for a standalone source failed inside
+ * the bridge driver itself, before ever reaching the app. Fixed by adding
+ * the missing passthrough, mirroring the exact signature used everywhere
+ * else in this integration.
+ * v1.4.3 -- HOTFIX: a standalone source's bridge has THIS device as its
+ * real Hubitat parent (not the app directly) -- same root cause as the
+ * v1.4.1 logNormal()/logFull() fix, but this time for every OTHER
+ * component command a device sends upward (takeSnapshot, refresh, PTZ,
+ * spotlight, night vision, siren, PIR, battery/abilities checks, poll and
+ * snapshot interval). ReolinkDeviceBridge.groovy's own componentX()
+ * passthroughs call parent?.componentX(...), which for a standalone
+ * source's bridge resolves to THIS device -- and this driver never defined
+ * any of them, only logNormal()/logFull(). Every one of those calls threw
+ * a MissingMethodException inside the bridge driver itself, before ever
+ * reaching the app -- which is why the app's own logs showed nothing at
+ * all for e.g. a failed Take Snapshot (the app method is never reached;
+ * the failure shows up as a device error under the BRIDGE's own Logs tab
+ * instead). Hub/NVR bridges (parented directly off the app) were never
+ * affected. Reported against a standalone doorbell whose snapshotUrl
+ * attribute never populated and Take Snapshot logged nothing, but this
+ * affected every standalone source since the v1.3.8 bridge/group
+ * restructuring, not something v1.4.2 introduced -- just newly surfaced.
+ * Fixed by adding the full set of componentX() passthroughs already used
+ * by ReolinkDeviceBridge.groovy's own equivalent forwarding to the app,
+ * mirrored here one level up.
+ * v1.4.1 -- FIX: a standalone source's bridge has THIS device as its real
+ * Hubitat parent (not the app directly), so its parent?.logNormal()/
+ * logFull() calls (used throughout ReolinkDeviceBridge.groovy, including
+ * the first line of startEventSubscription()) threw a MissingMethodException
+ * every time -- this driver had no such methods at all, meaning the actual
+ * socket connection never even started for ANY standalone source. Hub/NVR
+ * bridges (parented directly off the app) were never affected. Found via
+ * real-hardware testing of a standalone battery camera (Argus 4 Pro, whose
+ * HTTP CGI API is fully absent -- see the app's Tips page) while testing
+ * whether its Baichuan event port might still respond, which surfaced this
+ * as a blocking bug before the socket attempt could even happen. Fixed by
+ * adding logNormal()/logFull() passthroughs that forward to this device's
+ * own parent (the app) -- same pattern already used for
+ * createBridgeDevice()/removeBridgeDevice() below.
  */
 metadata {
-    definition(name: "Reolink Doorbell", namespace: "jdthomas24", author: "Jason", component: true) {
-        capability "Motion Sensor"
-        capability "PushableButton"
-        capability "Refresh"
-        capability "Sensor"
-        // v1.3.9: added so a battery-powered doorbell can show a % and get
-        // pulled into the app's auto battery-check scheduler, which keys
-        // off hasCapability("Battery") rather than device type.
-        capability "Battery"
-        attribute "person", "enum", ["active", "inactive"]
-        attribute "vehicle", "enum", ["active", "inactive"]
-        attribute "pet", "enum", ["active", "inactive"]
-        attribute "package", "enum", ["active", "inactive"]
-        attribute "snapshotUrl", "string"
-        attribute "batteryMode", "enum", ["wired", "battery", "unknown"]
-        // Both "charging" and "not_charging" confirmed against real
-        // hardware -- see CameraDriver.groovy's matching attribute comment.
-        attribute "chargingStatus", "enum", ["unknown", "not_charging", "charging"]
-        attribute "sleepStatus", "enum", ["awake", "asleep", "unknown"]
-        // Tracks whether the most recent state update came from the
-        // real-time event push path or the plain polling fallback.
-        attribute "lastUpdateSource", "enum", ["event", "poll"]
-        attribute "supportedFeatures", "string"
-        command "takeSnapshot"
-        command "checkAbilities", [[name: "Refreshes the supportedFeatures attribute from the doorbell's current GetAbility data"]]
-        command "checkBattery", [[name: "Battery-mode devices only"]]
-        command "setPollInterval", [[name: "seconds", type: "NUMBER"]]
-        command "setSnapshotInterval", [[name: "seconds", type: "NUMBER"]]
-    }
-    preferences {
-        // v1.4.2 follow-up: reordered so each paragraph header is the FIRST
-        // of its own 3-item row in this 3-column grid -- see
-        // CameraDriver.groovy's matching preferences comment for why
-        // (input(type: "paragraph") doesn't span the full row on a driver
-        // the way App-DSL paragraph() does).
-        input name: "battChkHdr", type: "paragraph", title: "<b>Scheduled battery check</b>"
-        input name: "batteryCheckEnabled", type: "bool", title: "Enable auto battery check", defaultValue: false,
-            description: "Battery devices only, OFF by default. When ON, auto-checks and updates battery level " +
-                "on the interval below. Checking briefly wakes the device (negligible power at default " +
-                "interval). Ignored for wired devices. Check Battery still works manually any time regardless " +
-                "of this setting."
-        input name: "batteryCheckIntervalHours", type: "number", title: "Auto battery check interval (hours)", defaultValue: 12,
-            description: "Only used if the setting above is ON."
-        input name: "eventWakeHdr", type: "paragraph", title: "<b>Event-triggered battery check</b>"
-        input name: "checkBatteryOnEventWake", type: "bool", title: "Also check battery/charging on real motion/AI events", defaultValue: false,
-            description: "Battery devices only, OFF by default. When ON, a real motion/AI event (device " +
-                "already awake) also triggers a battery/charging check -- free, unlike the interval above, " +
-                "since it doesn't force an extra wakeup."
-        input name: "eventWakeBatteryThrottleSec", type: "number", title: "Minimum seconds between event-triggered checks", defaultValue: 60,
-            description: "Only used if the setting above is ON. Keeps a burst of events (motion, person, " +
-                "vehicle in seconds) from triggering more than one check."
-        input name: "pollIntervalSec", type: "number", title: "Poll interval (sec)", defaultValue: 5,
-            description: "Controls how often motion/AI/visitor state is polled. Does NOT control snapshot image " +
-                "freshness -- see Snapshot interval below."
-        input name: "snapshotIntervalSec", type: "number", title: "Snapshot interval (sec)", defaultValue: 30,
-            description: "Controls how often the cached dashboard snapshot image refreshes. A dashboard tile's " +
-                "own refresh rate does NOT make the image any fresher than this -- it just re-displays whatever " +
-                "was last cached at this interval. Kept separate from poll interval so motion/visitor detection " +
-                "can stay fast without forcing a full image download that often."
+    definition(name: "Reolink Standalone Devices", namespace: "jdthomas24", author: "Jason", component: true) {
+        capability "Actuator"
     }
 }
-def installed() {
-    sendEvent(name: "numberOfButtons", value: 1)
-}
-def refresh() {
-    parent?.componentRefresh(this, device.deviceNetworkId)
-}
-def takeSnapshot() {
-    parent?.componentTakeSnapshot(this, device.deviceNetworkId)
-}
-def setPollInterval(seconds) {
-    parent?.componentSetPollInterval(this, seconds as Integer, device.deviceNetworkId)
-}
-def setSnapshotInterval(seconds) {
-    parent?.componentSetSnapshotInterval(this, seconds as Integer, device.deviceNetworkId)
-}
-def checkAbilities() {
-    parent?.componentCheckAbilities(this, device.deviceNetworkId)
-}
-def checkBattery() {
-    parent?.componentCheckBattery(this, device.deviceNetworkId)
-}
+def installed() {}
+def updated() {}
 /**
- * v1.3.9: battery% reads the confirmed nested reolink_aio field
- * Battery.batteryPercent first, same fix already validated on the camera
- * driver, with flat fallbacks kept for firmware variants that return it
- * unnested. chargingStatus (v1.4.1) reads Battery.chargeStatus -- see
- * CameraDriver.groovy's matching comment for the confirmed hardware detail.
+ * Creates a standalone source's "Reolink Device Bridge" as THIS device's
+ * own child, called by the app's ensureSourceBridge(). Mirrors the exact
+ * pattern ReolinkDeviceBridge.groovy itself uses for createChannelDevice()
+ * -- addChildDevice() must run in the owning device's own execution
+ * context, so this method exists here rather than the app calling
+ * addChildDevice() on a held reference from outside.
  */
-def receiveBatteryInfo(battInfo) {
-    def pct = battInfo?.Battery?.batteryPercent ?: battInfo?.batteryPercent ?: battInfo?.batteryPercentage
-    if (pct != null) sendEvent(name: "battery", value: pct)
+def createBridgeDevice(String dni, String label, Integer sourceId) {
+    def bridge = addChildDevice("jdthomas24", "Reolink Device Bridge", dni, [
+        name: label, label: label, isComponent: true
+    ])
+    bridge.updateDataValue("sourceId", "${sourceId}")
+    return bridge
+}
+def removeBridgeDevice(String dni) {
+    deleteChildDevice(dni)
+}
 
-    def chargeStatus = battInfo?.Battery?.chargeStatus
-    def chargingLabel = (chargeStatus == 1) ? "charging" : (chargeStatus == 0) ? "not_charging" : "unknown"
-    if (chargeStatus != null) sendEvent(name: "chargingStatus", value: chargingLabel)
-}
 /**
- * Required by the PushableButton capability -- declaring the capability adds
- * the Push command/attributes to the device page, but does NOT auto-implement
- * this method; without it, clicking Push (or any app/rule calling push())
- * throws MissingMethodException. Untyped buttonNumber parameter deliberately
- * -- Hubitat's own Commands-tab test UI can pass this as a String rather than
- * a Number, and a typed/coerced parameter would reject that.
+ * v1.4.1: logging passthrough for standalone bridges -- see the header note
+ * above. This device's own parent is always the app (never another group
+ * device), so it simply forwards up one level, same pattern used elsewhere
+ * in this integration (e.g. ReolinkDeviceBridge.groovy's componentX()
+ * passthroughs).
  */
-def push(buttonNumber) {
-    sendEvent(name: "pushed", value: buttonNumber, isStateChange: true)
+void logNormal(msg) {
+    parent?.logNormal(msg)
 }
+
+/** See logNormal() above -- same reasoning, Full-tier. */
+void logFull(msg) {
+    parent?.logFull(msg)
+}
+
+// ============================================================================
+// v1.4.3: componentX() passthrough -- ReolinkDeviceBridge.groovy's own
+// componentX() methods call parent?.componentX(...), which for a standalone
+// source resolves to THIS device (its real Hubitat parent), not the app.
+// This driver never forwarded any of these before -- see the header note's
+// v1.4.3 entry for why that broke every standalone-source command that
+// isn't push-based polling. Mirrors ReolinkDeviceBridge.groovy's own
+// forwarding to the app, one level up.
+// ============================================================================
+def componentRefresh(child, String dni = null) { parent?.componentRefresh(child, dni) }
+def componentTakeSnapshot(child, String dni = null) { parent?.componentTakeSnapshot(child, dni) }
+def componentPtz(child, String direction, String dni = null) { parent?.componentPtz(child, direction, dni) }
+def componentPtzGoToPreset(child, Integer presetId, String dni = null) { parent?.componentPtzGoToPreset(child, presetId, dni) }
+def componentSavePreset(child, Integer presetId, String name, String dni = null) { parent?.componentSavePreset(child, presetId, name, dni) }
+def componentSetSpotlight(child, Boolean on, String dni = null) { parent?.componentSetSpotlight(child, on, dni) }
+def componentSetNightVision(child, String mode, String dni = null) { parent?.componentSetNightVision(child, mode, dni) }
+def componentSetSiren(child, Boolean on, String dni = null) { parent?.componentSetSiren(child, on, dni) }
+def componentSetPir(child, Boolean on, String dni = null) { parent?.componentSetPir(child, on, dni) }
+def componentCheckBattery(child, String dni = null) { parent?.componentCheckBattery(child, dni) }
+def componentCheckAbilities(child, String dni = null) { parent?.componentCheckAbilities(child, dni) }
 /**
- * Called by the app after GetAbility, both at discovery/creation time and on
- * a manual checkAbilities command. Informational only -- see the app's Tips
- * page ("Supported Features") for what this does and doesn't mean. Does NOT
- * hide or disable any command on this device; Hubitat has no way to do that
- * for an individual device instance.
+ * v1.5.0: same root cause as the v1.4.3/1.4.6 fixes above --
+ * componentCheckRecordingSchedule() didn't exist yet when either of those
+ * hotfixes shipped, so there was no prior moment this file could have
+ * caught it. Now that the Camera/Doorbell drivers have a real
+ * checkRecordingSchedule() command, this passthrough is required or
+ * running it on any standalone (non-Hub) camera/doorbell throws
+ * MissingMethodException inside the bridge before ever reaching the app.
  */
-def receiveSupportedFeatures(List features) {
-    sendEvent(name: "supportedFeatures", value: features ? features.join(", ") : "None detected")
-}
-/** Called by the app after either a poll or a real-time event push -- see CameraDriver.groovy's matching note. */
-def parseReolinkState(aiState, mdState, String source = "poll") {
-    sendIfChanged("sleepStatus", "awake")
-    sendIfChanged("lastUpdateSource", source)
-    // TODO confirm the visitor/doorbell-press field name in your firmware's GetAiState/GetMdState payload
-    def visitorPressed = aiState?.visitor?.alarm_state == 1
-    if (visitorPressed) {
-        push(1)
-    }
-    def motionActive = mdState?.state == 1
-    sendIfChanged("motion", motionActive ? "active" : "inactive")
-    ["people", "vehicle", "dog_cat"].each { key ->
-        def attr = key == "people" ? "person" : (key == "dog_cat" ? "pet" : key)
-        def active = aiState?.getAt(key)?.alarm_state == 1
-        sendIfChanged(attr, active ? "active" : "inactive")
-    }
-    def pkgActive = aiState?.package?.alarm_state == 1
-    sendIfChanged("package", pkgActive ? "active" : "inactive")
-}
-/** See camera driver for why this exists -- cuts redundant sendEvent() calls to reduce load on lower-spec hubs. */
-private void sendIfChanged(String name, value) {
-    if (device.currentValue(name)?.toString() != value?.toString()) {
-        sendEvent(name: name, value: value)
-    }
-}
-/** Called by the app when a poll gets no response -- see camera driver for the reasoning. */
-def markAsleep() {
-    sendIfChanged("sleepStatus", "asleep")
-}
-/**
- * v1.3.9: called once by the app at device creation time with the discovery-
- * time battery probe result -- see CameraDriver.groovy's matching note.
- * v1.4.1: the app's scheduler can also call this later to backfill a device
- * that ended up without batteryMode set -- no change needed here either way.
- */
-def receiveBatteryMode(String mode) {
-    sendEvent(name: "batteryMode", value: mode)
-}
-def receiveSnapshotUrl(url) {
-    sendEvent(name: "snapshotUrl", value: url)
-}
+def componentCheckRecordingSchedule(child, String dni = null) { parent?.componentCheckRecordingSchedule(child, dni) }
+def componentCalibratePtz(child, String dni = null) { parent?.componentCalibratePtz(child, dni) }
+def componentCheckPtzCalibrationStatus(child, String dni = null) { parent?.componentCheckPtzCalibrationStatus(child, dni) }
+def componentSetPollInterval(child, Integer seconds, String dni = null) { parent?.componentSetPollInterval(child, seconds, dni) }
+def componentSetSnapshotInterval(child, Integer seconds, String dni = null) { parent?.componentSetSnapshotInterval(child, seconds, dni) }
+def componentEventChannelUpdate(child, sourceId, channelId, String status, String aiType) { parent?.componentEventChannelUpdate(child, sourceId, channelId, status, aiType) }
