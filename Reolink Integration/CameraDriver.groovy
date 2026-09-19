@@ -1,11 +1,21 @@
 /**
  * Reolink Camera (Component Driver)
- * Version: 1.4.6
+ * Version: 1.5.0
  *
  * Thin device: no HTTP of its own. Delegates everything to the parent app via
  * parent.componentX(this, ...), using data values sourceId/channel to
  * identify which source/channel this device maps to.
  *
+ * v1.5.0 -- NVR recording-control support: excludeFromRecordingPresets
+ * preference (below) is read directly by the app (ch.getSetting(...), same
+ * technique already used for batteryCheckEnabled etc.) inside
+ * componentLoadPreset() -- when true, no preset will ever write a new
+ * schedule to this device, regardless of what that preset specifies. See
+ * ParentApp.groovy for the enforcement side and the Recording Presets
+ * page's 🔒 display. Also added checkRecordingSchedule() -- a diagnostic-
+ * only command that reads and logs this channel's current NVR recording
+ * schedule without changing anything (requires Full logging to see the
+ * result).
  * v1.4.2 -- HOTFIX: bare paragraph("text") calls in preferences are App-DSL
  * only and don't exist on a driver's compiled script -- caused a fatal
  * "No signature of method: Script1.paragraph()" on save/update, blocking the
@@ -50,6 +60,7 @@ metadata {
         command "takeSnapshot"
         command "checkBattery", [[name: "Battery-mode devices only"]]
         command "checkAbilities", [[name: "Refreshes the supportedFeatures attribute from the camera's current GetAbility data"]]
+        command "checkRecordingSchedule", [[name: "Diagnostic only -- reads and logs this channel's current NVR recording schedule, does NOT change anything. Set logging to Full to see the result."]]
         command "setPollInterval", [[name: "seconds", type: "NUMBER"]]
         command "setSnapshotInterval", [[name: "seconds", type: "NUMBER"]]
 
@@ -107,6 +118,19 @@ metadata {
                 "own refresh rate does NOT make the image any fresher than this -- it just re-displays whatever " +
                 "was last cached at this interval. Kept separate from poll interval so motion detection can " +
                 "stay fast without forcing a full image download that often."
+        // Permanent, per-device lock -- stronger than the Recording Presets
+        // page's own "Don't manage" per-preset choice, which only protects
+        // THIS channel if it's set correctly in every single preset. This
+        // protects it everywhere, automatically, without depending on
+        // remembering to configure it right each time a new preset is
+        // created. Read directly by the app inside componentLoadPreset().
+        // Does NOT affect a direct manual command aimed at this device
+        // (e.g. a Rule Machine Custom Action) -- only preset-driven writes.
+        input name: "excludeFromRecordingPresets", type: "bool",
+            title: "🔒 Exclude this device from ALL recording presets", defaultValue: false,
+            description: "When ON, loading ANY preset will never write a new recording schedule to this " +
+                "device, no matter what that preset specifies for it. Direct manual commands aimed at this " +
+                "device are unaffected. Off by default."
     }
 }
 
@@ -212,6 +236,16 @@ def receiveBatteryInfo(battInfo) {
 
 def checkAbilities() {
     parent?.componentCheckAbilities(this, device.deviceNetworkId)
+}
+
+/**
+ * Diagnostic only: reads and logs this channel's current NVR recording
+ * schedule, never writes anything. Requires the app's Log level set to
+ * Full to see the result (same as any other logNormal/logFull-routed
+ * message).
+ */
+def checkRecordingSchedule() {
+    parent?.componentCheckRecordingSchedule(this, device.deviceNetworkId)
 }
 
 /**
