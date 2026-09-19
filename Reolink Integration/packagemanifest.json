@@ -1,10 +1,10 @@
 {
     "packageName": "Reolink Integration",
-    "releaseNotes": "v1.4.6 (hotfix) -- Fixed a MissingMethodException on componentEventChannelUpdate() for every standalone (non-Hub/NVR) camera or doorbell's real-time event push. The standalone group device's passthrough layer never forwarded this specific method, added after the 1.4.3 fix that covered every other command, so any real motion, AI, or visitor event for a standalone source failed inside the bridge driver itself before ever reaching the app. Hub and NVR sources were never affected.",
+    "releaseNotes": "v1.5.0 -- Adds NVR/Hub recording control: a master record on/off switch plus named per-channel schedule presets, both reachable from the bridge device's Switch/PushableButton capabilities (or loadPreset(name) for per-rule branching) so no Custom Action is needed in Rule Machine. Presets are edited with a plain-language picker (Continuous / Never record / a daily time range / don't manage) by default, with an opt-in Advanced mode for raw per-hour schedule strings. A new per-device \"Exclude from ALL recording presets\" lock on the Camera/Doorbell drivers permanently protects a channel (e.g. a battery-class WiFi doorbell) from any preset write, regardless of what that preset specifies. Also adds a read-only checkRecordingSchedule diagnostic command to both drivers. Confirmed against a real RLN16-410 NVR across extensive live testing before release.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "communityLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "author": "jdthomas24",
-    "version": "1.4.6",
+    "version": "1.5.0",
     "minimumHEVersion": "2.3.0",
     "dateReleased": "2026-08-14",
     "category": "Integrations",
