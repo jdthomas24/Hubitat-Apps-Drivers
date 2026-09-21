@@ -76,6 +76,44 @@
          tonight, just never applied here too. Now calls
          removeAllActivityDevices() on each Remote before deleting it, so
          a full app removal genuinely leaves nothing orphaned behind.
+    2026-09-17 jdthomas24
+        -Added a confirmation log at the top of publishMqttActivityControl()
+         showing the mac/activityId/state being requested plus the current
+         mqttConnected/mqttUrl state, BEFORE the connected-check can bail
+         out early. Final hop of a three-file logging trail (Activity ->
+         Remote -> Bridge) added tonight: a test command's path can now be
+         traced end to end (request received here -> connection state at
+         that moment -> exact topic/payload published, or the exact reason
+         it wasn't) instead of only knowing "nothing happened" with no
+         visibility into which hop stopped it or why.
+        -parse() now logs the raw topic + payload of EVERY message at
+         debug level as the very first thing it does, before the existing
+         topic-filter check that only recognizes activity_control_up,
+         activity_control_down, and list. Previously an unrecognized topic
+         (e.g. a list_response, or any topic name not yet accounted for)
+         only logged "ignoring unrecognized topic" -- the topic name was
+         visible, but the actual payload on it was not, which matters if
+         the X2 hub is responding somewhere unexpected.
+        -TEST: replaced the activity/+/... wildcard subscribes with exact
+         per-hub topics (activity/{mac}/...). Confirmed problem: connect
+         and subscribe both report success, but zero messages have ever
+         been received by this device, even while MQTT Explorer -- same
+         broker, same credentials -- shows the X2 hub actively publishing.
+         Testing whether Hubitat's built-in MQTT broker (officially beta)
+         has an issue with + wildcard subscriptions. If exact topics also
+         receive nothing, this isn't a wildcard issue and should be
+         reverted. Removed the untested list_request startup publish and
+         its dead-end late-night direction-guessing comments -- neither
+         led anywhere and they were cluttering this method.
+    2026-09-20 jdthomas24
+        -Added checkBuiltInBroker command, testing
+         hubitat.helper.MQTTHelper.isBuiltInBrokerRunning() -- the proper
+         broker-status API gopher.ny mentioned adding, in response to a
+         platform issue reported this week: interfaces.mqtt connects and
+         subscribes successfully but never delivers incoming messages to
+         parse(), confirmed with a standalone minimal test driver
+         (isolated from all Sofabaton code) on a completely unrelated
+         topic. Reported to Hubitat support with the isolated test case.
 
     *OVERVIEW
      Grouping anchor for the Sofabaton Integration, and (for X2 hubs) the
@@ -99,13 +137,15 @@
 import groovy.json.JsonSlurper
 import groovy.json.JsonOutput
 
-def version() { return "1.2.0" }
+def version() { return "1.5.0" }
 
 metadata {
     definition (name: "Sofabaton Integration Bridge", namespace: "jdthomas24", author: "Jason Thomas") {
         capability "Actuator"
         attribute "mqttStatus", "string"
+        attribute "brokerRunning", "string"
         command "forceReconnectMqtt"
+        command "checkBuiltInBroker"
     }
     preferences {
         input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: false
@@ -225,36 +265,22 @@ void mqttClientStatus(String message) {
         state.mqttConnected = true
         sendEvent(name: "mqttStatus", value: "connected")
         try {
-            // 2026-09-16 late addition: this file originally only
-            // subscribed to activity_control_up, based on an earlier
-            // direct MQTT Explorer observation on this hardware. A real,
-            // working HA integration (yomonpet/ha-sofabaton-hub) documents
-            // the OPPOSITE direction: _up as the command-publish topic,
-            // _down as the state-broadcast/subscribe topic. Rather than
-            // pick one and risk being wrong again, subscribe to BOTH so
-            // whichever direction is actually correct gets caught, and log
-            // exactly which suffix each message arrives on for a
-            // definitive answer.
-            interfaces.mqtt.subscribe("activity/+/activity_control_up")
-            interfaces.mqtt.subscribe("activity/+/activity_control_down")
-            interfaces.mqtt.subscribe("activity/+/list")
-            if (txtEnable) log.info "Sofabaton Bridge: MQTT subscribed to activity/+/activity_control_up, activity/+/activity_control_down, and activity/+/list"
-        } catch (e) {
-            log.error "Sofabaton Bridge: MQTT subscribe failed: ${e.message}"
-        }
-        // yomonpet/ha-sofabaton-hub's documented startup sequence actively
-        // REQUESTS data after subscribing (publishing to .../list_request)
-        // rather than only passively waiting for broadcasts. Never tried
-        // before tonight -- worth testing whether the hub only starts
-        // talking to a client that first announces itself this way.
-        try {
+            // 2026-09-17 TEST: switched from wildcard subscribes
+            // (activity/+/...) to exact per-hub MAC topics. Wildcard
+            // subscribes reported success but zero messages were ever
+            // received, even with hardware confirmed actively publishing
+            // on the same broker/credentials (verified via MQTT Explorer).
+            // Testing whether Hubitat's built-in MQTT broker (beta) has an
+            // issue with + wildcard subscriptions specifically.
             getChildDevices()?.findAll { it.currentValue("hubModel") == "X2" }?.each { x2 ->
-                String requestTopic = "activity/${x2.deviceNetworkId}/list_request"
-                interfaces.mqtt.publish(requestTopic, "{}")
-                if (txtEnable) log.info "Sofabaton Bridge: published empty request to $requestTopic (untested -- seeing if this prompts the hub to respond)"
+                String mac = x2.deviceNetworkId
+                interfaces.mqtt.subscribe("activity/${mac}/activity_control_up")
+                interfaces.mqtt.subscribe("activity/${mac}/activity_control_down")
+                interfaces.mqtt.subscribe("activity/${mac}/list")
+                if (txtEnable) log.info "Sofabaton Bridge: MQTT subscribed to exact topics for MAC $mac"
             }
         } catch (e) {
-            log.error "Sofabaton Bridge: list_request publish failed: ${e.message}"
+            log.error "Sofabaton Bridge: MQTT subscribe failed: ${e.message}"
         }
         return
     }
@@ -282,6 +308,27 @@ void forceReconnectMqtt() {
     }
 }
 
+// 2026-09-20: tests hubitat.helper.MQTTHelper.isBuiltInBrokerRunning(),
+// the proper broker-status API gopher.ny mentioned adding (previously
+// there was no way to check this at all short of attempting a real
+// connection). Wrapped in try/catch since calling a method that doesn't
+// exist yet on this platform build throws -- that failure is itself
+// useful diagnostic info, not just noise, it tells you the build hasn't
+// picked up the update yet rather than that the broker is down. Once
+// confirmed working on a real build, this could let ensureMqttConnected()
+// check broker status before attempting a connect, rather than only
+// finding out via a failed connect attempt.
+void checkBuiltInBroker() {
+    try {
+        boolean running = hubitat.helper.MQTTHelper.isBuiltInBrokerRunning()
+        log.info "Sofabaton Bridge: isBuiltInBrokerRunning() = $running"
+        sendEvent(name: "brokerRunning", value: running.toString())
+    } catch (e) {
+        log.error "Sofabaton Bridge: isBuiltInBrokerRunning() call failed -- ${e.message} (if this says something like 'No such method' or 'MissingMethodException', this Hubitat build doesn't have the new helper method yet)"
+        sendEvent(name: "brokerRunning", value: "method unavailable")
+    }
+}
+
 // interfaces.mqtt.parseMessage() incoming handler. Confirmed real payload
 // shape against hardware: topic activity/{MAC}/activity_control_up, JSON
 // body {"activity_id":<id>,"state":"on"/"off"}. activity_id 255 is a
@@ -290,7 +337,13 @@ void forceReconnectMqtt() {
 void parse(String description) {
     try {
         def msg = interfaces.mqtt.parseMessage(description)
-        if (logEnable) log.debug "Sofabaton Bridge: MQTT message received -- topic=${msg.topic}, payload=${msg.payload}"
+        // 2026-09-17: logged as the very first thing, before the topic
+        // filter below. Previously an unrecognized topic only logged
+        // "ignoring unrecognized topic <name>" -- the payload itself was
+        // never visible. This catches anything arriving on a topic this
+        // driver doesn't yet know about (e.g. a list_response), not just
+        // the three topics currently filtered for.
+        if (logEnable) log.debug "Sofabaton Bridge: RAW MQTT message -- topic=${msg.topic}, payload=${msg.payload}"
         String topic = msg.topic
         String payload = msg.payload
         def parts = topic.split("/")
@@ -338,6 +391,12 @@ void parse(String description) {
 // activity_control_down is built to the spec doc's documented shape but
 // has not yet been confirmed to actually work against real hardware.
 void publishMqttActivityControl(String mac, Integer activityId, String desiredState) {
+    // 2026-09-17: final hop of the three-file logging trail (Activity ->
+    // Remote -> Bridge). Logged BEFORE the connected-check below so this
+    // line always appears even if the publish is about to be rejected --
+    // shows exactly what was requested and what this device believed its
+    // own connection state to be at that moment.
+    if (txtEnable) log.info "Sofabaton Bridge: publish requested -- mac=$mac, activityId=$activityId, state=$desiredState, mqttConnected=${state.mqttConnected}, mqttUrl=${state.mqttUrl}"
     if (!state.mqttConnected) {
         log.error "Sofabaton Bridge: cannot publish, MQTT is not connected"
         return
