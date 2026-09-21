@@ -5,10 +5,10 @@ This guide walks through setting up a Sofabaton hub with this integration, start
 🟠 X1S — one-way read (local, instant), commands sent via cloud webhook
 🟢 X2 — one-way read (local, instant, via MQTT), commands sent via cloud webhook (local two-way command control is planned but blocked on a platform issue — see Known Issues below)
 
-Throughout this guide, each step is tagged with where you actually do it:
+Throughout this guide, each step's tag sits on its own line right above it, so the step numbers all line up and you can tell at a glance which app the step below it happens in:
 
-🔷 Hubitat — you're in the Sofabaton Integration app or a device page
-🟣 Sofabaton app — you're in the Sofabaton mobile app, not Hubitat at all
+🔷 Hubitat — the step below happens in the Sofabaton Integration app or a device page
+🟣 Sofabaton app — the step below happens in the Sofabaton mobile app, not Hubitat at all
 Before you start (both models)
 Give your Sofabaton hub a static IP. Set a DHCP reservation for it on your router. Both setup paths below need an IP address that will never change — if it changes later, the integration breaks silently until you fix it.
 Install this integration. In Hubitat: Apps → Add User App → search "Sofabaton Integration". This creates the app and, once you add your first hub, a Sofabaton Integration Bridge device underneath it automatically.
@@ -16,13 +16,15 @@ Know which hub you have. It's printed on the hub itself, or check the Sofabaton 
 🟠 X1S Setup
 Step 1 — Add the hub in Hubitat
 
-🔷 Hubitat — In the Sofabaton Integration app: Add a Hub → Hub Model: X1S → enter the hub's static IP address from step 1 above → Add This Hub.
+🔷 Hubitat
+
+In the Sofabaton Integration app: Add a Hub → Hub Model: X1S → enter the hub's static IP address from step 1 above → Add This Hub.
 
 Step 2 — Point the Sofabaton app at Hubitat (for reads)
 
 This is what lets the physical remote tell Hubitat "an activity changed."
 
-🟣 Sofabaton app —
+🟣 Sofabaton app
 
 Devices → Add Device → Wi-Fi → "Create a virtual device for IP control"
 URL: http://[your Hubitat IP]:39501/
@@ -33,7 +35,7 @@ Step 3 — Turn on the cloud API (for commands)
 
 This is what lets Hubitat actually turn an activity on/off. It's a separate step from Step 2, don't skip it thinking Step 2 covers both directions, it doesn't.
 
-🟣 Sofabaton app —
+🟣 Sofabaton app
 
 Find the activity → look for "Turn on API" (this is sometimes just called "API" depending on app version)
 Enable it. The app will generate a webhook URL — a long https://app1.sofabaton.com/... link. It may generate a separate URL for turning the activity on and off, or just one depending on the app version.
@@ -43,7 +45,9 @@ Copy this URL down. You'll paste it into Hubitat in the next step.
 
 Step 4 — Add the Activity in Hubitat
 
-🔷 Hubitat — In the Sofabaton Integration app: Add an Activity → pick this hub →
+🔷 Hubitat
+
+In the Sofabaton Integration app: Add an Activity → pick this hub →
 
 Activity Name: must exactly match the label you're using for this activity on the physical remote. See How does name matching work? below, this trips people up.
 Start Activity Webhook URL: paste the URL from Step 3
@@ -53,12 +57,25 @@ Click Add This Activity.
 
 Step 5 — Finish
 
-🔷 Hubitat — Back on the main app page, click Done at the bottom. This step is easy to miss, and skipping it means the app never fully installs — hubs and activities you already added will still work, but you should still click Done once you're finished for the session.
+🔷 Hubitat
+
+Back on the main app page, click Done at the bottom. This step is easy to miss, and skipping it means the app never fully installs — hubs and activities you already added will still work, but you should still click Done once you're finished for the session.
+
+Worked example — an "Apple TV" activity
+
+To make all of the above concrete, here's the same activity carried through every step:
+
+Where	What you enter	Value
+Step 2, body value	the text you send from the Sofabaton app	appleTV
+Remote device Preferences, User 1 (11)	matchString|Description	appleTV|Apple TV
+Step 4, Activity Name in Hubitat	must match the Description half above	Apple TV
+
+appleTV (the matchString) has to exactly equal what you typed as the body value in Step 2. Apple TV (the Description, and the Hubitat Activity Name) has to exactly equal each other, capitalization and spacing included. If any of these three don't line up, the remote still controls your gear fine, Hubitat just won't know the activity changed.
 
 🟢 X2 Setup
 Step 1 — Get the built-in MQTT broker running
 
-🔷 Hubitat —
+🔷 Hubitat
 
 Integrations → Add Built-In App → MQTT Import Integration
 Enable it, turn on "Use built-in MQTT service"
@@ -67,14 +84,16 @@ Step 2 — Find your X2 hub's MAC address
 
 This is not your Hubitat hub's MAC, it's the Sofabaton hub's own MAC, and it's easy to grab the wrong one.
 
-🟣 Sofabaton hub (via an external MQTT tool) —
+🟣 Sofabaton hub (via an external MQTT tool)
 
 Connect an MQTT client (like MQTT Explorer) to the broker from Step 1, using the host/port/login it gave you
 Press any activity button on the physical Sofabaton remote
 Look for a topic like activity/14639332AA40/activity_control_up — the 12-character hex string in the middle is your X2's MAC
 Step 3 — Add the hub in Hubitat
 
-🔷 Hubitat — In the Sofabaton Integration app: Add a Hub → Hub Model: X2 →
+🔷 Hubitat
+
+In the Sofabaton Integration app: Add a Hub → Hub Model: X2 →
 
 Sofabaton Hub MAC ID: the MAC from Step 2
 Hubitat Hub's LAN IP: the broker host from Step 1 (this is Hubitat's IP, not the Sofabaton hub's IP)
@@ -84,11 +103,15 @@ Click Add This Hub.
 
 Step 4 — Turn on the cloud API (for commands)
 
-🟣 Sofabaton app — Same as X1S Step 3 above: find the activity, turn on "Turn on API", copy the webhook URL(s) it generates.
+🟣 Sofabaton app
+
+Same as X1S Step 3 above: find the activity, turn on "Turn on API", copy the webhook URL(s) it generates.
 
 Step 5 — Add the Activity in Hubitat
 
-🔷 Hubitat — In the Sofabaton Integration app: Add an Activity → pick this hub →
+🔷 Hubitat
+
+In the Sofabaton Integration app: Add an Activity → pick this hub →
 
 Activity Name: any name you want (X2 doesn't require name-matching the way X1S does — X2 matches by numeric ID instead, see next field)
 Sofabaton Activity ID: this is required, it's what lets Hubitat know which physical activity this is when the remote reports a change. Either:
@@ -100,7 +123,17 @@ Click Add This Activity.
 
 Step 6 — Finish
 
-🔷 Hubitat — Same as X1S: click Done at the bottom of the main app page.
+🔷 Hubitat
+
+Same as X1S: click Done at the bottom of the main app page.
+
+Worked example — the same "Apple TV" activity
+Where	What you enter	Value
+Step 2/5, MAC / topic	read off the MQTT payload	14639332AA40
+Step 5, Sofabaton Activity ID	a plain number, e.g. {"activity_id":101,"state":"on"}	101
+Step 5, Activity Name in Hubitat	just a label, doesn't need to match anything	Apple TV
+
+Unlike X1S, the Activity Name here is purely cosmetic, it never has to match anything in the Sofabaton app. The Sofabaton Activity ID is the only value that actually has to be correct.
 
 Known issues right now
 
