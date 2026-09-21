@@ -1,17 +1,26 @@
 /**
  * Reolink Doorbell (Component Driver)
- * Version: 1.5.0-beta21
+ * Version: 1.5.1
  *
  * Same delegation pattern as Reolink Camera, plus a "visitor" (button press)
  * event so Rule Machine can trigger straight off "pushed 1" for a doorbell
  * ring, separate from AI person/motion detection.
  *
- * v1.5.0-beta20 (app-driven feature, no code change needed here beyond the
- * preference itself): excludeFromRecordingPresets is read directly by the
- * app inside componentLoadPreset() -- when true, no preset will ever write
- * a new schedule to this device. This is the primary intended use case
- * (excluding a battery-class WiFi doorbell from a preset meant for wired
- * channels) -- see ParentApp.groovy's beta20 note.
+ * v1.5.1 -- No functional change to this driver (version kept in sync with
+ * the rest of the release); the actual fix was six missing passthrough
+ * methods in ReolinkStandaloneDevices.groovy -- see that file's header for
+ * details.
+ * v1.5.0 -- NVR recording-control support: excludeFromRecordingPresets
+ * preference (below) is read directly by the app (ch.getSetting(...), same
+ * technique already used for batteryCheckEnabled etc.) inside
+ * componentLoadPreset() -- when true, no preset will ever write a new
+ * schedule to this device, regardless of what that preset specifies. This
+ * is the primary intended use case (excluding a battery-class WiFi
+ * doorbell from a preset meant for wired channels) -- see ParentApp.groovy
+ * for the enforcement side and the Recording Presets page's 🔒 display.
+ * Also added checkRecordingSchedule() -- a diagnostic-only command that
+ * reads and logs this channel's current NVR recording schedule without
+ * changing anything (requires Full logging to see the result).
  * v1.4.2 -- HOTFIX: bare paragraph("text") calls in preferences are App-DSL
  * only and don't exist on a driver's compiled script -- caused a fatal
  * "No signature of method: Script1.paragraph()" on save/update, blocking the
@@ -90,8 +99,8 @@ metadata {
                 "own refresh rate does NOT make the image any fresher than this -- it just re-displays whatever " +
                 "was last cached at this interval. Kept separate from poll interval so motion/visitor detection " +
                 "can stay fast without forcing a full image download that often."
-        // v1.5.0-beta20: permanent, per-device lock -- see CameraDriver.groovy's
-        // matching preference for the full comment. Same behavior here.
+        // Permanent, per-device lock -- see CameraDriver.groovy's matching
+        // preference for the full comment. Same behavior here.
         input name: "excludeFromRecordingPresets", type: "bool",
             title: "🔒 Exclude this device from ALL recording presets", defaultValue: false,
             description: "When ON, loading ANY preset will never write a new recording schedule to this " +
@@ -118,8 +127,10 @@ def checkAbilities() {
     parent?.componentCheckAbilities(this, device.deviceNetworkId)
 }
 /**
- * v1.5.0-beta21 FIX: see CameraDriver.groovy's matching comment -- same
- * gap, same fix. Diagnostic only, never writes anything.
+ * Diagnostic only: reads and logs this channel's current NVR recording
+ * schedule, never writes anything. Requires the app's Log level set to
+ * Full to see the result (same as any other logNormal/logFull-routed
+ * message).
  */
 def checkRecordingSchedule() {
     parent?.componentCheckRecordingSchedule(this, device.deviceNetworkId)
