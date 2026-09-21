@@ -1,6 +1,6 @@
 /**
  * Reolink Standalone Devices (Internal Group Driver)
- * Version: 1.5.0
+ * Version: 1.5.1
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- exactly ONE instance total, shared across every
@@ -16,6 +16,36 @@
  * becomes a child of THIS device instead -- one collapsible entry holding
  * every standalone camera/doorbell's bridge, instead of N separate unnested
  * bridges.
+ *
+ * v1.5.1 -- HOTFIX: six passthrough gaps found and closed, all the same
+ * root-cause pattern as v1.4.3/v1.4.6 below -- ReolinkDeviceBridge.groovy
+ * calls parent?.componentX(...) for a method this file never mirrored.
+ *  1. componentEventConnectionStatus() -- reported in production:
+ *     MissingMethodException the moment a standalone doorbell's event
+ *     subscription came up (also fires on every connecting/reconnecting/
+ *     disconnected transition). Every standalone source has been silently
+ *     losing this call since whichever release first added it to the
+ *     bridge (before v1.5.0; exact version not pinned down).
+ *  2. componentEventSleepUpdate() -- same gap for sleep-status pushes
+ *     (cmd_id=145). Lower-probability in practice, since standalone
+ *     battery devices are a closed, unsupported case (see the app's Tips
+ *     page), but a wired standalone doorbell could still trigger this.
+ *  3-6. componentLoadPreset(), componentSetRecordingEnabled(),
+ *     componentBridgeButtonPushed(), componentGetPresetNames() -- all four
+ *     added to the bridge in v1.5.0 for NVR recording control. The app's
+ *     UI only ever links to that feature for Hub/NVR sources
+ *     (discoverPage()'s Recording Control section is gated on src.isHub),
+ *     so none of v1.5.0's beta testing (done entirely against a real
+ *     RLN16-410 NVR) ever exercised these against a standalone bridge.
+ *     The bridge's Switch/PushableButton capabilities are declared
+ *     unconditionally on every bridge though (standalone included), so
+ *     on()/off()/push()/loadPreset() were reachable right now via Rule
+ *     Machine or the device page on a standalone source and would have
+ *     thrown the same MissingMethodException as #1 above.
+ *     componentGetPresetNames() doesn't crash -- the bridge's own
+ *     getAvailablePresetNames() wraps that call in a try/catch -- but
+ *     silently left the "Preset to load" dropdown permanently empty for a
+ *     standalone source instead of erroring loudly.
  *
  * v1.4.6 -- HOTFIX: a standalone wired doorbell was throwing
  * MissingMethodException on componentEventChannelUpdate() for every real-
@@ -144,3 +174,14 @@ def componentCheckPtzCalibrationStatus(child, String dni = null) { parent?.compo
 def componentSetPollInterval(child, Integer seconds, String dni = null) { parent?.componentSetPollInterval(child, seconds, dni) }
 def componentSetSnapshotInterval(child, Integer seconds, String dni = null) { parent?.componentSetSnapshotInterval(child, seconds, dni) }
 def componentEventChannelUpdate(child, sourceId, channelId, String status, String aiType) { parent?.componentEventChannelUpdate(child, sourceId, channelId, status, aiType) }
+
+// ============================================================================
+// v1.5.1: six more gaps in the SAME passthrough class -- see the header
+// note's v1.5.1 entry above for the full breakdown of each one.
+// ============================================================================
+def componentEventConnectionStatus(child, sourceId, String status) { parent?.componentEventConnectionStatus(child, sourceId, status) }
+def componentEventSleepUpdate(child, sourceId, channelId, String sleepState) { parent?.componentEventSleepUpdate(child, sourceId, channelId, sleepState) }
+def componentLoadPreset(child, sourceId, String presetName) { parent?.componentLoadPreset(child, sourceId, presetName) }
+def componentSetRecordingEnabled(child, sourceId, Boolean enabled) { parent?.componentSetRecordingEnabled(child, sourceId, enabled) }
+def componentBridgeButtonPushed(child, sourceId, Integer btn) { parent?.componentBridgeButtonPushed(child, sourceId, btn) }
+def componentGetPresetNames(sourceId) { return parent?.componentGetPresetNames(sourceId) }
