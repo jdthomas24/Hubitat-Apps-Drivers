@@ -1,5 +1,5 @@
 /*
-    MQTT Minimal Test Driver
+    Sofabaton MQTT Minimal Test Driver
     Purpose: isolate whether Hubitat's interfaces.mqtt actually delivers
     messages to parse(), independent of the Sofabaton Integration's
     Bridge/Remote/Activity device hierarchy entirely.
@@ -19,22 +19,23 @@
        platform-level interfaces.mqtt issue, not anything in the Sofabaton
        Integration's own code.
 
-    2026-09-20: added checkBuiltInBroker command -- tests
-    hubitat.helper.MQTTHelper.isBuiltInBrokerRunning(), the proper
-    broker-status API gopher.ny mentioned adding. Just hit that command
-    on the Commands tab and check the logs/brokerRunning attribute; no
-    connection needs to be active first.
+    2026-09-20: tried adding a checkBuiltInBroker command to test
+    hubitat.helper.MQTTHelper.isBuiltInBrokerRunning() (the proper
+    broker-status API gopher.ny mentioned adding). Removed again the same
+    day: a compile-time import throws "unable to resolve class" on this
+    platform build, meaning the class doesn't exist here yet -- that
+    error is itself the answer. Hubitat's sandbox also separately blocks
+    Class.forName() as a runtime workaround. No sandbox-safe way exists
+    to probe for this right now.
 */
 
 metadata {
-    definition (name: "MQTT Minimal Test", namespace: "jdthomas24", author: "Jason Thomas") {
+    definition (name: "Sofabaton MQTT Minimal Test", namespace: "jdthomas24", author: "Jason Thomas") {
         capability "Actuator"
         attribute "mqttStatus", "string"
         attribute "lastMessage", "string"
-        attribute "brokerRunning", "string"
         command "connectMqtt"
         command "disconnectMqtt"
-        command "checkBuiltInBroker"
     }
     preferences {
         input name: "mqttHost", type: "text", title: "Broker Host/IP", defaultValue: "192.168.1.129"
@@ -47,21 +48,21 @@ metadata {
 }
 
 void installed() {
-    log.info "MQTT Minimal Test installed"
+    log.info "Sofabaton MQTT Minimal Test installed"
 }
 
 void updated() {
-    log.info "MQTT Minimal Test updated"
+    log.info "Sofabaton MQTT Minimal Test updated"
 }
 
 void connectMqtt() {
     String url = "tcp://${mqttHost}:${mqttPort}"
-    log.info "MQTT Minimal Test: connecting to $url, will subscribe to '${testTopic}'"
+    log.info "Sofabaton MQTT Minimal Test: connecting to $url, will subscribe to '${testTopic}'"
     try {
         String clientId = "sofabaton-minimal-test-${device.id}"
         interfaces.mqtt.connect(url, clientId, mqttUser ?: null, mqttPass ?: null)
     } catch (e) {
-        log.error "MQTT Minimal Test: connect failed: ${e.message}"
+        log.error "Sofabaton MQTT Minimal Test: connect failed: ${e.message}"
         sendEvent(name: "mqttStatus", value: "connect failed")
     }
 }
@@ -71,29 +72,11 @@ void disconnectMqtt() {
         interfaces.mqtt.disconnect()
     } catch (e) { }
     sendEvent(name: "mqttStatus", value: "disconnected")
-    log.info "MQTT Minimal Test: disconnected"
-}
-
-// 2026-09-20: tests whether gopher's new built-in-broker-status check
-// (hubitat.helper.MQTTHelper.isBuiltInBrokerRunning()) exists and works
-// on this platform build yet. Wrapped in try/catch since on any build
-// before it ships, calling a method that doesn't exist yet throws a
-// MissingMethodException -- that failure is itself useful information
-// (confirms the platform hasn't picked up the update), not just an error
-// to ignore.
-void checkBuiltInBroker() {
-    try {
-        boolean running = hubitat.helper.MQTTHelper.isBuiltInBrokerRunning()
-        log.info "MQTT Minimal Test: isBuiltInBrokerRunning() = $running"
-        sendEvent(name: "brokerRunning", value: running.toString())
-    } catch (e) {
-        log.error "MQTT Minimal Test: isBuiltInBrokerRunning() call failed -- ${e.message} (if this says something like 'No such method' or 'MissingMethodException', this Hubitat build doesn't have the new helper method yet)"
-        sendEvent(name: "brokerRunning", value: "method unavailable")
-    }
+    log.info "Sofabaton MQTT Minimal Test: disconnected"
 }
 
 void mqttClientStatus(String message) {
-    log.info "MQTT Minimal Test: mqttClientStatus -- $message"
+    log.info "Sofabaton MQTT Minimal Test: mqttClientStatus -- $message"
     if (message.startsWith("Error")) {
         sendEvent(name: "mqttStatus", value: "error")
         return
@@ -102,9 +85,9 @@ void mqttClientStatus(String message) {
         sendEvent(name: "mqttStatus", value: "connected")
         try {
             interfaces.mqtt.subscribe(testTopic)
-            log.info "MQTT Minimal Test: subscribed to '${testTopic}'"
+            log.info "Sofabaton MQTT Minimal Test: subscribed to '${testTopic}'"
         } catch (e) {
-            log.error "MQTT Minimal Test: subscribe failed: ${e.message}"
+            log.error "Sofabaton MQTT Minimal Test: subscribe failed: ${e.message}"
         }
     }
 }
@@ -115,12 +98,12 @@ void mqttClientStatus(String message) {
 // problem is not in the Sofabaton Integration's own parse()/topic-filter
 // logic -- it's upstream of that, in interfaces.mqtt itself.
 void parse(String description) {
-    log.warn "MQTT Minimal Test: *** MESSAGE RECEIVED *** raw description: $description"
+    log.warn "Sofabaton MQTT Minimal Test: *** MESSAGE RECEIVED *** raw description: $description"
     try {
         def msg = interfaces.mqtt.parseMessage(description)
-        log.warn "MQTT Minimal Test: topic=${msg.topic}, payload=${msg.payload}"
+        log.warn "Sofabaton MQTT Minimal Test: topic=${msg.topic}, payload=${msg.payload}"
         sendEvent(name: "lastMessage", value: "${msg.topic} = ${msg.payload}")
     } catch (e) {
-        log.error "MQTT Minimal Test: failed to parse message: ${e.message}"
+        log.error "Sofabaton MQTT Minimal Test: failed to parse message: ${e.message}"
     }
 }
