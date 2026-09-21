@@ -18,6 +18,12 @@
     7. Watch for ANY log line here. If nothing shows up, this is a real
        platform-level interfaces.mqtt issue, not anything in the Sofabaton
        Integration's own code.
+
+    2026-09-20: added checkBuiltInBroker command -- tests
+    hubitat.helper.MQTTHelper.isBuiltInBrokerRunning(), the proper
+    broker-status API gopher.ny mentioned adding. Just hit that command
+    on the Commands tab and check the logs/brokerRunning attribute; no
+    connection needs to be active first.
 */
 
 metadata {
@@ -25,15 +31,17 @@ metadata {
         capability "Actuator"
         attribute "mqttStatus", "string"
         attribute "lastMessage", "string"
+        attribute "brokerRunning", "string"
         command "connectMqtt"
         command "disconnectMqtt"
+        command "checkBuiltInBroker"
     }
     preferences {
         input name: "mqttHost", type: "text", title: "Broker Host/IP", defaultValue: "192.168.1.129"
         input name: "mqttPort", type: "text", title: "Broker Port", defaultValue: "1883"
         input name: "mqttUser", type: "text", title: "Broker Username", defaultValue: "hubitat"
         input name: "mqttPass", type: "password", title: "Broker Password"
-        input name: "testTopic", type: "text", title: "Topic to subscribe to (exact, no wildcard)", defaultValue: "activity/14639332AA40/activity_control_up"
+        input name: "testTopic", type: "text", title: "Topic to subscribe to (exact, no wildcard)", defaultValue: "test/hello"
         input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: true
     }
 }
@@ -64,6 +72,24 @@ void disconnectMqtt() {
     } catch (e) { }
     sendEvent(name: "mqttStatus", value: "disconnected")
     log.info "MQTT Minimal Test: disconnected"
+}
+
+// 2026-09-20: tests whether gopher's new built-in-broker-status check
+// (hubitat.helper.MQTTHelper.isBuiltInBrokerRunning()) exists and works
+// on this platform build yet. Wrapped in try/catch since on any build
+// before it ships, calling a method that doesn't exist yet throws a
+// MissingMethodException -- that failure is itself useful information
+// (confirms the platform hasn't picked up the update), not just an error
+// to ignore.
+void checkBuiltInBroker() {
+    try {
+        boolean running = hubitat.helper.MQTTHelper.isBuiltInBrokerRunning()
+        log.info "MQTT Minimal Test: isBuiltInBrokerRunning() = $running"
+        sendEvent(name: "brokerRunning", value: running.toString())
+    } catch (e) {
+        log.error "MQTT Minimal Test: isBuiltInBrokerRunning() call failed -- ${e.message} (if this says something like 'No such method' or 'MissingMethodException', this Hubitat build doesn't have the new helper method yet)"
+        sendEvent(name: "brokerRunning", value: "method unavailable")
+    }
 }
 
 void mqttClientStatus(String message) {
