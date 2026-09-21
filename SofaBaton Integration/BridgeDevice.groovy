@@ -106,7 +106,7 @@
          its dead-end late-night direction-guessing comments -- neither
          led anywhere and they were cluttering this method.
     2026-09-20 jdthomas24
-        -Added checkBuiltInBroker command, testing
+        -Attempted a checkBuiltInBroker command, testing
          hubitat.helper.MQTTHelper.isBuiltInBrokerRunning() -- the proper
          broker-status API gopher.ny mentioned adding, in response to a
          platform issue reported this week: interfaces.mqtt connects and
@@ -114,6 +114,14 @@
          parse(), confirmed with a standalone minimal test driver
          (isolated from all Sofabaton code) on a completely unrelated
          topic. Reported to Hubitat support with the isolated test case.
+         REMOVED again the same day: a compile-time import of that class
+         throws "unable to resolve class" on this platform build (the
+         class doesn't exist here yet -- that error is itself the answer),
+         and Hubitat's sandbox separately disallows Class.forName() as a
+         runtime workaround ("Expression [MethodCallExpression] is not
+         allowed"). No sandbox-safe way exists to probe for this right
+         now; re-add once the platform build notes confirm the method has
+         actually shipped.
 
     *OVERVIEW
      Grouping anchor for the Sofabaton Integration, and (for X2 hubs) the
@@ -143,9 +151,7 @@ metadata {
     definition (name: "Sofabaton Integration Bridge", namespace: "jdthomas24", author: "Jason Thomas") {
         capability "Actuator"
         attribute "mqttStatus", "string"
-        attribute "brokerRunning", "string"
         command "forceReconnectMqtt"
-        command "checkBuiltInBroker"
     }
     preferences {
         input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: false
@@ -305,27 +311,6 @@ void forceReconnectMqtt() {
         x2Hub.updated()
     } else {
         log.warn "Sofabaton Bridge: no X2 hub child found to resupply broker credentials for reconnect"
-    }
-}
-
-// 2026-09-20: tests hubitat.helper.MQTTHelper.isBuiltInBrokerRunning(),
-// the proper broker-status API gopher.ny mentioned adding (previously
-// there was no way to check this at all short of attempting a real
-// connection). Deliberately does NOT use a compile-time "import
-// hubitat.helper.MQTTHelper" -- confirmed the hard way that if the class
-// doesn't exist on this platform build, an import failure can break the
-// WHOLE FILE from compiling/saving, not just this one command. Class.
-// forName() at runtime, inside try/catch, means the rest of the driver
-// stays safe regardless of whether this platform has the class yet.
-void checkBuiltInBroker() {
-    try {
-        def helperClass = Class.forName("hubitat.helper.MQTTHelper")
-        boolean running = helperClass."isBuiltInBrokerRunning"()
-        log.info "Sofabaton Bridge: isBuiltInBrokerRunning() = $running"
-        sendEvent(name: "brokerRunning", value: running.toString())
-    } catch (e) {
-        log.error "Sofabaton Bridge: isBuiltInBrokerRunning() call failed -- ${e.message} (a ClassNotFoundException means this Hubitat build doesn't have the new helper method yet)"
-        sendEvent(name: "brokerRunning", value: "method unavailable")
     }
 }
 
