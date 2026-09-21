@@ -311,20 +311,20 @@ void forceReconnectMqtt() {
 // 2026-09-20: tests hubitat.helper.MQTTHelper.isBuiltInBrokerRunning(),
 // the proper broker-status API gopher.ny mentioned adding (previously
 // there was no way to check this at all short of attempting a real
-// connection). Wrapped in try/catch since calling a method that doesn't
-// exist yet on this platform build throws -- that failure is itself
-// useful diagnostic info, not just noise, it tells you the build hasn't
-// picked up the update yet rather than that the broker is down. Once
-// confirmed working on a real build, this could let ensureMqttConnected()
-// check broker status before attempting a connect, rather than only
-// finding out via a failed connect attempt.
+// connection). Deliberately does NOT use a compile-time "import
+// hubitat.helper.MQTTHelper" -- confirmed the hard way that if the class
+// doesn't exist on this platform build, an import failure can break the
+// WHOLE FILE from compiling/saving, not just this one command. Class.
+// forName() at runtime, inside try/catch, means the rest of the driver
+// stays safe regardless of whether this platform has the class yet.
 void checkBuiltInBroker() {
     try {
-        boolean running = hubitat.helper.MQTTHelper.isBuiltInBrokerRunning()
+        def helperClass = Class.forName("hubitat.helper.MQTTHelper")
+        boolean running = helperClass."isBuiltInBrokerRunning"()
         log.info "Sofabaton Bridge: isBuiltInBrokerRunning() = $running"
         sendEvent(name: "brokerRunning", value: running.toString())
     } catch (e) {
-        log.error "Sofabaton Bridge: isBuiltInBrokerRunning() call failed -- ${e.message} (if this says something like 'No such method' or 'MissingMethodException', this Hubitat build doesn't have the new helper method yet)"
+        log.error "Sofabaton Bridge: isBuiltInBrokerRunning() call failed -- ${e.message} (a ClassNotFoundException means this Hubitat build doesn't have the new helper method yet)"
         sendEvent(name: "brokerRunning", value: "method unavailable")
     }
 }
