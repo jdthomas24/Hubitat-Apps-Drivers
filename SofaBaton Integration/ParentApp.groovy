@@ -790,7 +790,7 @@ def helpPage() {
             paragraph "<span style='background:#5f8b6f;color:#fff;border-radius:10px;padding:2px 10px;font-size:0.95em;font-weight:bold'>X2</span> <b>Setup</b>"
             paragraph "$hubitatPill<br><b>1.</b> Integrations &rarr; Add Built-In App &rarr; MQTT Import Integration &rarr; enable, turn on 'Use built-in MQTT service'. Note the host/port/login shown."
             paragraph "$sofabatonPill<br><b>2.</b> This step is easy to miss, and skipping it means the X2 hub never talks to the broker at all. Bottom of the app, tap <b>Me</b> &rarr; <b>Connect to Home Assistant (MQTT broker)</b> (NOT 'Devices &rarr; Wi-Fi &rarr; Home Assistant Remote', that's a different one-way trigger feature). It'll ask you to confirm an MQTT service is installed, this is worded for actual Home Assistant, but you're confirming Hubitat's built-in broker instead, tap <b>Confirmed MQTT Installed</b>. Then enter IP (your Hubitat hub's own IP), and Port/Username/Password from the MQTT Import Integration screen in step 1."
-            paragraph "$sofabatonPill<br><b>3.</b> Find your X2's MAC (not Hubitat's own MAC): connect an MQTT client to that broker, press a remote button, look for a topic like <code>activity/14639332AA40/activity_control_up</code>, the hex string is the MAC."
+            paragraph "$sofabatonPill<br><b>3.</b> Find your X2's MAC (not Hubitat's own MAC): connect an MQTT client to that broker, then <b>start an activity on the physical remote</b> (or power off), an actual activity change, not just any button. Plain commands like volume never touch the broker at all, so nothing shows up until you switch activities. Look for a topic like <code>activity/14639332AA40/activity_control_up</code>, the hex string is the MAC."
             paragraph "$hubitatPill<br><b>4.</b> Add a Hub here &rarr; Model: X2 &rarr; enter that MAC, plus the broker host/port/login from step 1."
             paragraph "$hubitatPill<br><b>5.</b> Add an Activity here &rarr; Sofabaton Activity ID is required (use Listen for Next Activity, or read it from the MQTT payload). That's it, MQTT handles both reads and writes for this activity from here."
             paragraph "$hubitatPill<br><b>6.</b> Click Done on the main page when finished."
@@ -810,6 +810,7 @@ def helpPage() {
             paragraph "<b>Where does the webhook URL go?</b><br>Into the Activity's Start/Stop Webhook URL fields, when adding it or later via its Edit button."
             paragraph "<b>My activity name has a space, will the webhook break?</b><br>No, spaces are encoded automatically before the call goes out."
             paragraph "<b>Does X1S need MQTT?</b><br>No, X1S never touches MQTT, local HTTP for reads, cloud webhook for writes."
+            paragraph "<b>What actually generates MQTT traffic? (X2)</b><br>Only activity-level changes, starting or switching an activity, or the hub-wide power-off, produce any traffic. Plain remote commands within an activity (volume, channel, play/pause, anything IR or Bluetooth) never touch the network at all, that's a Sofabaton design choice. This integration can only ever react to whole activities changing, not individual button presses."
         }
     }
 }
