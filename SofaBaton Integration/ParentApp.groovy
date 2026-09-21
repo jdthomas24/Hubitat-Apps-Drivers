@@ -771,24 +771,33 @@ def helpPage() {
         }
         section {
             paragraph "<b>Two hub models, two different setups.</b> Find yours below. Both need a static IP/DHCP reservation on your router first, that's true for either model."
-            paragraph "Every step below is tagged so it's clear which app you're in, setup bounces back and forth between the two: $hubitatPill you're in this Hubitat app or a device page. $sofabatonPill you're in the Sofabaton mobile app, not Hubitat at all."
+            paragraph "Every step below is tagged so it's clear which app you're in, setup bounces back and forth between the two. The pill sits on its own line right above the step it applies to:<br>$hubitatPill<br>means the step under it happens in this Hubitat app or a device page.<br>$sofabatonPill<br>means the step under it happens in the Sofabaton mobile app, not Hubitat at all."
         }
         section {
             paragraph "<span style='background:#5f8b6f;color:#fff;border-radius:10px;padding:2px 10px;font-size:0.95em;font-weight:bold'>X1S</span> <b>Setup</b>"
-            paragraph "$hubitatPill <b>1.</b> Add a Hub &rarr; Model: X1S &rarr; enter the hub's static IP."
-            paragraph "$sofabatonPill <b>2.</b> Devices &rarr; Add Device &rarr; Wi-Fi &rarr; 'Create a virtual device for IP control'. URL: <code>http://[Hubitat IP]:39501/</code>, method PUT. One per activity. See 'What do buttons 11-20 mean?' below before picking a body value."
-            paragraph "$sofabatonPill <b>3.</b> On that activity, turn on <b>'Turn on API'</b> and copy the webhook URL(s) it gives you. Separate step from #2, this one only covers commands, not reads."
-            paragraph "$hubitatPill <b>4.</b> Add an Activity here &rarr; Activity Name must exactly match the button's Description you set in step 2 (see 'How does name matching work?' below) &rarr; paste the webhook URL(s) from step 3."
-            paragraph "$hubitatPill <b>5.</b> Click Done on the main page when finished."
+            paragraph "$hubitatPill<br><b>1.</b> Add a Hub &rarr; Model: X1S &rarr; enter the hub's static IP."
+            paragraph "$sofabatonPill<br><b>2.</b> Devices &rarr; Add Device &rarr; Wi-Fi &rarr; 'Create a virtual device for IP control'. URL: <code>http://[Hubitat IP]:39501/</code>, method PUT. One per activity. See 'What do buttons 11-20 mean?' below before picking a body value."
+            paragraph "$sofabatonPill<br><b>3.</b> On that activity, turn on <b>'Turn on API'</b> and copy the webhook URL(s) it gives you. Separate step from #2, this one only covers commands, not reads."
+            paragraph "$hubitatPill<br><b>4.</b> Add an Activity here &rarr; Activity Name must exactly match the button's Description you set in step 2 (see 'How does name matching work?' below) &rarr; paste the webhook URL(s) from step 3."
+            paragraph "$hubitatPill<br><b>5.</b> Click Done on the main page when finished."
+            paragraph "<div style='background:#f5f5f5;border-left:4px solid #5f8b6f;padding:10px 14px;margin-top:6px'><b>Worked example, an Apple TV activity:</b><br>" +
+                "&bull; Step 2, body value you send: <code>appleTV</code> (a string, since it's going into one of the 11-20 slots, not a plain number)<br>" +
+                "&bull; On the Remote device's Preferences tab, User 1 (11) field: <code>appleTV|Apple TV</code> &mdash; <code>appleTV</code> is the matchString (must exactly equal what you typed in step 2), <code>Apple TV</code> after the pipe is the Description<br>" +
+                "&bull; Step 4, Activity Name in Hubitat: <code>Apple TV</code> &mdash; must exactly match the Description half above, capitalization and spacing included<br>" +
+                "If any of those three don't line up exactly, the remote will still control your gear, Hubitat just won't know the activity changed.</div>"
         }
         section {
             paragraph "<span style='background:#5f8b6f;color:#fff;border-radius:10px;padding:2px 10px;font-size:0.95em;font-weight:bold'>X2</span> <b>Setup</b>"
-            paragraph "$hubitatPill <b>1.</b> Integrations &rarr; Add Built-In App &rarr; MQTT Import Integration &rarr; enable, turn on 'Use built-in MQTT service'. Note the host/port/login shown."
-            paragraph "$sofabatonPill <b>2.</b> Find your X2's MAC (not Hubitat's own MAC): connect an MQTT client to that broker, press a remote button, look for a topic like <code>activity/14639332AA40/activity_control_up</code>, the hex string is the MAC."
-            paragraph "$hubitatPill <b>3.</b> Add a Hub here &rarr; Model: X2 &rarr; enter that MAC, plus the broker host/port/login from step 1."
-            paragraph "$sofabatonPill <b>4.</b> Turn on 'Turn on API' for the activity and copy its webhook URL(s), same as X1S step 3."
-            paragraph "$hubitatPill <b>5.</b> Add an Activity here &rarr; Sofabaton Activity ID is required (use Listen for Next Activity, or read it from the MQTT payload) &rarr; paste the webhook URL(s), recommended right now, see Known Issues below."
-            paragraph "$hubitatPill <b>6.</b> Click Done on the main page when finished."
+            paragraph "$hubitatPill<br><b>1.</b> Integrations &rarr; Add Built-In App &rarr; MQTT Import Integration &rarr; enable, turn on 'Use built-in MQTT service'. Note the host/port/login shown."
+            paragraph "$sofabatonPill<br><b>2.</b> Find your X2's MAC (not Hubitat's own MAC): connect an MQTT client to that broker, press a remote button, look for a topic like <code>activity/14639332AA40/activity_control_up</code>, the hex string is the MAC."
+            paragraph "$hubitatPill<br><b>3.</b> Add a Hub here &rarr; Model: X2 &rarr; enter that MAC, plus the broker host/port/login from step 1."
+            paragraph "$sofabatonPill<br><b>4.</b> Turn on 'Turn on API' for the activity and copy its webhook URL(s), same as X1S step 3."
+            paragraph "$hubitatPill<br><b>5.</b> Add an Activity here &rarr; Sofabaton Activity ID is required (use Listen for Next Activity, or read it from the MQTT payload) &rarr; paste the webhook URL(s), recommended right now, see Known Issues below."
+            paragraph "$hubitatPill<br><b>6.</b> Click Done on the main page when finished."
+            paragraph "<div style='background:#f5f5f5;border-left:4px solid #5f8b6f;padding:10px 14px;margin-top:6px'><b>Worked example, the same Apple TV activity:</b><br>" +
+                "&bull; Step 2/5, Sofabaton Activity ID: <code>101</code> &mdash; a plain number, read off the MQTT payload (e.g. <code>{\"activity_id\":101,\"state\":\"on\"}</code>) or auto-filled by Listen for Next Activity<br>" +
+                "&bull; Step 5, Activity Name in Hubitat: <code>Apple TV</code> &mdash; this one's just a label for you, it does not need to match anything in the Sofabaton app, unlike X1S<br>" +
+                "The ID is the only thing that has to be correct here, the name is purely cosmetic.</div>"
         }
         section {
             paragraph "<b style='color:#c00'>Known issue right now:</b> X2 command delivery over MQTT doesn't currently work. MQTT is fully two-way by design, publish and subscribe both work in either direction, that's the whole point of it, and why this integration was built around MQTT for X2 in the first place. Reads (remote &rarr; Hubitat) work fine over MQTT right now. Writes (Hubitat &rarr; hub) don't, specifically because Hubitat's own MQTT client isn't delivering incoming messages properly on this platform, a reported platform-level bug, not a limitation of MQTT itself or of the X2 hub. Until it's fixed, fill in the webhook URL fields on X2 Activities, that gives you working on/off control today over the cloud. No changes needed on your end once the underlying bug is fixed, both directions will work over MQTT as originally intended."
