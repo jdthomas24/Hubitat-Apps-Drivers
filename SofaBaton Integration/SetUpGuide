@@ -79,8 +79,18 @@ Step 1 — Get the built-in MQTT broker running
 
 Integrations → Add Built-In App → MQTT Import Integration
 Enable it, turn on "Use built-in MQTT service"
-Note the host, port, and login (username/password) shown — you'll need these in Step 3.
-Step 2 — Find your X2 hub's MAC address
+Note the host, port, and login (username/password) shown — you'll need these in Step 2 and Step 4.
+Step 2 — Connect the physical hub to that broker
+
+This is the step that's easy to miss, and without it, the X2 hub never talks to the broker at all, no matter how correctly everything else is set up.
+
+🟣 Sofabaton app
+
+Go to Me → Connect to Home Assistant (MQTT broker) — this is not the same thing as "Devices → Add Device → Wi-Fi → Home Assistant Remote", that's a different, one-way trigger feature and doesn't connect the hub to anything.
+Enter the same host/port from Step 1
+When it asks for "Home Assistant account credentials," enter the broker username/password from Step 1, that's all it actually wants
+Confirm it shows connected/running
+Step 3 — Find your X2 hub's MAC address
 
 This is not your Hubitat hub's MAC, it's the Sofabaton hub's own MAC, and it's easy to grab the wrong one.
 
@@ -89,25 +99,25 @@ This is not your Hubitat hub's MAC, it's the Sofabaton hub's own MAC, and it's e
 Connect an MQTT client (like MQTT Explorer) to the broker from Step 1, using the host/port/login it gave you
 Press any activity button on the physical Sofabaton remote
 Look for a topic like activity/14639332AA40/activity_control_up — the 12-character hex string in the middle is your X2's MAC
-Step 3 — Add the hub in Hubitat
+Step 4 — Add the hub in Hubitat
 
 🔷 Hubitat
 
 In the Sofabaton Integration app: Add a Hub → Hub Model: X2 →
 
-Sofabaton Hub MAC ID: the MAC from Step 2
+Sofabaton Hub MAC ID: the MAC from Step 3
 Hubitat Hub's LAN IP: the broker host from Step 1 (this is Hubitat's IP, not the Sofabaton hub's IP)
 Broker Port / Username / Password: from Step 1
 
 Click Add This Hub.
 
-Step 4 — Turn on the cloud API (for commands)
+Step 5 — Turn on the cloud API (for commands)
 
 🟣 Sofabaton app
 
 Same as X1S Step 3 above: find the activity, turn on "Turn on API", copy the webhook URL(s) it generates.
 
-Step 5 — Add the Activity in Hubitat
+Step 6 — Add the Activity in Hubitat
 
 🔷 Hubitat
 
@@ -117,11 +127,11 @@ Activity Name: any name you want (X2 doesn't require name-matching the way X1S d
 Sofabaton Activity ID: this is required, it's what lets Hubitat know which physical activity this is when the remote reports a change. Either:
 Click Listen for Next Activity, then press the activity's button on the physical remote, then come back to this page (it doesn't auto-refresh) and the ID will be filled in, or
 Type it in manually if you already know it (readable from the activity_control_up MQTT topic payload, same way you found the MAC)
-Start / Stop Activity Webhook URL (optional but recommended right now, see Known Issues): paste the URL(s) from Step 4
+Start / Stop Activity Webhook URL (optional but recommended right now, see Known Issues): paste the URL(s) from Step 5
 
 Click Add This Activity.
 
-Step 6 — Finish
+Step 7 — Finish
 
 🔷 Hubitat
 
@@ -129,9 +139,9 @@ Same as X1S: click Done at the bottom of the main app page.
 
 Worked example — the same "Apple TV" activity
 Where	What you enter	Value
-Step 2/5, MAC / topic	read off the MQTT payload	14639332AA40
-Step 5, Sofabaton Activity ID	a plain number, e.g. {"activity_id":101,"state":"on"}	101
-Step 5, Activity Name in Hubitat	just a label, doesn't need to match anything	Apple TV
+Step 3/6, MAC / topic	read off the MQTT payload	14639332AA40
+Step 6, Sofabaton Activity ID	a plain number, e.g. {"activity_id":101,"state":"on"}	101
+Step 6, Activity Name in Hubitat	just a label, doesn't need to match anything	Apple TV
 
 Unlike X1S, the Activity Name here is purely cosmetic, it never has to match anything in the Sofabaton app. The Sofabaton Activity ID is the only value that actually has to be correct.
 
