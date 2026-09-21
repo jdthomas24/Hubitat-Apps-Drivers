@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.5.1
+ * Version: 1.5.2
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -24,6 +24,33 @@
  * per-source "Reolink Device Bridge" instead of a child of this app directly
  * -- existing installs had to delete/recreate devices (and repoint
  * dashboards/rules) via re-discovery under each source.
+ *
+ * v1.5.2 -- HOTFIX: discoverPage()'s per-channel checkbox self-heal logic
+ * (added to correct a stale-checked checkbox left over when a device was
+ * deleted outside the app -- see the Tips page's "Deleting a device the
+ * wrong way" topic) could not distinguish that case from "a brand-new
+ * channel the user just toggled on, not yet applied." Both look identical
+ * to that check: no device currently exists for this DNI, and the checkbox
+ * is true. Since every channel checkbox reposts the page on change
+ * (submitOnChange: true), toggling on a never-before-created channel on a
+ * multi-channel Hub/NVR source triggered the self-heal on the very next
+ * render and silently reset the checkbox back to false before Apply could
+ * ever be clicked -- reported as new channels "bouncing back to
+ * unselected" and never becoming selectable. Single-channel standalone
+ * sources were unaffected (they apply immediately on toggle, no repost in
+ * between), and any ALREADY-created device was unaffected (exists == true
+ * skips the check entirely regardless of registry state).
+ * Fixed by adding a persistent per-app registry (state.knownDeviceDnis) of
+ * every DNI this app has actually created at least once. The self-heal
+ * check now only fires for a DNI that's genuinely in that registry --
+ * i.e. a device that existed and was removed some other way -- never for
+ * a channel that's simply never been created yet. markDeviceEverCreated()
+ * is called the moment a channel device is actually created;
+ * forgetDeviceEverCreated() is called both on an intentional removal
+ * (createSelectedChildren()'s uncheck-and-apply path, so re-adding that
+ * channel later behaves like a fresh add, not a stale-checkbox case) and
+ * on full source removal (removeSource()), alongside the existing
+ * forgetSchedulingState() cleanup.
  *
  * v1.5.0 -- NVR recording control: a master record on/off switch, plus
  * named per-channel schedule presets loaded on demand. Confirmed against a
@@ -237,7 +264,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.5.1"
+@Field static final String APP_VERSION = "1.5.2"
 
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 
@@ -770,25 +797,30 @@ def discoverPage(params) {
                         def dni = childDni(sourceId, ch.channel)
                         def bridgeForList = getSourceBridge(sourceId)
                         def exists = bridgeForList?.getChildDevice(dni) != null
-                        // Self-healing check for the exact stale-toggle
-                        // trap the HEADS UP warning above exists to
-                        // prevent. Hubitat has no callback that notifies a
-                        // parent app when a child device is deleted
-                        // directly from the Devices page -- once a toggle
-                        // here is set to true, Hubitat remembers that
-                        // value permanently regardless of whether the
-                        // device still exists (defaultValue only applies
-                        // the FIRST time a setting is ever touched). So a
-                        // device deleted externally would otherwise show a
-                        // stuck 🟢 forever. This corrects it every time the
-                        // page loads: if the setting says "on" but the
-                        // device is actually gone, reset the setting back
-                        // to off so the checkbox and status tag reflect
-                        // reality instead of stale state. Not real-time --
-                        // only self-heals on the next page view -- but that
-                        // beats staying wrong indefinitely.
+                        // v1.5.2 FIX: this self-healing check is meant for
+                        // ONE specific case -- a device that used to exist
+                        // and was deleted OUTSIDE this app (see the Tips
+                        // page's "Deleting a device the wrong way" topic),
+                        // leaving a stale checked box behind. Previously it
+                        // fired on ANY device with exists==false and the
+                        // checkbox true -- which is ALSO exactly what a
+                        // brand-new, never-yet-created channel looks like
+                        // the instant the user toggles it on, before Apply
+                        // is clicked. Since this checkbox reposts on change
+                        // (submitOnChange: true), that meant toggling on a
+                        // new channel on a multi-channel Hub/NVR source got
+                        // silently reset back to off on the very next
+                        // render -- reported as new channels "bouncing
+                        // back to unselected" and never becoming
+                        // selectable. Gated on state.knownDeviceDnis (see
+                        // markDeviceEverCreated()/forgetDeviceEverCreated()
+                        // below) so this only fires for a DNI that has
+                        // actually been created by this app at some point
+                        // -- never for a channel that's simply never been
+                        // created yet.
                         def settingKey = "create_${sourceId}_${ch.channel}"
-                        if (!exists && settings[settingKey] == true) {
+                        def everExisted = (state.knownDeviceDnis ?: []).contains(dni)
+                        if (everExisted && !exists && settings[settingKey] == true) {
                             app.updateSetting(settingKey, [type: "bool", value: false])
                             // Matches what normal removal (uncheck + Apply)
                             // already does via createSelectedChildren() --
@@ -799,6 +831,7 @@ def discoverPage(params) {
                             // else would ever clear them for a device that
                             // was never removed through the app's own path.
                             forgetSchedulingState(dni)
+                            forgetDeviceEverCreated(dni)
                         }
                         def doorbellTag = ch.deviceType == "doorbell" ? " (Doorbell)" : ""
                         def statusTag = exists ? " \uD83D\uDFE2" : " \uD83C\uDD95"
@@ -1212,6 +1245,33 @@ private getSourceBridgeForChannelDni(String dni) {
     return getSourceBridge(sourceId)
 }
 
+/**
+ * v1.5.2: records that this DNI has actually been created by this app at
+ * least once -- see discoverPage()'s self-heal check for why this registry
+ * exists (distinguishing "existed, then deleted externally" from "never
+ * created yet"). Called the moment createSelectedChildren() actually
+ * creates a channel device.
+ */
+private void markDeviceEverCreated(String dni) {
+    def known = state.knownDeviceDnis ?: []
+    if (!known.contains(dni)) {
+        known << dni
+        state.knownDeviceDnis = known
+    }
+}
+
+/**
+ * v1.5.2: counterpart to markDeviceEverCreated() above -- called both on an
+ * intentional removal (createSelectedChildren()'s uncheck-and-apply path,
+ * so re-adding that same channel later is treated as a fresh add, not a
+ * stale-checkbox case) and on full source removal (removeSource()).
+ */
+private void forgetDeviceEverCreated(String dni) {
+    def known = state.knownDeviceDnis ?: []
+    known.remove(dni)
+    state.knownDeviceDnis = known
+}
+
 def removeSource(id) {
     def src = getSource(id as Integer)
     def bridge = getSourceBridge(id as Integer)
@@ -1221,7 +1281,10 @@ def removeSource(id) {
         // (Camera/Doorbell) -- standard Hubitat parent/child device
         // behavior, same as deleting any multi-endpoint parent removes its
         // child endpoints too.
-        bridge.getChildDevices()?.each { forgetSchedulingState(it.deviceNetworkId) }
+        bridge.getChildDevices()?.each {
+            forgetSchedulingState(it.deviceNetworkId)
+            forgetDeviceEverCreated(it.deviceNetworkId)
+        }
         // Delete via whichever device actually owns this bridge -- a
         // Hub/NVR bridge is the app's own direct child, a standalone
         // bridge is the group device's child.
@@ -1877,11 +1940,23 @@ def createSelectedChildren(sourceId) {
             // this single creation-time call succeeding.
             if (child) {
                 child.receiveBatteryMode(ch.isBattery ? "battery" : "wired")
+                // v1.5.2: records this DNI as genuinely created, so
+                // discoverPage()'s self-heal check can later tell a
+                // deleted-externally device apart from a channel that's
+                // simply never been created -- see that check's own
+                // comment for the full story.
+                markDeviceEverCreated(dni)
             }
             logNormal "Created child ${dni} (${driverName}) via bridge, poll interval defaulted to ${pollDefault}s (${ch.isBattery ? 'battery' : 'wired'}), features: ${ch.supportedFeatures ? ch.supportedFeatures.join(', ') : 'none detected'}"
         } else if (!wantIt && existing) {
             bridge.removeChannelDevice(dni)
             forgetSchedulingState(dni)
+            // v1.5.2: an intentional removal through this page -- forget
+            // this DNI so a later re-add of the same channel is treated as
+            // a fresh add (defaultValue: exists correctly starts it
+            // unchecked), not mistaken for the deleted-externally case the
+            // self-heal check exists for.
+            forgetDeviceEverCreated(dni)
             logNormal "Removed child ${dni} via bridge (unchecked in discovery list)"
         }
     }
@@ -1968,6 +2043,17 @@ def initialize() {
  * nextBatteryCheckDue for every device with no batteryMode set, so the
  * backfill runs on the very next tick (~1s) instead. Devices with a valid
  * batteryMode are untouched.
+ *
+ * v1.5.2: also backfills state.knownDeviceDnis for every device that
+ * already exists at upgrade time -- without this, discoverPage()'s
+ * self-heal check would treat every pre-1.5.2 device as "never created"
+ * (registry starts empty) until the NEXT time it happened to be deleted
+ * externally, at which point the self-heal simply wouldn't fire for it.
+ * Harmless in practice (the check only matters at the moment of external
+ * deletion, and a not-yet-seen device would just correctly get added to
+ * the registry the first time it WAS actually created going forward), but
+ * backfilling here means existing installs get full self-heal coverage
+ * immediately on upgrade rather than device-by-device over time.
  */
 private void runMigrations() {
     if (state.lastKnownAppVersion == APP_VERSION) return
@@ -1975,6 +2061,8 @@ private void runMigrations() {
 
     def battDue = state.nextBatteryCheckDue ?: [:]
     int cleared = 0
+    def known = state.knownDeviceDnis ?: []
+    int backfilled = 0
     (state.sources ?: []).each { src ->
         def bridge = getSourceBridge(src.id)
         (bridge?.getChildDevices() ?: []).each { child ->
@@ -1982,13 +2070,22 @@ private void runMigrations() {
                 battDue.remove(child.deviceNetworkId)
                 cleared++
             }
+            if (!known.contains(child.deviceNetworkId)) {
+                known << child.deviceNetworkId
+                backfilled++
+            }
         }
     }
     state.nextBatteryCheckDue = battDue
+    state.knownDeviceDnis = known
     if (cleared > 0) {
         logNormal "Reolink Integration: migration -- cleared stale battery-check schedule for " +
             "${cleared} device(s) with no batteryMode set, so the fix takes effect on the next tick " +
             "instead of waiting out an old schedule"
+    }
+    if (backfilled > 0) {
+        logNormal "Reolink Integration: migration -- backfilled ${backfilled} existing device(s) into the " +
+            "known-device registry used by discoverPage()'s stale-checkbox self-heal check"
     }
 
     // state.recScheduleCache (an old, now-retired cache-and-restore
@@ -2824,3 +2921,4 @@ void logNormal(msg) {
 void logFull(msg) {
     if (logLevelRank() >= 2) log.debug msg
 }
+
