@@ -789,14 +789,15 @@ def helpPage() {
         section {
             paragraph "<span style='background:#5f8b6f;color:#fff;border-radius:10px;padding:2px 10px;font-size:0.95em;font-weight:bold'>X2</span> <b>Setup</b>"
             paragraph "$hubitatPill<br><b>1.</b> Integrations &rarr; Add Built-In App &rarr; MQTT Import Integration &rarr; enable, turn on 'Use built-in MQTT service'. Note the host/port/login shown."
-            paragraph "$sofabatonPill<br><b>2.</b> Find your X2's MAC (not Hubitat's own MAC): connect an MQTT client to that broker, press a remote button, look for a topic like <code>activity/14639332AA40/activity_control_up</code>, the hex string is the MAC."
-            paragraph "$hubitatPill<br><b>3.</b> Add a Hub here &rarr; Model: X2 &rarr; enter that MAC, plus the broker host/port/login from step 1."
-            paragraph "$sofabatonPill<br><b>4.</b> Turn on 'Turn on API' for the activity and copy its webhook URL(s), same as X1S step 3."
-            paragraph "$hubitatPill<br><b>5.</b> Add an Activity here &rarr; Sofabaton Activity ID is required (use Listen for Next Activity, or read it from the MQTT payload) &rarr; paste the webhook URL(s), recommended right now, see Known Issues below."
-            paragraph "$hubitatPill<br><b>6.</b> Click Done on the main page when finished."
+            paragraph "$sofabatonPill<br><b>2.</b> This step is easy to miss, and skipping it means the X2 hub never talks to the broker at all: go to <b>Me &rarr; Connect to Home Assistant (MQTT broker)</b> (NOT 'Devices &rarr; Wi-Fi &rarr; Home Assistant Remote', that's a different one-way trigger feature). Enter the same host/port from step 1, and when it asks for 'Home Assistant account credentials', just enter the broker username/password from step 1."
+            paragraph "$sofabatonPill<br><b>3.</b> Find your X2's MAC (not Hubitat's own MAC): connect an MQTT client to that broker, press a remote button, look for a topic like <code>activity/14639332AA40/activity_control_up</code>, the hex string is the MAC."
+            paragraph "$hubitatPill<br><b>4.</b> Add a Hub here &rarr; Model: X2 &rarr; enter that MAC, plus the broker host/port/login from step 1."
+            paragraph "$sofabatonPill<br><b>5.</b> Turn on 'Turn on API' for the activity and copy its webhook URL(s), same as X1S step 3."
+            paragraph "$hubitatPill<br><b>6.</b> Add an Activity here &rarr; Sofabaton Activity ID is required (use Listen for Next Activity, or read it from the MQTT payload) &rarr; paste the webhook URL(s), recommended right now, see Known Issues below."
+            paragraph "$hubitatPill<br><b>7.</b> Click Done on the main page when finished."
             paragraph "<div style='background:#f5f5f5;border-left:4px solid #5f8b6f;padding:10px 14px;margin-top:6px'><b>Worked example, the same Apple TV activity:</b><br>" +
-                "&bull; Step 2/5, Sofabaton Activity ID: <code>101</code> &mdash; a plain number, read off the MQTT payload (e.g. <code>{\"activity_id\":101,\"state\":\"on\"}</code>) or auto-filled by Listen for Next Activity<br>" +
-                "&bull; Step 5, Activity Name in Hubitat: <code>Apple TV</code> &mdash; this one's just a label for you, it does not need to match anything in the Sofabaton app, unlike X1S<br>" +
+                "&bull; Step 3/6, Sofabaton Activity ID: <code>101</code> &mdash; a plain number, read off the MQTT payload (e.g. <code>{\"activity_id\":101,\"state\":\"on\"}</code>) or auto-filled by Listen for Next Activity<br>" +
+                "&bull; Step 6, Activity Name in Hubitat: <code>Apple TV</code> &mdash; this one's just a label for you, it does not need to match anything in the Sofabaton app, unlike X1S<br>" +
                 "The ID is the only thing that has to be correct here, the name is purely cosmetic.</div>"
         }
         section {
