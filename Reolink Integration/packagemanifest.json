@@ -1,10 +1,10 @@
 {
     "packageName": "Reolink Integration",
-    "releaseNotes": "v1.5.0 -- Adds NVR/Hub recording control: a master record on/off switch plus named per-channel schedule presets, both reachable from the bridge device's Switch/PushableButton capabilities (or loadPreset(name) for per-rule branching) so no Custom Action is needed in Rule Machine. Presets are edited with a plain-language picker (Continuous / Never record / a daily time range / don't manage) by default, with an opt-in Advanced mode for raw per-hour schedule strings. A new per-device \"Exclude from ALL recording presets\" lock on the Camera/Doorbell drivers permanently protects a channel (e.g. a battery-class WiFi doorbell) from any preset write, regardless of what that preset specifies. Also adds a read-only checkRecordingSchedule diagnostic command to both drivers. Confirmed against a real RLN16-410 NVR across extensive live testing before release.",
+    "releaseNotes": "v1.5.1 -- HOTFIX: fixes six missing passthrough methods on standalone (non-Hub/NVR) sources. A standalone camera or doorbell's bridge device parents off \"Reolink Standalone Devices\" instead of the app directly, and several methods added to the bridge over recent releases (including one from the 1.5.0 beta and four added for 1.5.0's recording-control feature) were never mirrored there. The most visible case: a standalone source's event connection status threw an error the moment its subscription changed state (connecting/connected/reconnecting/disconnected). The other four (loading a preset, the master record on/off switch, button-triggered presets, the preset name dropdown) were reachable but broken on a standalone bridge; a sixth, for sleep-status pushes, had the same gap. No device changes or re-pairing required.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "communityLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "author": "jdthomas24",
-    "version": "1.5.0",
+    "version": "1.5.1",
     "minimumHEVersion": "2.3.0",
     "dateReleased": "2026-08-14",
     "category": "Integrations",
