@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.5.0
+ * Version: 1.5.1
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -237,7 +237,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.5.0"
+@Field static final String APP_VERSION = "1.5.1"
 
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 
