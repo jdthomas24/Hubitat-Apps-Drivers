@@ -1,6 +1,6 @@
 /**
  * Reolink Device Bridge (Internal Parent Driver)
- * Version: 1.5.0-beta21
+ * Version: 1.5.1
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- ONE instance per SOURCE (Hub/NVR or standalone).
@@ -14,35 +14,10 @@
  * every componentX() method below is a one-line passthrough up to this
  * bridge's own parent (the app).
  *
- * v1.5.0 BETA (in progress, shared privately with one reporting user, not
- * on HPM) -- NVR recording control, mirroring ParentApp.groovy's own
- * consolidated note (see that file for the full hardware-confirmed
- * details). Current design as of beta21 -- see ParentApp.groovy's beta21
- * note for the checkRecordingSchedule() command that was missing from the
- * Camera/Doorbell drivers entirely (this bridge's own passthrough was
- * always correct; nothing changed here). beta20 added the permanent
- * per-device preset lock (excludeFromRecordingPresets on the Camera/
- * Doorbell drivers); no code in THIS file changed for that either, since
- * enforcement lives entirely in the app's componentLoadPreset(). A second
- * push() bug, distinct from beta16's fix, was found and folded into beta17
- * (never shipped as its own version) -- see push()'s own comment below for
- * the full story. beta18 (bridge-only):
- * revisited beta16's blanket removal of Commands-tab description text --
- * see the risk asymmetry explained at on()/off()'s declaration above.
- * Restored it for on()/off() specifically; loadSelectedPreset() stays bare,
- * since that command's OWN description text is what's confirmed to have
- * caused the real crash. beta19 (bridge-only): reintroduced
- * loadPreset(presetName) -- a real user-facing gap surfaced by his live
- * rule-building, not a bug: Push requires cross-referencing which button
- * number means which preset, and loadSelectedPreset() shares one
- * Preferences dropdown across the whole device (so it can't hold "Away"
- * for one branch and "Home" for another in the same rule set).
- * loadPreset('Away') takes the name directly per call. Confirmed safe to
- * bring back despite beta16's Custom Action lesson -- this declares a REAL
- * typed STRING parameter (matching a method that genuinely takes one), the
- * same shape as push()'s already-confirmed-working NUMBER parameter, not
- * the description-only/zero-argument shape that actually broke
- * loadSelectedPreset() under Custom Action.
+ * v1.5.0 -- NVR recording control: a master record on/off switch, plus
+ * named per-channel schedule presets loaded on demand. Confirmed against a
+ * real RLN16-410 NVR across many rounds of live testing before release --
+ * see ParentApp.groovy for the full hardware-confirmed mechanics.
  *  - capability "Switch" (on()/off()) is the NVR's master record
  *    enable/disable -- untargeted at the API level (applies to every
  *    channel of this source at once; there is no per-channel version of
@@ -54,24 +29,34 @@
  *    page. Each preset's button number is assigned once, permanently, and
  *    is never reused even after that preset is deleted -- see
  *    ParentApp.groovy's note for why.
- *  - CONFIRMED (2026-08-29, real Rule Machine testing): on()/off()/
- *    loadSelectedPreset() must be declared as bare, argument-free
- *    commands. A beta15 attempt to attach description text to them (via a
- *    param entry with no "type") rendered fine as plain text on this
- *    device's own Commands tab, but Rule Machine's Custom Action treats
- *    that same entry as a real argument slot and passes whatever's typed
- *    into it straight through -- MissingMethodException the moment
- *    someone fills that field in, since all three take zero real
- *    arguments. Reverted; that explanatory text now lives on the
- *    Preferences-tab box only. push(btn) was never affected -- its
- *    "type: NUMBER" argument is genuine and Rule Machine handles it
- *    correctly.
+ *  - on()/off()/loadSelectedPreset() are declared as bare, argument-free
+ *    commands (confirmed via real Rule Machine testing: a command param
+ *    entry with description text but no "type" renders as harmless plain
+ *    text on this device's own Commands tab, but Rule Machine's Custom
+ *    Action treats it as a real argument slot and passes through whatever's
+ *    typed -- a genuine MissingMethodException risk for a zero-argument
+ *    command). on()/off() keep their explanatory text on the Preferences
+ *    tab instead. loadPreset(presetName) and push(btn) both declare REAL
+ *    typed parameters (STRING and NUMBER respectively) that Rule Machine
+ *    handles correctly, so neither is affected by that restriction.
+ *  - loadPreset(presetName) lets a different preset be called per Rule
+ *    Machine branch (e.g. "Away" vs. "Home"), unlike loadSelectedPreset
+ *    (one shared Preferences dropdown across the whole device) or Push
+ *    (requires cross-referencing a button-number-to-preset-name mapping).
+ *    All three ways to trigger a preset coexist: Push by number (closest
+ *    to "easy," no typing, number shown right on the device page),
+ *    loadPreset(name) (self-documenting per rule), loadSelectedPreset
+ *    (manual/device-page convenience only, not for automation branching).
+ *  - push(BigDecimal btn): Rule Machine hands a NUMBER-type command
+ *    argument to a method as BigDecimal, not Integer, and Groovy does not
+ *    auto-coerce between them in that call context -- confirmed via real
+ *    testing. Converted to Integer internally before use.
  *  - receiveRecordingEnabled()/receiveRecordingMode()/receiveRecordingResult()
  *    keep this device's switch/recordingEnabled/recordingMode/
  *    lastRecordingResult attributes in sync with what the app actually did.
  *  - Two earlier designs (recordOn()/recordOff() with app-side cache-and-
  *    restore; separate virtual child devices for the switch/buttons) were
- *    built, tested, and fully replaced by the above -- not detailed here,
+ *    built, tested, and fully replaced by the above during development --
  *    neither exists in the code anymore.
  *
  * v1.4.2 -- No functional change to this driver (version kept in sync with
@@ -91,10 +76,7 @@
  *
  * UNCONFIRMED: translateToLegacyShape()'s status/AItype -> aiState/mdState
  * mapping (in ParentApp.groovy). Sleep-status pushes (cmd_id=145) are
- * received/logged but not yet acted on. v1.5.0's recording-mode feature,
- * end-to-end as a preset workflow (the underlying master-switch and
- * per-channel schedule write mechanics were independently confirmed
- * against a real RLN16-410 in beta8/beta9).
+ * received/logged but not yet acted on.
  */
 import groovy.transform.Field
 import java.security.MessageDigest
@@ -107,64 +89,26 @@ metadata {
         capability "Actuator"
         // Switch and PushableButton, declared directly on this device
         // instead of a separate child device -- see the header note above
-        // and ParentApp.groovy's beta12 note for the full design. on()/
-        // off()/push() implementations are below, near loadSelectedPreset().
+        // and ParentApp.groovy for the full design. on()/off()/push()
+        // implementations are below, near loadSelectedPreset().
         capability "Switch"
         capability "PushableButton"
-        // v1.5.0-beta16: REVERTED beta15's Commands-tab description text
-        // for on()/off()/loadSelectedPreset() -- confirmed by the
-        // reporting user's real Rule Machine testing (confirmed via
-        // loadSelectedPreset("Away") throwing MissingMethodException) that
-        // a description-only param entry on a zero-argument command makes
-        // Rule Machine's Custom Action offer a text field for it, and
-        // whatever's typed there gets passed straight through as a real
-        // argument. beta18 REVISITED this: the actual risk isn't uniform
-        // across all three commands it was pulled from. loadSelectedPreset's
-        // OWN description text ("Loads whichever preset is picked...")
-        // is what invited him to type a preset name into that field in the
-        // first place -- especially since the OLD removed loadPreset(name)
-        // command genuinely worked that way. on()/off() carry no equivalent
-        // temptation (there's no plausible value someone would guess to
-        // type into a master switch's optional field), were never actually
-        // confirmed to crash, and losing their explanatory text purely on
-        // Commands (Preferences still had it) was a real usability cost for
-        // anyone just clicking around the device page -- not worth paying
-        // preventively for a risk that's concrete for one command and
-        // theoretical for the other two. Restored on()/off()'s text;
-        // loadSelectedPreset stays bare, since that's the one place the
-        // text itself is confirmed to cause the exact wrong action.
-        // push(btn) was never part of this bug either way -- it has a
-        // genuine, required "type: NUMBER" argument that Rule Machine
-        // correctly treats as real, matching its actual push(BigDecimal
-        // btn) signature (see that method's own beta17 fix note below).
         command "on", [[name: "NVR's MASTER recording switch -- applies to EVERY channel at once (hardware/API limitation, can't target one channel). Does NOT control which hours get recorded -- that's set by loading a preset instead. Turn on once and leave on."]]
         command "off", [[name: "Same master switch, OFF -- still every channel at once."]]
         command "push", [[name: "btn", type: "NUMBER", description: "Button number -- check the Preferences tab's \"Preset to load\" dropdown for which number is assigned to which preset."]]
         command "startEventSubscription"
         command "stopEventSubscription"
-        // v1.5.0-beta19: brought back a NAMED preset command, removed
-        // during beta15's "declutter Commands tab" pass on the (mistaken)
-        // assumption that loadSelectedPreset() + Push fully covered its
-        // use case. Real-world use surfaced a gap: loadSelectedPreset()
-        // reads a single SHARED Preferences dropdown, so it can't hold
-        // "Away" for one Rule Machine branch and "Home" for another in the
-        // same rule/automation set -- and Push's button-number mapping
-        // requires cross-referencing the Recording Presets page to know
-        // which number means what, whereas loadPreset('Away') is self-
-        // documenting right in the rule. Safe to reintroduce (NOT the same
-        // failure mode beta16 fixed): this declares a REAL, explicitly
-        // typed STRING parameter matching a method that genuinely accepts
-        // one -- same pattern as push()'s confirmed-working NUMBER
-        // parameter, not the description-only/zero-argument pattern that
-        // broke loadSelectedPreset() under Rule Machine's Custom Action.
+        // Named preset command -- lets a different preset be called per
+        // Rule Machine branch. See the header note above for how this
+        // differs from Push and loadSelectedPreset.
         command "loadPreset", [[name: "presetName", type: "STRING", description: "Name of a preset defined on this source's Recording Presets page in the app (e.g. 'Away', 'Home') -- use this for calling a SPECIFIC preset per rule/branch, since loadSelectedPreset() below shares one dropdown across the whole device."]]
         // No-argument companion command -- loads whichever preset is
         // picked in the "Preset to load" dropdown on this device's own
         // Preferences tab, so a preset can be triggered by hand without
         // typing its name. See getAvailablePresetNames()/
         // loadSelectedPreset() below. Deliberately bare, no param array --
-        // see the beta16/beta18 notes above for why this ONE stays bare
-        // while on()/off() got their text back.
+        // see the header note above for why this ONE stays bare while
+        // on()/off() carry their explanatory text on the Commands tab.
         command "loadSelectedPreset"
         // configureConnection() is NOT declared as a UI command -- it's
         // always called programmatically by the app (ensureSourceBridge(),
@@ -173,31 +117,25 @@ metadata {
         // method itself below is unchanged and still fully callable from
         // the app.
         attribute "connectionStatus", "enum", ["disconnected", "connecting", "connected", "reconnecting"]
-        // v1.5.0-beta10: was a fixed unknown/normal/continuous enum through
-        // beta9 -- now reflects whichever preset name was last loaded via
-        // loadPreset()/loadSelectedPreset(), which can be any user-defined
-        // string, so this is a plain string attribute instead of a closed
-        // enum.
+        // Reflects whichever preset name was last loaded via loadPreset()/
+        // loadSelectedPreset(), which can be any user-defined string, so
+        // this is a plain string attribute instead of a closed enum.
         attribute "recordingMode", "string"
         // Separately reflects the master record switch's own on/off state,
         // independent of which preset is loaded -- the two are genuinely
-        // separate concepts (see ParentApp.groovy's beta10 header note).
-        // Kept alongside the standard "switch" attribute (from the Switch
-        // capability) -- both are updated together by
+        // separate concepts. Kept alongside the standard "switch" attribute
+        // (from the Switch capability) -- both are updated together by
         // receiveRecordingEnabled() below, so either can be used.
         attribute "recordingEnabled", "enum", ["enabled", "disabled"]
-        // v1.5.0-beta2: per-channel success/failure summary from the last
-        // preset load, e.g. "6/6 OK" or "5/6 OK, failed: ch3, skipped
-        // (no data): ch7" -- visible on this device page without a log dive.
+        // Per-channel success/failure summary from the last preset load,
+        // e.g. "6/6 OK" or "5/6 OK, failed: ch3, skipped (no data): ch7" --
+        // visible on this device page without a log dive.
         attribute "lastRecordingResult", "string"
     }
     preferences {
-        // v1.5.0-beta15: FIRST item on this page, deliberately, and styled
-        // to stand out -- a bare "On/Off" switch label conveys nothing
-        // about what it actually does, and this replaces the previous
-        // enableRecording()/disableRecording() named commands (removed
-        // this round as pure duplicates of On/Off) as how that gets
-        // explained instead.
+        // FIRST item on this page, deliberately, and styled to stand out --
+        // a bare "On/Off" switch label conveys nothing about what it
+        // actually does, so this explains it up front instead.
         input name: "onOffExplainer", type: "paragraph", element: "paragraph",
             title: "⚠️ What the On / Off switch above actually does",
             description: "<div style='border:2px solid #185FA5;border-radius:8px;background:#E6F1FB;" +
@@ -229,15 +167,12 @@ metadata {
 // and Doorbell as ITS OWN children, called by the app's createSelectedChildren().
 // ============================================================================
 /**
- * v1.3.9 FIX: previously had no try/catch at all around addChildDevice() --
- * same class of bug as the app-level DuplicateDNIException fix, one level
- * down. If a camera/doorbell device with this exact DNI already exists
- * anywhere else on the hub (e.g. an orphan from a partial removal),
- * Hubitat's global DNI-uniqueness rule rejects the create, and this used to
- * throw straight up through createSelectedChildren() -> discoverPage(),
- * crashing the whole app page with no indication what went wrong. Now
- * fails loudly but safely: logs a clear actionable warning and returns
- * null instead.
+ * If a camera/doorbell device with this exact DNI already exists anywhere
+ * else on the hub (e.g. an orphan from a partial removal), Hubitat's global
+ * DNI-uniqueness rule rejects the create -- caught here rather than left to
+ * throw straight up through createSelectedChildren() -> discoverPage() and
+ * crash the whole app page with no indication what went wrong. Fails loudly
+ * but safely: logs a clear actionable warning and returns null instead.
  */
 def createChannelDevice(String driverName, String dni, String name, Integer pollDefault, List supportedFeatures) {
     def child
@@ -290,22 +225,18 @@ def componentSetPollInterval(child, Integer seconds, String dni = null) { parent
 def componentSetSnapshotInterval(child, Integer seconds, String dni = null) { parent?.componentSetSnapshotInterval(child, seconds, dni) }
 
 // ============================================================================
-// v1.5.0 BETA: recording control for this source, reachable via the
-// standard Switch/PushableButton capabilities plus the "Preset to load"
-// Preferences dropdown -- see ParentApp.groovy's componentSetRecordingEnabled()/
+// v1.5.0: recording control for this source, reachable via the standard
+// Switch/PushableButton capabilities plus the "Preset to load" Preferences
+// dropdown -- see ParentApp.groovy's componentSetRecordingEnabled()/
 // componentLoadPreset()/componentBridgeButtonPushed() for the real logic.
 // This driver only forwards each command and reflects the result.
 // ============================================================================
 
 /**
- * v1.5.0-beta19: named preset command, reintroduced after Push's number-
- * lookup indirection and loadSelectedPreset()'s shared-dropdown design both
- * proved awkward for a rule that needs to call different presets from
- * different branches (e.g. Away vs. Home). Takes the preset name directly
- * -- self-documenting in a rule, no cross-referencing a button-number
- * table or keeping a shared dropdown in sync. componentLoadPreset() itself
- * never changed; this is just restoring the driver-level command that
- * calls it by name, same as every version through beta10-beta14 did.
+ * Named preset command -- takes the preset name directly, self-documenting
+ * in a rule, no cross-referencing a button-number table or keeping a
+ * shared dropdown in sync (see push()/loadSelectedPreset() below for the
+ * other two ways to trigger a preset).
  */
 def loadPreset(String presetName) {
     parent?.componentLoadPreset(this, state.sourceId, presetName)
@@ -354,17 +285,15 @@ def off() {
 
 /**
  * PushableButton capability -- looks up which preset (if any) currently
- * owns this button number via the app's persistent numbering (see
- * ParentApp.groovy's beta12 header note) and loads it. A number belonging
- * to a deleted preset is a harmless no-op, logged app-side.
+ * owns this button number via the app's persistent numbering and loads it.
+ * A number belonging to a deleted preset is a harmless no-op, logged
+ * app-side.
  *
- * v1.5.0-beta17-fix: parameter type changed from Integer to BigDecimal --
- * CONFIRMED via real Rule Machine testing (a "No signature of method:
- * ...push() is applicable for argument types: (java.math.BigDecimal)"
- * error) that Rule Machine hands a NUMBER-type command argument to push()
- * as a BigDecimal, not an Integer, and Groovy does not coerce between them
- * automatically in this context -- the standard PushableButton signature
- * used across Hubitat's own drivers is BigDecimal for exactly this reason.
+ * Parameter type is BigDecimal, not Integer -- confirmed via real Rule
+ * Machine testing that Rule Machine hands a NUMBER-type command argument
+ * to a method as BigDecimal, and Groovy does not coerce between them
+ * automatically in this context; this is the standard PushableButton
+ * signature used across Hubitat's own drivers for exactly that reason.
  * Converted to Integer internally (via toInteger()) before use, since the
  * app-side button-number lookup compares against Integer keys.
  */
@@ -374,7 +303,7 @@ def push(BigDecimal btn) {
     parent?.componentBridgeButtonPushed(this, state.sourceId, btnInt)
 }
 
-/** Called by the app once the master record switch has been set. Updates both the standard "switch" attribute (Rule Machine, dashboards) and the custom "recordingEnabled" attribute (kept for continuity with beta10). */
+/** Called by the app once the master record switch has been set. Updates both the standard "switch" attribute (Rule Machine, dashboards) and the custom "recordingEnabled" attribute. */
 def receiveRecordingEnabled(Boolean enabled) {
     sendEvent(name: "switch", value: enabled ? "on" : "off")
     sendEvent(name: "recordingEnabled", value: enabled ? "enabled" : "disabled")
@@ -391,12 +320,12 @@ def receiveNumberOfButtons(Integer n) {
 }
 
 /**
- * v1.5.0-beta19: quick-reference summary of every preset defined for this
- * source, plus its permanent button number (e.g. "Away (Button 1), Home
- * (Button 2)") -- stored in state (not sendEvent) so it shows up in this
- * device's own State Variables panel, next to Host/Aes Key Hex/etc.,
- * without needing to open the app's Recording Presets page. Pushed fresh
- * by the app every time that page renders, so it can't go stale.
+ * Quick-reference summary of every preset defined for this source, plus
+ * its permanent button number (e.g. "Away (Button 1), Home (Button 2)") --
+ * stored in state (not sendEvent) so it shows up in this device's own
+ * State Variables panel, next to Host/Aes Key Hex/etc., without needing to
+ * open the app's Recording Presets page. Pushed fresh by the app every
+ * time that page renders, so it can't go stale.
  */
 def receivePresetsSummary(String summary) {
     state.availablePresets = summary
@@ -555,15 +484,13 @@ def sendSubscribe() {
 }
 
 /**
- * v1.3.9: added a Full-tier heartbeat line here (via
- * parent?.logFull(...)) -- previously this ran silently every 25s with no
- * log output at all, so a genuinely-connected-but-quiet source (nothing has
- * triggered a real event push in a while) looked identical in the logs
- * whether it was working perfectly or silently stuck, even with Log level
- * set to Full. This gives a real "still alive" signal on a predictable
- * cadence, throttled to once per CONNECTION rather than once per channel,
- * so it doesn't reproduce the old per-camera poll-spam problem event mode
- * was built to avoid.
+ * Full-tier heartbeat line here (via parent?.logFull(...)) -- without it, a
+ * genuinely-connected-but-quiet source (nothing has triggered a real event
+ * push in a while) looked identical in the logs whether it was working
+ * perfectly or silently stuck, even with Log level set to Full. This gives
+ * a real "still alive" signal on a predictable cadence, throttled to once
+ * per CONNECTION rather than once per channel, so it doesn't reproduce the
+ * old per-camera poll-spam problem event mode was built to avoid.
  */
 def sendKeepalive() {
     if (state.stage != "SUBSCRIBED") return
@@ -590,11 +517,9 @@ private void handlePushedEvent(int cmdId, String bodyText) {
         elements.each { chId, elem ->
             def status = elem?.status?.text()
             def aiType = elem?.AItype?.text()
-            // v1.5.0-beta21 FIX: previously only logged WHICH channels sent
-            // an event, never the actual status/AItype VALUES inside it --
-            // so there was no way to see what a real event actually
-            // contains, even at Full tier. Added specifically to diagnose
-            // whether a doorbell's physical button press really reports
+            // Logs the actual status/AItype VALUES inside an event, not
+            // just which channels sent one -- needed to diagnose whether a
+            // doorbell's physical button press really reports
             // status="visitor" the way translateToLegacyShape() (in
             // ParentApp.groovy) assumes -- that mapping was always a
             // guess, never confirmed against real hardware, flagged by a
@@ -624,15 +549,10 @@ private void handlePushedEvent(int cmdId, String bodyText) {
         }
         state.last145 = last
     } else {
-        // v1.5.0-beta21 FIX: any cmd_id other than 33/145 was previously
-        // dropped completely silently, even at Full tier -- meaning if a
-        // doorbell ring arrives under some OTHER cmd_id (increasingly
-        // likely given a real report where cmd_id 33 never fired at all
-        // for a physical button press, while motion/AI events on the same
-        // NVR kept working normally), there was zero visibility into it.
-        // This logs the raw cmd_id and a snippet of its body so an
-        // unrecognized-but-real push type can actually be discovered,
-        // rather than vanishing without a trace.
+        // Any cmd_id other than 33/145 is logged (raw cmd_id + a body
+        // snippet) rather than dropped silently -- meaning if a doorbell
+        // ring ever arrives under some OTHER cmd_id, it's discoverable
+        // instead of vanishing without a trace.
         parent?.logFull "Reolink Device Bridge (source ${state.sourceId}): unrecognized cmd_id ${cmdId} pushed " +
             "(not currently handled) -- body (first 300 chars): ${bodyText.take(300)}"
     }
@@ -970,4 +890,3 @@ private String findXmlValue(String xml, String tagName) {
 def closeSocket() {
     try { interfaces.rawSocket.close() } catch (e) { }
 }
-
