@@ -122,6 +122,18 @@
          allowed"). No sandbox-safe way exists to probe for this right
          now; re-add once the platform build notes confirm the method has
          actually shipped.
+    2026-09-22 jdthomas24
+        -Re-added checkBuiltInBroker: gopher.ny confirmed the build with
+         MQTTHelper shipped, and this device confirmed
+         isBuiltInBrokerRunning() = true against it (via the standalone
+         minimal test driver first, then ported here). Plain "import
+         hubitat.helper.MQTTHelper" now resolves fine -- the earlier
+         "unable to resolve class" was the class genuinely not existing
+         yet on the old build, not a Groovy/sandbox issue with imports.
+         Diagnostic only for now, not wired into ensureMqttConnected()'s
+         connect logic yet -- worth doing once the underlying parse()
+         delivery issue itself is confirmed fixed or not (still being
+         tested as of this write).
 
     *OVERVIEW
      Grouping anchor for the Sofabaton Integration, and (for X2 hubs) the
@@ -144,14 +156,17 @@
 
 import groovy.json.JsonSlurper
 import groovy.json.JsonOutput
+import hubitat.helper.MQTTHelper
 
-def version() { return "1.5.0" }
+def version() { return "1.6.0" }
 
 metadata {
     definition (name: "Sofabaton Integration Bridge", namespace: "jdthomas24", author: "Jason Thomas") {
         capability "Actuator"
         attribute "mqttStatus", "string"
+        attribute "brokerRunning", "string"
         command "forceReconnectMqtt"
+        command "checkBuiltInBroker"
     }
     preferences {
         input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: false
@@ -311,6 +326,21 @@ void forceReconnectMqtt() {
         x2Hub.updated()
     } else {
         log.warn "Sofabaton Bridge: no X2 hub child found to resupply broker credentials for reconnect"
+    }
+}
+
+// 2026-09-22: confirmed working against the new platform build (gopher.ny
+// shipped it). Diagnostic command for now -- shows whether the built-in
+// broker is actually running, which used to require a real connect
+// attempt to infer at all.
+void checkBuiltInBroker() {
+    try {
+        boolean running = MQTTHelper.isBuiltInBrokerRunning()
+        log.info "Sofabaton Bridge: isBuiltInBrokerRunning() = $running"
+        sendEvent(name: "brokerRunning", value: running.toString())
+    } catch (e) {
+        log.error "Sofabaton Bridge: isBuiltInBrokerRunning() call failed -- ${e.message}"
+        sendEvent(name: "brokerRunning", value: "error")
     }
 }
 
