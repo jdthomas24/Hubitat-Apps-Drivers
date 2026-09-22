@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.5.2
+ * Version: 1.5.3
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -24,6 +24,30 @@
  * per-source "Reolink Device Bridge" instead of a child of this app directly
  * -- existing installs had to delete/recreate devices (and repoint
  * dashboards/rules) via re-discovery under each source.
+ *
+ * v1.5.3 -- HOTFIX: found during a real production outage where a Home
+ * Hub's entire shared event connection (all channels) silently died for
+ * 5 days with zero log trace, while still self-reporting "connected."
+ * Root cause: the 90s stale-connection watchdog documented in the 1.4.4
+ * history below was lost at some point during the 1.5.0 recording-control
+ * rewrite (confirmed absent from the actual sendKeepalive() code in
+ * ReolinkDeviceBridge.groovy) -- with it gone, a half-open TCP connection
+ * (remote side or a router's NAT mapping disappears without a proper
+ * close/error) could sit indefinitely reporting healthy with nothing to
+ * catch it. A related bug in the same method (sendKeepalive() returning
+ * early on a stage change without rescheduling itself) meant even the
+ * ordinary keepalive loop could silently stop running under the right
+ * conditions.
+ * Fixed: the staleness watchdog is restored (ReolinkDeviceBridge.groovy
+ * tracks a real last-message timestamp, sendKeepalive() checks it every
+ * cycle and forces a reconnect past 90s of silence), and sendKeepalive()
+ * now always reschedules itself regardless of which branch it takes.
+ * Also added a new, structurally independent audit job (auditEventConnections(),
+ * app-level, every 15 minutes via Hubitat's own schedule() rather than this
+ * app's runIn chain) that double-checks every source's real liveness and
+ * force-reconnects any source its own watchdog missed -- a second layer
+ * specifically because the first layer already failed silently once in
+ * production.
  *
  * v1.5.2 -- HOTFIX: discoverPage()'s per-channel checkbox self-heal logic
  * (added to correct a stale-checked checkbox left over when a device was
@@ -142,110 +166,17 @@
  *    does not auto-coerce between them in that call context -- push(btn)
  *    takes BigDecimal accordingly.
  *
- * v1.4.2 -- HOTFIX: Camera/Doorbell driver preferences used bare
- * paragraph("text") calls, which is App-DSL-only and doesn't compile on a
- * driver -- blocked the 1.4.1 update entirely with "No signature of method:
- * Script1.paragraph()". Fixed in both driver files via input(type:
- * "paragraph"); no app-side code change.
- *
- * v1.4.1 -- one real-hardware testing session, four fixes:
- *  1. schedulerTick()'s battery-check gate required batteryMode == "battery"
- *     before ever checking -- a device with batteryMode ever left unset
- *     (exact real-world trigger not reproducible from code alone) silently
- *     failed this gate forever, due-time still advancing every tick with
- *     nothing logged and battery never updating short of a manual check.
- *     Now treats null as "unknown, go find out": backfills via a live
- *     GetBatteryInfo probe once, self-heals on the next tick after
- *     upgrading.
- *  2. Since the old gate kept advancing the stale due-time even while
- *     skipping the check, that stale schedule would otherwise delay fix #1
- *     up to a full batteryCheckIntervalHours after upgrading. A one-time
- *     runMigrations() (guarded by state.lastKnownAppVersion) clears it so
- *     the fix takes effect within a second of updating.
- *  3. A standalone source's bridge parents off "Reolink Standalone Devices"
- *     (not this app directly), so its parent?.logNormal/logFull() calls
- *     threw MissingMethodException on that driver -- meaning the socket
- *     connection never even started for ANY standalone source (found via a
- *     standalone Argus 4 Pro). Fixed by adding logNormal()/logFull()
- *     passthroughs to StandaloneDevices.groovy. Hub/NVR bridges (parented
- *     directly off the app) were never affected.
- *  4. Added chargingStatus attribute (charging/not_charging/unknown) to
- *     both drivers from GetBatteryInfo's Battery.chargeStatus -- both
- *     values (1/0) confirmed against real hardware plugged in vs.
- *     unplugged, corroborated by current's sign flip and adapterStatus.
- *  5. maybeCheckBatteryOnWake(): a real event push means a battery device
- *     is already awake for an unrelated reason, so opportunistically
- *     checking battery/charging then costs nothing extra vs. waiting for
- *     the next scheduled interval (up to 12h) or a manual check. OFF by
- *     default (checkBatteryOnEventWake), throttled
- *     (eventWakeBatteryThrottleSec, default 60s) so a burst of pushes
- *     triggers one check per wake.
- *  6. The scheduled battery check is now gated by an explicit
- *     batteryCheckEnabled toggle (OFF by default) instead of the old
- *     implicit "0 hours = disabled" convention.
- *  7. Tips page updated: Argus 4 Pro has NO local network API standalone
- *     (both HTTP CGI and the Baichuan event port refuse the connection,
- *     confirmed directly); a Doorbell 2K Gen 2 pairs/polls fine standalone
- *     but its sleep/battery behavior makes event delivery unreliable.
- *     Different failure modes, same conclusion: battery-class devices need
- *     a Home Hub or NVR.
- *
- * v1.3.9 -- real-world use behind a 23-channel NVR:
- *  1. The discovery-time battery probe (guessIsBattery()) was marking a
- *     whole source "unreachable" on the EXPECTED failure of a wired camera
- *     (~half of all cameras) -- doReolinkApiCall() now takes a `quiet` flag
- *     so a probe failure logs at Full tier only, no source-health impact.
- *  2. Check Battery could succeed but the attribute never updated --
- *     receiveBatteryInfo() was reading batteryPercent flat instead of
- *     nested under Battery.batteryPercent (the confirmed reolink_aio
- *     field). Now checks nested first.
- *  3. Bridge keepalive (25s) now logs a Full-tier heartbeat so a quiet-but-
- *     healthy event connection doesn't look identical to a silently stuck
- *     one, throttled to once per connection.
- *  4. Reverted Login's "action: 0" field (added 1.3.8, never confirmed for
- *     Login specifically) after a real rspCode:-7 login rejection --
- *     disproven as the cause (recurred without the field too) but reverted
- *     anyway since unconfirmed; every other command's action:0 is
- *     unaffected and separately confirmed.
- *  5. ensureSourceBridge() could throw a raw DuplicateDNIException and
- *     crash the whole app page if an orphaned device shared its bridge's
- *     DNI -- now caught, logs the DNI to search/delete, returns null
- *     gracefully.
- *  6. Added explicit uninstalled() walking removeSource() for every source
- *     instead of relying solely on Hubitat's automatic cascade-delete --
- *     likely root cause of the orphaned-bridge DNI collision in #5, since
- *     the 1.3.8 bridge restructuring made the device tree 2-3 levels deep.
- *
- * v1.3.8:
- *  1. Real-time event-driven updates -- persistent per-source connection,
- *     falls back to polling automatically on drop/failure, resumes event
- *     mode silently on reconnect. Per-source toggle, defaults on.
- *  2. PIR enable/disable for cameras (pirOn/pirOff, pirEnabled attribute),
- *     doorbells unaffected.
- *  3. Fixed a login bug where "new token acquired" logged even without a
- *     usable Token.name (masking real auth failures) -- success now only
- *     logs on a real token; failure logs the raw response.
- *  4. Fixed Login missing the "action" field every other command sends.
- *  5. Magic-header resync logging stays at debug tier (confirmed benign,
- *     self-recovering Hub-side noise via soak testing); still warns after
- *     20 failed resync attempts or a genuinely unrecognized message type.
- *  6. Bridge device previously logged directly via log.info/log.debug,
- *     bypassing the app's Log level entirely -- now routed through
- *     logNormal()/logFull() like the rest of the app.
- *  7. Standalone (non-Hub) cameras/doorbells now nest under a shared
- *     "Reolink Standalone Devices" entry instead of each bridge appearing
- *     separately -- matching how NVR/Hub channels already group. Each
- *     standalone camera still holds its own independent event connection
- *     (rawSocket is one-connection-per-driver-instance); only the nesting
- *     changed.
- *
- * v1.3.6 -- discoverPage() fixes: unchecking an existing single-channel
- * device to remove it never actually fired (only checking-on did) -- now
- * fires either direction. Multi-channel apply-toggle relabeled for clarity;
- * each row now says Existing/New Device. Danger-zone wording clarified.
- * Hub/NVR channel type detection now uses the channel's own name (API
- * returns no model field), fixing a mislabeled doorbell. Added a note about
- * removing devices from this page, not Hubitat's Devices page.
+ * v1.3.6 through v1.4.5 (condensed, full detail in GitHub commit history):
+ * discoverPage() checkbox-toggle fixes and clearer wording; standalone
+ * (non-Hub) camera/doorbell support, later found in testing to need a
+ * Home Hub or NVR after all (see the "Standalone battery-device support,
+ * closed" note below); PIR enable/disable; real-time event-driven updates
+ * over a persistent Baichuan subscription, falling back to polling
+ * automatically; several scheduler/battery-check gating bugs found via
+ * real hardware and fixed (stuck batteryMode, stale due-times surviving
+ * an upgrade); a DuplicateDNIException crash on orphaned devices caught
+ * gracefully; explicit uninstalled() teardown added rather than relying
+ * on Hubitat's implicit cascade-delete.
  */
 
 import groovy.transform.Field
@@ -264,7 +195,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.5.2"
+@Field static final String APP_VERSION = "1.5.3"
 
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 
@@ -280,6 +211,15 @@ definition(
 // port (src.port, default 443, used for GetAiState/GetChannelstatus/etc.).
 // Always use this constant for the event socket, never src.port.
 @Field static final Integer BAICHUAN_PORT = 9000
+
+// v1.5.3: how stale a source's event connection can look (per the bridge's
+// own isEventConnectionStale() liveness check) before the app-level audit
+// job (auditEventConnections()) force-reconnects it. Deliberately looser
+// than the bridge's own internal 90s watchdog threshold (STALE_CONNECTION_
+// THRESHOLD_SEC in ReolinkDeviceBridge.groovy) -- this audit exists to
+// catch the case where that first-layer watchdog itself silently stops
+// running, not to compete with it on timing.
+@Field static final int SOURCE_STALE_AUDIT_THRESHOLD_SEC = 300
 
 // Pause between per-channel recording-schedule writes in
 // componentLoadPreset()'s loop -- see the top-of-file v1.5.0 note for why.
@@ -2016,6 +1956,11 @@ def initialize() {
     unschedule()
     unsubscribe()
     subscribe(location, "systemStart", "systemStartHandler")
+    // v1.5.3: independent audit job, registered via Hubitat's own cron
+    // scheduler rather than this app's runIn/schedulerTick chain -- see
+    // auditEventConnections()'s comment for why it must be structurally
+    // separate from the thing it's checking on.
+    schedule("0 */15 * * * ?", "auditEventConnections")
     if (!state.accessToken) {
         try {
             createAccessToken()
@@ -2152,6 +2097,52 @@ def initializePolling() {
     state.nextSnapshotDue = snapDue
     state.nextBatteryCheckDue = battDue
     runIn(1, "schedulerTick", [overwrite: true])
+}
+
+/**
+ * v1.5.3: independent liveness audit, structurally separate from the
+ * bridge's own internal watchdog (ReolinkDeviceBridge.groovy's
+ * sendKeepalive()/isEventConnectionStale()) -- registered via Hubitat's
+ * own schedule() cron mechanism (see initialize()) rather than this app's
+ * runIn/schedulerTick chain, specifically because the production incident
+ * this exists for was caused by the FIRST watchdog silently dying. A
+ * second check built on the same mechanism as the first could die the
+ * same way; this one can't, since Hubitat's platform-level cron
+ * scheduling doesn't depend on any job this app's own code keeps alive.
+ * Every 15 minutes, asks each source's bridge whether it believes its own
+ * connection is stale (past SOURCE_STALE_AUDIT_THRESHOLD_SEC with no real
+ * traffic) and force-reconnects it if so. Logs once per transition into
+ * staleness, not every audit cycle, same suppression pattern as
+ * markSourceUnreachable() elsewhere in this file.
+ */
+def auditEventConnections() {
+    (state.sources ?: []).each { src ->
+        if (settings["useEventSubscription_${src.id}"] == false) return
+        def bridge = getSourceBridge(src.id)
+        if (!bridge) return
+        def key = src.id.toString()
+        def staleFlags = state.sourceAuditStale ?: [:]
+        boolean stale
+        try {
+            stale = bridge.isEventConnectionStale(SOURCE_STALE_AUDIT_THRESHOLD_SEC)
+        } catch (e) {
+            log.warn "Reolink source ${src.id}: audit liveness check failed, ${e.message}"
+            return
+        }
+        if (stale) {
+            if (staleFlags[key] != true) {
+                log.warn "Reolink source ${src.id}: audit found event connection stale (no real traffic in " +
+                    "${SOURCE_STALE_AUDIT_THRESHOLD_SEC}s+) despite reporting connected, forcing a reconnect"
+            }
+            staleFlags[key] = true
+            state.sourceAuditStale = staleFlags
+            try { bridge.stopEventSubscription() } catch (e) { /* best effort */ }
+            bridge.startEventSubscription()
+        } else if (staleFlags[key] == true) {
+            staleFlags[key] = false
+            state.sourceAuditStale = staleFlags
+        }
+    }
 }
 
 /**
@@ -2921,4 +2912,5 @@ void logNormal(msg) {
 void logFull(msg) {
     if (logLevelRank() >= 2) log.debug msg
 }
+
 
