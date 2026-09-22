@@ -21,21 +21,29 @@
 
     2026-09-20: tried adding a checkBuiltInBroker command to test
     hubitat.helper.MQTTHelper.isBuiltInBrokerRunning() (the proper
-    broker-status API gopher.ny mentioned adding). Removed again the same
-    day: a compile-time import throws "unable to resolve class" on this
-    platform build, meaning the class doesn't exist here yet -- that
-    error is itself the answer. Hubitat's sandbox also separately blocks
-    Class.forName() as a runtime workaround. No sandbox-safe way exists
-    to probe for this right now.
+    broker-status API gopher.ny mentioned adding). Removed the same day: a
+    compile-time import threw "unable to resolve class" on that platform
+    build, meaning the class didn't exist there yet.
+
+    2026-09-22: gopher.ny confirmed the build with MQTTHelper shipped. Added
+    checkBuiltInBroker back, using a plain "import hubitat.helper.MQTTHelper"
+    at the top (the earlier ClassNotFoundException issue was the class
+    genuinely not existing yet on the old build, not a Groovy/sandbox
+    problem with imports themselves -- now that it's shipped, a normal
+    import should just work).
 */
+
+import hubitat.helper.MQTTHelper
 
 metadata {
     definition (name: "Sofabaton MQTT Minimal Test", namespace: "jdthomas24", author: "Jason Thomas") {
         capability "Actuator"
         attribute "mqttStatus", "string"
         attribute "lastMessage", "string"
+        attribute "brokerRunning", "string"
         command "connectMqtt"
         command "disconnectMqtt"
+        command "checkBuiltInBroker"
     }
     preferences {
         input name: "mqttHost", type: "text", title: "Broker Host/IP", defaultValue: "192.168.1.129"
@@ -73,6 +81,20 @@ void disconnectMqtt() {
     } catch (e) { }
     sendEvent(name: "mqttStatus", value: "disconnected")
     log.info "Sofabaton MQTT Minimal Test: disconnected"
+}
+
+// 2026-09-22: re-added now that gopher.ny confirmed this shipped. Kept the
+// try/catch anyway -- cheap insurance, and it means a clear error message
+// instead of a raw stack trace if something's still off.
+void checkBuiltInBroker() {
+    try {
+        boolean running = MQTTHelper.isBuiltInBrokerRunning()
+        log.info "Sofabaton MQTT Minimal Test: isBuiltInBrokerRunning() = $running"
+        sendEvent(name: "brokerRunning", value: running.toString())
+    } catch (e) {
+        log.error "Sofabaton MQTT Minimal Test: isBuiltInBrokerRunning() call failed -- ${e.message}"
+        sendEvent(name: "brokerRunning", value: "error")
+    }
 }
 
 void mqttClientStatus(String message) {
