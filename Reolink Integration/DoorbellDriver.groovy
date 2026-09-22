@@ -1,6 +1,6 @@
 /**
  * Reolink Doorbell (Component Driver)
- * Version: 1.5.2
+ * Version: 1.5.3
  *
  * Same delegation pattern as Reolink Camera, plus a "visitor" (button press)
  * event so Rule Machine can trigger straight off "pushed 1" for a doorbell
