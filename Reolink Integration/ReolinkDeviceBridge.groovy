@@ -1,6 +1,6 @@
 /**
  * Reolink Device Bridge (Internal Parent Driver)
- * Version: 1.5.2
+ * Version: 1.5.3
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- ONE instance per SOURCE (Hub/NVR or standalone).
@@ -58,6 +58,13 @@
  *    restore; separate virtual child devices for the switch/buttons) were
  *    built, tested, and fully replaced by the above during development --
  *    neither exists in the code anymore.
+ *
+ * v1.5.3 -- HOTFIX: restored the stale-connection watchdog (documented in
+ * the 1.4.4 history below but found genuinely absent from sendKeepalive()
+ * during a real 5-day-silent production outage) and fixed sendKeepalive()
+ * silently failing to reschedule itself on an unexpected stage change.
+ * Added isEventConnectionStale() for the app's new independent audit job.
+ * See ParentApp.groovy's v1.5.3 note for the full incident.
  *
  * v1.4.2 -- No functional change to this driver (version kept in sync with
  * the app); the paragraph() hotfix was in the Camera/Doorbell driver files.
@@ -345,6 +352,16 @@ def receiveRecordingResult(String summary) {
 @Field static final byte[] AES_IV_BYTES = "0123456789abcdef".getBytes("UTF-8")
 @Field static final int HOST_CH_ID = 250
 
+// v1.5.3: how long sendKeepalive() will tolerate zero real traffic
+// (processBuffer() successfully parsing a message) before concluding the
+// connection is dead -- likely half-open (remote side or a NAT mapping
+// disappeared without a clean close/error) -- and forcing a reconnect,
+// even though the socket itself may still report open. This watchdog
+// existed since 1.4.4 but was found missing from this method entirely
+// during a real 5-day-silent production outage; see the v1.5.3 header
+// note and ParentApp.groovy's matching note for the full incident.
+@Field static final int STALE_CONNECTION_THRESHOLD_SEC = 90
+
 @Field static final String LOGIN_XML =
     '<?xml version="1.0" encoding="UTF-8" ?><body><LoginUser version="1.1"><userName>%s</userName>' +
     '<password>%s</password><userVer>1</userVer></LoginUser><LoginNet version="1.1"><type>LAN</type>' +
@@ -375,6 +392,9 @@ def startEventSubscription(boolean isReconnect = false) {
     state.stage = "CONNECTING"
     state.last33 = [:]
     state.last145 = [:]
+    // v1.5.3: reset on every (re)connect so a fresh connection never starts
+    // out already looking stale to sendKeepalive()'s watchdog below.
+    state.lastRealMessageAt = now()
     try {
         interfaces.rawSocket.connect(state.host, state.port as int, byteInterface: true)
     } catch (e) {
@@ -493,15 +513,56 @@ def sendSubscribe() {
  * old per-camera poll-spam problem event mode was built to avoid.
  */
 def sendKeepalive() {
-    if (state.stage != "SUBSCRIBED") return
-    try {
-        byte[] header = buildHeader1464(93, 0, HOST_CH_ID, nextMessId(), 0)
-        sendRaw(header)
-        parent?.logFull "Reolink Device Bridge (source ${state.sourceId}): keepalive sent, connection healthy"
-    } catch (e) {
-        log.warn "Reolink Device Bridge (source ${state.sourceId}): keepalive send failed: ${e.message}"
+    if (state.stage == "SUBSCRIBED") {
+        // v1.5.3: staleness watchdog, restored -- see
+        // STALE_CONNECTION_THRESHOLD_SEC's declaration for the full
+        // incident this addresses. Checked BEFORE sending a fresh
+        // keepalive: a half-open connection can still successfully queue
+        // an outbound send even though nothing real has come back in a
+        // long time, so "the send succeeded" is not evidence the
+        // connection is alive.
+        def lastReal = (state.lastRealMessageAt ?: 0) as Long
+        if (now() - lastReal > (STALE_CONNECTION_THRESHOLD_SEC * 1000L)) {
+            log.warn "Reolink Device Bridge (source ${state.sourceId}): no real traffic received in " +
+                "${STALE_CONNECTION_THRESHOLD_SEC}s despite reporting connected, treating as a dead " +
+                "(likely half-open) connection and forcing a reconnect"
+            unschedule("sendKeepalive")
+            try { interfaces.rawSocket.close() } catch (e) { }
+            state.stage = null
+            sendEvent(name: "connectionStatus", value: "reconnecting")
+            parent?.componentEventConnectionStatus(this, state.sourceId, "reconnecting")
+            scheduleReconnect()
+            return
+        }
+        try {
+            byte[] header = buildHeader1464(93, 0, HOST_CH_ID, nextMessId(), 0)
+            sendRaw(header)
+            parent?.logFull "Reolink Device Bridge (source ${state.sourceId}): keepalive sent, connection healthy"
+        } catch (e) {
+            log.warn "Reolink Device Bridge (source ${state.sourceId}): keepalive send failed: ${e.message}"
+        }
     }
+    // v1.5.3: moved outside/after the SUBSCRIBED branch above -- this used
+    // to sit inside an early `if (state.stage != "SUBSCRIBED") return`,
+    // which meant an unexpected stage change between ticks could silently
+    // stop this job from ever rescheduling itself, with nothing left to
+    // notice or recover. Now always re-arms regardless of which branch
+    // ran above (including the stale-reconnect branch, which already
+    // returns separately via scheduleReconnect()'s own path).
     runIn(25, "sendKeepalive")
+}
+
+/**
+ * v1.5.3: read-only liveness check for the app's independent audit job
+ * (ParentApp.groovy's auditEventConnections()) -- deliberately separate
+ * ground truth from this bridge's own self-reported connectionStatus
+ * attribute, which is exactly what silently lied "connected" during the
+ * incident this whole v1.5.3 release addresses.
+ */
+def isEventConnectionStale(Integer thresholdSec) {
+    if (state.stage != "SUBSCRIBED") return false
+    def lastReal = (state.lastRealMessageAt ?: 0) as Long
+    return (now() - lastReal) > (thresholdSec * 1000L)
 }
 
 private void handlePushedEvent(int cmdId, String bodyText) {
@@ -670,6 +731,11 @@ private void processBuffer() {
 
     String bodyText = decryptBody(bodyHex, encTypeMarker, chId)
     handleMessage(cmdId, bodyText)
+    // v1.5.3: real ground truth for sendKeepalive()'s staleness watchdog --
+    // a successfully-parsed message is genuine traffic, regardless of
+    // cmd_id, so this is stamped here rather than only on cmd_id 33/145
+    // pushes.
+    state.lastRealMessageAt = now()
 
     if (state.rxBufferHex?.length() >= 40) {
         processBuffer()
