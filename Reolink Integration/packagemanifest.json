@@ -1,10 +1,10 @@
 {
     "packageName": "Reolink Integration",
-    "releaseNotes": "v1.5.0-1.5.2: Adds NVR/Hub recording control (master on/off switch plus named per-channel schedule presets, with a per-device lock to exclude a channel from all presets). v1.5.1 fixes standalone (non-Hub) sources throwing errors or having broken recording-control commands due to missing passthrough methods. v1.5.2 fixes new channels on a multi-channel Hub/NVR source bouncing back to unselected before Apply could be clicked. v1.5.3 fixes a source's entire event connection silently going dead (no motion/person/vehicle/doorbell events) while still reporting connected, sometimes for days -- restores a stale-connection watchdog and adds an independent app-level recovery check.",
+    "releaseNotes": "v1.5.3 fixed a source's event connection silently going dead while still reporting connected. v1.5.4 refines the logging around that fix so routine reconnects stay quiet and only real failures are logged as errors.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "communityLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "author": "jdthomas24",
-    "version": "1.5.3",
+    "version": "1.5.4",
     "minimumHEVersion": "2.3.0",
     "dateReleased": "2026-08-14",
     "category": "Integrations",
