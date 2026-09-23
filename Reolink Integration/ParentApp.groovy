@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.5.3
+ * Version: 1.5.4
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -48,6 +48,14 @@
  * force-reconnects any source its own watchdog missed -- a second layer
  * specifically because the first layer already failed silently once in
  * production.
+ * Logging refined after real-world feedback: detecting staleness and
+ * starting a reconnect is routine (could just be a transient IP/network
+ * blip) and now stays silent by default; log.warn only fires if a
+ * reconnect needs a SECOND attempt, and giving up after all 10 attempts
+ * is now log.error, not log.warn, since that's the one outcome that
+ * actually needs attention. The Full-logging auto-revert (60 minutes)
+ * now reverts to Errors Only instead of Normal, matching this app's
+ * actual default.
  *
  * v1.5.2 -- HOTFIX: discoverPage()'s per-channel checkbox self-heal logic
  * (added to correct a stale-checked checkbox left over when a device was
@@ -195,7 +203,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.5.3"
+@Field static final String APP_VERSION = "1.5.4"
 
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 
@@ -2050,9 +2058,10 @@ private void runMigrations() {
 }
 
 /** Auto-reverts Full back to Normal after 60 minutes -- Full is meant for actively chasing something, not a steady state. Errors Only and Normal have no timer. */
+/** Auto-reverts Full back to Errors Only after 60 minutes -- Full is meant for actively chasing something, not a steady state. Reverting to Errors Only (not Normal) matches this app's actual default, so a forgotten Full session doesn't leave routine logging elevated indefinitely. */
 def revertToNormalLogging() {
-    app.updateSetting("logLevel", [type: "enum", value: "Normal"])
-    log.info "Reolink Integration: log level auto-reverted from Full to Normal after 60 minutes"
+    app.updateSetting("logLevel", [type: "enum", value: "Errors Only"])
+    log.info "Reolink Integration: log level auto-reverted from Full to Errors Only after 60 minutes"
 }
 
 /**
@@ -2131,7 +2140,15 @@ def auditEventConnections() {
         }
         if (stale) {
             if (staleFlags[key] != true) {
-                log.warn "Reolink source ${src.id}: audit found event connection stale (no real traffic in " +
+                // v1.5.3 refinement: this fires the MOMENT staleness is
+                // detected and a reconnect is about to be attempted -- a
+                // single reconnect is routine (could be a transient IP/
+                // network blip, nothing more) and shouldn't read as an
+                // alarm on its own. logNormal instead of log.warn keeps it
+                // silent at the default Errors Only tier; the bridge's own
+                // scheduleReconnect() escalates to log.warn/log.error if
+                // this doesn't resolve quickly on its own.
+                logNormal "Reolink source ${src.id}: audit found event connection stale (no real traffic in " +
                     "${SOURCE_STALE_AUDIT_THRESHOLD_SEC}s+) despite reporting connected, forcing a reconnect"
             }
             staleFlags[key] = true
@@ -2912,5 +2929,3 @@ void logNormal(msg) {
 void logFull(msg) {
     if (logLevelRank() >= 2) log.debug msg
 }
-
-
