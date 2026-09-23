@@ -1,6 +1,6 @@
 /**
  * Reolink Camera (Component Driver)
- * Version: 1.5.3
+ * Version: 1.5.4
  *
  * Thin device: no HTTP of its own. Delegates everything to the parent app via
  * parent.componentX(this, ...), using data values sourceId/channel to
