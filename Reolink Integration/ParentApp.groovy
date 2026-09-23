@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.5.4
+ * Version: 1.6.0
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -203,7 +203,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.5.4"
+@Field static final String APP_VERSION = "1.5.5"
 
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 
@@ -292,6 +292,7 @@ preferences {
     page(name: "mainPage")
     page(name: "addSourcePage")
     page(name: "discoverPage")
+    page(name: "removeSourcePage")
     page(name: "presetsPage")
     page(name: "tipsPage")
 }
@@ -305,6 +306,7 @@ mappings {
 }
 
 def mainPage() {
+    state.remove("pendingSourceRemoval")
     if (newLabel && newHost && newUser && newPass) {
         addSource()
         // FIXED (2026-08-17): newPort and newIsHub were never cleared here,
@@ -324,68 +326,275 @@ def mainPage() {
         app.removeSetting("newPass")
         app.removeSetting("newIsHub")
     }
+    def sources = state.sources ?: []
+    int sourceCount = sources.size()
+    int totalDeviceCount = sources.collect { src -> childrenForSource(src.id).size() }.sum() ?: 0
+
     dynamicPage(name: "mainPage", install: true, uninstall: true) {
         section {
-            paragraph pillHeader("Sources")
-            paragraph "<b>A source is one camera, one NVR, or one Home Hub -- anything with its own IP/login.</b>"
-            (state.sources ?: []).each { src ->
-                def deviceCount = childrenForSource(src.id).size()
-                def typeLine = src.isHub ?
-                    "<span style='color:#1565C0;font-weight:700;'>Hub/NVR · ${deviceCount} device(s)</span>" :
-                    "Standalone · ${deviceCount} device(s)"
-                href name: "src_${src.id}", title: "${src.label} (${src.host})",
-                    description: typeLine,
-                    page: "discoverPage", params: [sourceId: src.id]
+            paragraph rawHtml: true, integrationOverviewHtml(sourceCount, totalDeviceCount)
+        }
+        section(sectionClass: "reolink-main-sources") {
+            paragraph rawHtml: true, mainPageColumnHeader("Connected Sources")
+            if (sources) {
+                sources.each { src ->
+                    def deviceCount = childrenForSource(src.id).size()
+                    href name: "src_${src.id}", title: "${src.label} (${src.host})",
+                        description: sourceSummaryLine(src, deviceCount),
+                        page: "discoverPage", params: [sourceId: src.id], width: 12, style: "margin:8px;"
+                }
+            } else {
+                paragraph rawHtml: true, emptySourcesHtml()
             }
-            // Kept in the SAME section as the sources list above (rather
-            // than its own separate section) -- Hubitat's vertical gap
-            // between two sections is noticeably wider than the gap
-            // between two elements inside one section, so this tightens
-            // the visual space between the last source and "Add a source"
-            // without needing any custom CSS Hubitat's own page framework
-            // doesn't expose control over.
-            href name: "addSource", title: "➕ Add a source...",
-                description: "Standalone camera, NVR, or Home Hub", page: "addSourcePage"
+
+            // Keep native navigation inside the same column layout as discovery.
+            href name: "addSource", title: "<span><i class='fa-regular fa-plus mr-2'></i>Add source</span>",
+                description: "Standalone camera, NVR, or Home Hub",
+                page: "addSourcePage", width: 12, style: "margin:8px;"
         }
-        section {
-            paragraph pillHeader("Logging")
+        section(sectionClass: "reolink-main-settings") {
+            paragraph rawHtml: true, mainPageColumnHeader("Quick Settings")
             input "logLevel", "enum", title: "Log level", options: LOG_LEVELS,
-                defaultValue: "Errors Only", submitOnChange: true
-            paragraph logLevelPill("Errors Only") + " Default. Warnings and errors only."
-            paragraph logLevelPill("Normal") + " Errors, plus meaningful one-time events and changes " +
-                "(logins, asleep/awake, devices created, config changes)."
-            paragraph logLevelPill("Full") + " Everything, including every routine poll step. " +
-                "<b>Automatically reverts to Normal after 60 minutes.</b>"
+                defaultValue: "Errors Only", submitOnChange: true, width: 12,
+                style: "margin-left: 0.5em; margin-right: 0.5em; margin-top: 0; padding-right:0;"
+            paragraph rawHtml: true, loggingDetailsPopupHtml()
         }
-        section("<b>Help & Support</b>") {
-            href name: "tips", title: "<b>Tips & Troubleshooting</b>", page: "tipsPage",
-                description: "Known device quirks, setup gotchas, and confirmed capabilities"
-            paragraph rawHtml: true, """
-<div style='padding:4px 0;'>
-  <a href='https://community.hubitat.com/t/release-reolink-integration-cameras-doorbells-nvrs-home-hubs/165352' target='_blank'
-     style='display:block; background:#f8f8f8; border:1px solid #ddd; border-radius:6px; padding:10px 14px; text-decoration:none; color:#333; margin-bottom:6px;'>
-    <span style='font-size:14px;'>\uD83D\uDCAC <b>Hubitat Community Thread</b></span><br>
-    <span style='font-size:12px; color:#888;'>Questions, feedback, bug reports, and release notes</span>
-  </a>
-  <a href='https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US' target='_blank'
-     style='display:block; background:#f8f8f8; border:1px solid #ddd; border-radius:6px; padding:10px 14px; text-decoration:none; color:#333;'>
-    <span style='font-size:14px;'>\u2615 <b>Buy Me a Coffee</b></span><br>
-    <span style='font-size:12px; color:#888;'>Enjoying the app? Any amount is appreciated -- thank you!</span>
-  </a>
-</div>
-"""
+        section(title: "<b>Help & Support</b>", sectionClass: "reolink-main-support") {
+            href name: "tips", title: "<i class='pi pi-info-circle' aria-hidden='true'></i>" +
+                    "Tips & Troubleshooting", page: "tipsPage",
+                description: "Known quirks and setup guidance", width: 4, style: "margin:8px;"
+            paragraph rawHtml: true, supportLinkHtml(
+                "https://community.hubitat.com/t/release-reolink-integration-cameras-doorbells-nvrs-home-hubs/165352",
+                "pi pi-comments", "Hubitat Community Thread", "Questions, feedback, and release notes"), width: 4
+            paragraph rawHtml: true, supportLinkHtml(
+                "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US",
+                "fa-solid fa-mug-hot", "Buy Me a Coffee", "Support development"), width: 4
         }
         section {
-            paragraph "<div style='text-align:center;color:#999;font-size:11px;margin-top:10px;'>" +
+            paragraph "<div class='text-center text-color-secondary text-xs mt-2'>" +
                 "Reolink Integration v${APP_VERSION}</div>"
         }
     }
 }
 
+/** Status-first summary used by the redesigned main page. Display only. */
+private String integrationOverviewHtml(int sourceCount, int deviceCount) {
+    boolean configured = sourceCount > 0
+    String title = configured ? "Integration ready" : "Setup required"
+    String summary = configured ?
+        "${countText(sourceCount, 'source')} configured &middot; ${countText(deviceCount, 'device')} created" :
+        "Add a source to begin discovering Reolink devices"
+    String tone = configured ? "bg-green-50 border-green-200" : "p-message p-message-warn reolink-message"
+    String iconColor = configured ? "text-green-700" : "text-yellow-700"
+    String icon = configured ? "pi pi-check-circle" : "fa-solid fa-exclamation-triangle"
+
+    return """
+<style>
+  ${appPageSpacingCss()}
+  ${tipsCardCss()}
+  .reolink-main-sources { float: left; width: calc(62% - 8px); }
+  .reolink-main-settings {
+    float: right; width: 38%; border-left: 1px solid #e0e0e0;
+    padding-left: 8px; box-sizing: border-box;
+  }
+  .reolink-main-sources > .mdl-grid, .reolink-main-settings > .mdl-grid { padding: 4px 0 !important; }
+  .reolink-main-support { clear: both; }
+  .reolink-main-support button.hrefElem[name^='_action_href_tips'] {
+    height: 61.5px; padding-bottom: 13.5px; box-sizing: border-box;
+  }
+  @media (max-width: 1000px) {
+    .reolink-main-sources, .reolink-main-settings { float: none; width: 100%; border-left: 0; padding-left: 0; }
+  }
+</style>
+<div class='flex align-items-center justify-content-between gap-3 ${tone} border-1 border-round p-3'>
+  <div class='flex align-items-center gap-3 min-w-0'>
+    <div class='flex-shrink-0'><i class='${icon} ${iconColor} text-2xl' aria-hidden='true'></i></div>
+    <div class='min-w-0'>
+      <div class='reolink-status-heading font-semibold'>${title}</div>
+      <div class='text-color-secondary mt-1' style='font-size:14px;'>${summary}</div>
+    </div>
+  </div>
+  <a href='/logs?tab=past&amp;appId=${app.id}' target='_blank' class='text-blue-700 font-semibold white-space-nowrap no-underline'>
+    View logs <i class='fa-regular fa-external-link'></i>
+  </a>
+</div>
+"""
+}
+
+/** Shared native Tips navigation card styling for the main and discovery pages. */
+private String tipsCardCss() {
+    """
+  button.hrefElem[name^='_action_href_tips'] {
+    position: relative;
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    box-shadow: none;
+    color: #333;
+    height: 56px;
+    font-family: inherit;
+    font-size: 16px;
+    font-weight: 500;
+    line-height: 1.4;
+    padding: 8px 28px 8px 46px;
+  }
+  button.hrefElem[name^='_action_href_tips'] > span:first-child { color: #1565c0; font-weight: 600; font-size: 16px !important; }
+  button.hrefElem[name^='_action_href_tips'] > span.state-incomplete-text {
+    color: #777; font-size: 14px; font-weight: 500; line-height: 1.4;
+  }
+  button.hrefElem[name^='_action_href_tips'] i.pi {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #1565c0;
+    font-size: 20px;
+  }
+  button.hrefElem[name^='_action_href_tips']::before { color: #1565c0; }
+"""
+}
+
+/** Shared page inset rules keep the main and discovery pages aligned. */
+private String appPageSpacingCss() {
+    """
+  ${tileSecondaryTextCss()}
+  .reolink-status-heading { font-size: 16px; }
+  .p-message.reolink-message { padding: 0.75rem !important; margin: 0; border: 0 !important; }
+  .reolink-message .text-color-secondary,
+  .reolink-message .text-blue-700, .reolink-message .text-yellow-700 { color: inherit !important; }
+  div.panel-body {
+    padding: 0 !important;
+    margin-left: -0.5em;
+    margin-right: -0.5em;
+  }
+  fieldset#fieldsetAppButtons {
+    margin-left: 0.5em;
+    margin-right: 0.5em;
+  }
+"""
+}
+
+/** Separate icon/text columns keep wrapped warning text clear of the icon. */
+private String warningMessageHtml(String content, String extraClasses = "") {
+    "<div class='p-message p-message-warn reolink-message flex align-items-center gap-2 ${extraClasses}'>" +
+        "<div class='flex-shrink-0'><i class='fa-solid fa-exclamation-triangle text-xl' aria-hidden='true'></i></div>" +
+        "<div class='min-w-0 flex-1'>${content}</div></div>"
+}
+
+private String mainPageColumnHeader(String title) {
+    "<div class='reolink-status-heading font-semibold'>${title}</div>"
+}
+
+/** Match Hubitat's native href secondary text across all app pages. */
+private String tileSecondaryTextCss() {
+    "#formApp .hrefElem > .state-incomplete-text, #formApp .hrefElem > .state-complete-text { font-size: 14px !important; }"
+}
+
+private String emptySourcesHtml() {
+    """
+<div class='border-1 border-gray-200 border-round p-3 text-color-secondary'>
+  <div class='font-semibold text-color mb-1'>No sources configured</div>
+  <div class='text-sm'>A source is one camera, one NVR, or one Home Hub with its own IP/login.</div>
+</div>
+"""
+}
+
+private String sourceSummaryLine(src, int deviceCount) {
+    String sourceType = src.isHub ? "Hub/NVR" : "Standalone"
+    String key = src.id.toString()
+    boolean unreachable = state.sourceUnreachable?.get(key) == true
+    String connectionMode = state.sourceConnMode?.get(key)
+    boolean pollingOnly = settings["useEventSubscription_${src.id}"] == false
+
+    String status
+    String colorClass
+    if (unreachable) {
+        status = "Unreachable"
+        colorClass = "text-red-700"
+    } else if (connectionMode == "connected") {
+        status = "Online"
+        colorClass = "text-green-700"
+    } else if (pollingOnly) {
+        status = "Polling"
+        colorClass = "text-blue-700"
+    } else {
+        status = "Configured"
+        colorClass = "text-color-secondary"
+    }
+
+    return "${sourceType} &middot; ${countText(deviceCount, 'device')} &nbsp;&nbsp;" +
+        "<span class='${colorClass} font-semibold'>&#9679;&nbsp; ${status}</span>"
+}
+
+/**
+ * Opens an HTML-formatted explanation in Hubitat's native dialog. Escape the
+ * JavaScript string for the single-quoted onclick attribute after JSON encoding.
+ */
+private String loggingDetailsPopupHtml() {
+    String currentLevel = LOG_LEVELS.contains(logLevel) ? logLevel : "Errors Only"
+    String details = """
+<div class='text-left text-color' style='max-width:520px;line-height:1.45;'>
+  <div class='text-xl font-bold mb-1'>Logging levels</div>
+  <div class='text-color-secondary text-base mb-3'>Choose how much activity appears in the app logs.</div>
+  ${loggingLevelDetailHtml("Errors Only", "Warnings and errors only.", currentLevel)}
+  ${loggingLevelDetailHtml("Normal", "Errors, plus meaningful events and changes: logins, asleep/awake, devices created, and configuration changes.", currentLevel)}
+  ${loggingLevelDetailHtml("Full", "Everything, including every routine poll step. Use while troubleshooting.", currentLevel)}
+</div>
+"""
+    String jsDetails = groovy.json.JsonOutput.toJson(details)
+        .replace("&", "&amp;").replace("'", "&#39;")
+        .replace("<", "&lt;").replace(">", "&gt;")
+    return """
+<a href='#' onclick='window.alertHubitat(${jsDetails}); return false;'
+   class='flex align-items-center justify-content-between gap-3 bg-gray-50 border-1 border-gray-200 border-round px-3 py-2 h-full text-color no-underline'>
+  <span>
+    <span class='block font-semibold'>Logging details</span>
+    <span class='block text-color-secondary mt-1' style='font-size:14px;'>What each level records</span>
+  </span>
+  <i class='pi pi-chevron-right text-blue-700'></i>
+</a>
+"""
+}
+
+private String loggingLevelDetailHtml(String name, String description, String currentLevel) {
+    String current = name == currentLevel ?
+        "<span class='text-green-700 text-xs font-bold'>Current</span>" : ""
+    String tone = name == "Errors Only" ? "bg-red-50 text-red-700" :
+        name == "Full" ? "bg-indigo-50 text-indigo-700" : "bg-blue-50 text-blue-700"
+    String warning = name == "Full" ? warningMessageHtml(
+        "<b>Full</b> is a temporary setting. It automatically reverts to <b>Errors Only</b> after 60 minutes.", "mt-3 text-base") : ""
+    return """
+<div class='border-1 border-gray-200 border-round px-3 py-2 mb-2'>
+  <div class='flex align-items-center justify-content-between gap-3 mb-1'>
+    <span class='${tone} border-round-xl px-2 py-1 text-xs font-bold'>${name}${name == "Errors Only" ? " (default)" : ""}</span>
+    ${current}
+  </div>
+  <div class='text-base text-color-secondary'>${description}</div>
+  ${warning}
+</div>
+"""
+}
+
+private String supportLinkHtml(String url, String iconClass, String title, String subtitle) {
+    return """
+<a href='${url}' target='_blank' rel='noopener noreferrer'
+   class='flex align-items-center gap-3 border-1 border-gray-200 border-round px-3 py-2 text-color no-underline'>
+  <i class='${iconClass} text-blue-700 text-xl flex-shrink-0'></i>
+  <span class='min-w-0'>
+    <span class='block text-blue-700 font-semibold'>${title}</span>
+    <span class='block text-color-secondary mt-1' style='font-size:14px;'>${subtitle}</span>
+  </span>
+</a>
+"""
+}
+
+private String countText(int count, String singular) {
+    "${count} ${singular}${count == 1 ? '' : 's'}"
+}
+
 private String pillHeader(String text) {
-    "<div style='display:inline-block;background:#E3F2FD;color:#1565C0;font-weight:700;" +
-    "font-size:12px;letter-spacing:0.5px;padding:4px 16px;border-radius:14px;" +
-    "margin-bottom:6px;'>${text.toUpperCase()}</div>"
+    "<div class='inline-block bg-blue-50 text-blue-700 font-bold text-xs uppercase px-3 py-1 " +
+    "border-round-xl mb-2'>${text.toUpperCase()}</div>"
 }
 
 /**
@@ -394,184 +603,264 @@ private String pillHeader(String text) {
  * the errors-only default, grey for the middle tier, dark blue for the noisiest/temporary one.
  */
 private String logLevelPill(String level) {
-    def colors = [
-        "Errors Only": [bg: "#FFEBEE", fg: "#C62828"],
-        "Normal":      [bg: "#ECEFF1", fg: "#455A64"],
-        "Full":        [bg: "#E8EAF6", fg: "#283593"]
+    def tones = [
+        "Errors Only": "bg-red-50 text-red-700",
+        "Normal":      "bg-gray-100 text-gray-700",
+        "Full":        "bg-indigo-50 text-indigo-700"
     ]
-    def c = colors[level] ?: [bg: "#ECEFF1", fg: "#455A64"]
-    "<span style='display:inline-block;background:${c.bg};color:${c.fg};font-weight:700;" +
-    "font-size:11px;letter-spacing:0.3px;padding:2px 10px;border-radius:10px;'>${level}</span>"
+    def tone = tones[level] ?: tones["Normal"]
+    "<span class='inline-block ${tone} font-bold text-xs px-2 py-1 border-round-xl'>${level}</span>"
 }
 
-def tipsPage() {
-    dynamicPage(name: "tipsPage", title: "Tips & Notes") {
-        // All topics merged into ONE section instead of one section per
-        // topic -- Hubitat's own gap between separate sections is wider
-        // than the gap between elements inside one, so this tightens the
-        // page overall. A thin divider paragraph between each topic keeps
-        // them visually distinct despite the tighter spacing, rather than
-        // relying on whitespace alone to separate them.
-        section {
-            paragraph pillHeader("What a source is")
-            paragraph "A source is one camera, one NVR, or one Home Hub -- anything with its own IP/login. " +
-                "A standalone camera always has one channel: 0. An NVR/Home Hub has one channel per paired " +
-                "camera -- run discovery to see what it finds."
-            paragraph tipsDivider()
+def tipsPage(params = null) {
+    def topics = tipsTopics()
+    def topic = topics.find { it.id == params?.topic } ?: topics.find { it.id == "network" }
+    int topicIndex = topics.indexOf(topic)
+    def nextTopic = topicIndex + 1 < topics.size() ? topics[topicIndex + 1] : null
+    dynamicPage(name: "tipsPage", title: "Tips & Troubleshooting") {
+        section(sectionClass: "reolink-tips-index") {
+            paragraph rawHtml: true, tipsStylesHtml()
+            topics.groupBy { it.group }.each { group, entries ->
+                paragraph rawHtml: true, "<div class='reolink-status-heading font-semibold mt-2'>${group}</div>"
+                entries.each { entry ->
+                    String selected = entry.id == topic.id ? "reolink-topic-current" : ""
+                    href name: "tip_${entry.id}",
+                        title: "<span class='${selected}'><i class='pi ${entry.icon} mr-3' aria-hidden='true'></i>${entry.label}</span>",
+                        description: "", page: "tipsPage", params: [topic: entry.id],
+                        width: 12, style: "margin:0 8px;"
+                }
+            }
+        }
+        section(sectionClass: "reolink-tips-article") {
+            paragraph rawHtml: true, tipsArticleHtml(topic)
+            if (topic.id == "network") {
+                def sources = topics.find { it.id == "sources" }
+                paragraph rawHtml: true, tipsArticleHtml(sources)
+            }
+            if (nextTopic) {
+                href name: "nextTip", title: "<span class='text-blue-700'>${nextTopic.label}</span>",
+                    description: "Next topic", page: "tipsPage", params: [topic: nextTopic.id],
+                    width: 12, style: "margin:8px;"
+            }
+        }
+    }
+}
 
-            paragraph pillHeader("Before adding any camera")
-            paragraph "Check the camera's own Network > Advanced (or Server) settings and make sure HTTP, " +
+private String tipsStylesHtml() {
+    """
+<style>
+  ${appPageSpacingCss()}
+  .reolink-tips-index { float: left; width: calc(27% - 8px); box-sizing: border-box; }
+  .reolink-tips-article { float: right; width: 73%; border-left: 1px solid #e0e0e0; padding-left: 8px; box-sizing: border-box; }
+  .reolink-tips-index > .mdl-grid, .reolink-tips-article > .mdl-grid { padding: 4px 0 !important; }
+  .reolink-tips-index .mdl-cell:has(> style) { display: none; }
+  .reolink-tips-index button.hrefElem {
+    background: transparent; box-shadow: none; border: 0; border-left: 3px solid transparent;
+    border-radius: 0; padding: 9px 10px; font-family: inherit; font-size: 16px; color: #1565c0;
+  }
+  .reolink-tips-index button.hrefElem::before { display: none; }
+  .reolink-tips-index button.hrefElem:has(.reolink-topic-current) { background: #eaf2fc; border-left-color: #1565c0; font-weight: 600; }
+  .reolink-tips-index button.hrefElem:hover { background: #f3f6fa; }
+  .reolink-tips-index button.hrefElem:focus-visible { outline: 2px solid #1565c0; outline-offset: 2px; }
+  .reolink-tip-card { border: 1px solid #dfe3e8; border-radius: 4px; overflow: hidden; }
+  .reolink-tip-card-header { padding: 16px; background: #f5f7fa; border-bottom: 1px solid #e4e7ec; }
+  .reolink-tip-copy { padding: 16px; line-height: 1.55; overflow-wrap: anywhere; }
+  .reolink-tip-copy p { margin: 0 0 16px; }
+  .reolink-tip-copy p:last-child { margin-bottom: 0; }
+  .reolink-tips-article button.hrefElem { background: #fff; box-shadow: none; border: 1px solid #dfe3e8; border-radius: 4px; font-family: inherit; }
+  .reolink-tips-article button.hrefElem::before { color: #1565c0; }
+  .form:has(> .reolink-tips-index) + fieldset,
+  #formApp:has(.reolink-tips-index) #fieldsetAppButtons { clear: both; }
+  @media (max-width: 1000px) {
+    .reolink-tips-index, .reolink-tips-article { float: none; width: 100%; padding: 0; border-left: 0; }
+  }
+</style>
+"""
+}
+
+private String tipsArticleHtml(Map topic) {
+    String extra = ""
+    if (topic.id == "network") {
+        extra = "<div class='border-1 border-gray-200 border-round p-3 mb-3'>" +
+            ["HTTP", "HTTPS", "ONVIF"].collect { service ->
+                "<div class='flex align-items-center gap-3 py-2'><i class='pi pi-check-circle text-blue-700 text-xl' aria-hidden='true'></i>" +
+                "<div><div class='font-semibold'>${service}</div><div class='text-sm text-color-secondary'>Enable in the camera settings.</div></div></div>"
+            }.join("") + "</div>" +
+            warningMessageHtml("<b>Network services are often disabled by default.</b><br>Check these before troubleshooting the connection.")
+    }
+    """
+<article class='reolink-tip-card'>
+  <div class='reolink-tip-card-header flex align-items-center gap-3'>
+    <i class='pi ${topic.icon} text-blue-700 text-xl' aria-hidden='true'></i>
+    <h4 class='reolink-status-heading font-semibold m-0'>${topic.title}</h4>
+  </div>
+  <div class='reolink-tip-copy'>${topic.body}${extra}</div>
+</article>
+"""
+}
+
+/** All existing guidance, grouped for native topic navigation. */
+private List tipsTopics() {
+    def topics = [
+        [id: "sources", label: "Source basics", title: "What is a source?", group: "Getting started", icon: "pi-info-circle",
+            body: [
+                "<p>" + ("A source is one camera, one NVR, or one Home Hub -- anything with its own IP/login. " +
+                "A standalone camera always has one channel: 0. An NVR/Home Hub has one channel per paired " +
+                "camera -- run discovery to see what it finds.") + "</p>"
+            ].join("")],
+        [id: "network", label: "Network setup", title: "Before adding a camera", group: "Getting started", icon: "pi-sitemap",
+            body: [
+                "<p>" + ("Check the camera's own Network > Advanced (or Server) settings and make sure HTTP, " +
                 "HTTPS, and ONVIF are enabled. These are often off by default on every model tested so far -- " +
                 "not just Reolink's E1 line -- and this is the single most common reason a source fails to " +
-                "connect, before assuming a device needs a Hub/NVR or isn't supported."
-            paragraph tipsDivider()
-
-            paragraph pillHeader("Why a device's ID number looks out of order")
-            paragraph "Each device's internal ID (part of its DNI, e.g. 'reolink-4-0') only ever goes up, " +
+                "connect, before assuming a device needs a Hub/NVR or isn't supported.") + "</p>"
+            ].join("")],
+        [id: "ids", label: "Device IDs", title: "Why device IDs have gaps", group: "Devices & connections", icon: "pi-list",
+            body: [
+                "<p>" + ("Each device's internal ID (part of its DNI, e.g. 'reolink-4-0') only ever goes up, " +
                 "never reused. Gaps in the numbering just mean a source was removed and re-added at some " +
-                "point -- normal, and nothing to fix."
-            paragraph tipsDivider()
-
-            paragraph pillHeader("Deleting a device the wrong way (Hubitat's Devices page instead of this app)")
-            paragraph "Always remove a Camera/Doorbell from its source's Discover page (toggle it off + " +
-                "Apply), not Hubitat's own Devices page. Hubitat gives apps no way to be notified when a " +
-                "device is deleted directly from there, so deleting one outside this app leaves it thinking " +
-                "the device still exists."
-            paragraph "<b>What's handled automatically:</b> the next time you open that source's Discover " +
+                "point -- normal, and nothing to fix.") + "</p>"
+            ].join("")],
+        [id: "removal", label: "Device removal", title: "Remove devices safely", group: "Devices & connections", icon: "pi-trash",
+            body: [
+                "<p>" + ("Remove a Camera/Doorbell from its source's Discover Channels page, not Hubitat's Devices page. " +
+                "For one channel, turning it off removes the device immediately. For multiple channels, turn it off " +
+                "and use <b>Apply changes now</b>. To remove a whole source, choose <b>Remove source...</b>, " +
+                "review the affected devices, and confirm. Hubitat gives apps no way to be notified when a " +
+                "device is deleted directly from the Devices page, so doing that can leave stale app records.") + "</p>",
+                "<p>" + ("<b>What's handled automatically:</b> the next time you open that source's Discover " +
                 "page, it notices the device is actually gone, corrects the stuck-on checkbox back to " +
                 "off, and cleans up its poll/snapshot/battery-check scheduling entries for it. Not instant " +
                 "-- only self-heals on that next page view -- but it stops the stale state from sitting " +
-                "there indefinitely."
-            paragraph "⚠️ <b>What's NOT handled:</b> deleting a source's \"Reolink Device Bridge\" device " +
-                "itself this way, instead of using \"Remove this ENTIRE source\" below. The bridge holds " +
+                "there indefinitely.") + "</p>",
+                "<p>" + ("&#9888; <b>What's NOT handled:</b> deleting a source's \"Reolink Device Bridge\" device " +
+                "itself this way, instead of using the source-removal confirmation page. The bridge holds " +
                 "the live event connection and is the real parent of every Camera/Doorbell under it -- " +
                 "Hubitat will likely cascade-delete those children along with it, but this app's own record " +
                 "of that source would still think it exists, with no bridge left to find. This case isn't " +
-                "specifically handled -- always remove a whole source via \"Remove this ENTIRE source,\" never " +
-                "by deleting its bridge device directly."
-            paragraph tipsDivider()
-
-            paragraph pillHeader("Devices that won't work standalone")
-            paragraph "⚠️ <b>Battery-class cameras/doorbells</b> (Argus line, Doorbell Battery, Gen 2 " +
+                "specifically handled -- always remove a whole source via the source-removal confirmation page, never " +
+                "by deleting its bridge device directly.") + "</p>"
+            ].join("")],
+        [id: "compatibility", label: "Compatibility", title: "Camera compatibility", group: "Getting started", icon: "pi-camera",
+            body: [
+                "<p>" + ("&#9888; <b>Battery-class cameras/doorbells</b> (Argus line, Doorbell Battery, Gen 2 " +
                 "doorbells) -- treat these as requiring a Home Hub or NVR. Add the Hub/NVR as the source " +
                 "instead, and the device shows up as one of its channels. This does NOT depend on how the " +
                 "device is powered -- even one running continuously on a DC adapter is affected, since it's " +
                 "a firmware/network-stack limitation, not a charging-mode setting. Confirmed working well " +
-                "behind a Hub/NVR across a real multi-device battery fleet."
-            paragraph "⚠️ <b>E1, E1 Pro, and Lumus</b> -- Reolink's own docs on local HTTP/HTTPS support are " +
+                "behind a Hub/NVR across a real multi-device battery fleet.") + "</p>",
+                "<p>" + ("&#9888; <b>E1, E1 Pro, and Lumus</b> -- Reolink's own docs on local HTTP/HTTPS support are " +
                 "inconsistent for this line. Don't rely on the model name -- check the camera's own Network > " +
                 "Advanced (or Server) settings for HTTP/HTTPS/ONVIF toggles directly. Everything else -- PoE " +
-                "cameras, WiFi cameras outside the E1 line -- works standalone."
-            paragraph tipsDivider()
-
-            paragraph pillHeader("Poll interval")
-            paragraph "Wired devices can be polled tight (a few seconds). Battery devices should stay loose " +
+                "cameras, WiFi cameras outside the E1 line -- works standalone.") + "</p>"
+            ].join("")],
+        [id: "polling", label: "Polling intervals", title: "Polling intervals", group: "Devices & connections", icon: "pi-clock",
+            body: [
+                "<p>" + ("Wired devices can be polled tight (a few seconds). Battery devices should stay loose " +
                 "-- they only wake for their own events or an occasional check-in, and polling harder doesn't " +
                 "get fresher data, it just drains the battery. This still holds behind a Hub, since you're " +
-                "asking the Hub for its last-known state, not the device directly."
-            paragraph "When a source's event connection is active/healthy, its children update in real time " +
-                "and polling is skipped entirely -- polling only resumes automatically if that connection drops."
-            paragraph tipsDivider()
-
-            paragraph pillHeader("\"Use event-driven updates\" toggle (on each source's Discover page)")
-            paragraph "On by default, and for almost every source there's nothing to do here -- a source " +
+                "asking the Hub for its last-known state, not the device directly.") + "</p>",
+                "<p>" + ("When a source's event connection is active/healthy, its children update in real time " +
+                "and polling is skipped entirely -- polling only resumes automatically if that connection drops.") + "</p>"
+            ].join("")],
+        [id: "events", label: "Event-driven updates", title: "Event-driven updates", group: "Devices & connections", icon: "pi-wifi",
+            body: [
+                "<p>" + ("On by default, and for almost every source there's nothing to do here -- a source " +
                 "that supports it gets real-time updates, and if the connection ever drops, it retries " +
                 "automatically (backing off over 10 attempts) before settling into plain polling on its own. " +
-                "No toggle needed for that case; it self-recovers."
-            paragraph "This toggle matters for ONE specific case: a source that structurally can't do event " +
+                "No toggle needed for that case; it self-recovers.") + "</p>",
+                "<p>" + ("This toggle matters for ONE specific case: a source that structurally can't do event " +
                 "mode at all -- port 9000 blocked by a firewall, or older firmware that doesn't speak the " +
                 "event protocol. That source will still go through all 10 reconnect attempts (and their " +
                 "logging) every time the hub restarts or the app re-initializes, before eventually giving up " +
                 "and polling anyway. If you already know a source falls into this category, turning this off " +
                 "skips that runway entirely and goes straight to polling -- a convenience, not a different " +
-                "outcome, since it lands in the same place either way."
-            paragraph tipsDivider()
-
-            paragraph pillHeader("Sleep status")
-            paragraph "<b>Awake</b> -- the last poll got a response. <b>Asleep</b> -- it didn't. For a " +
-                "battery device, asleep is normal, not an error. ⚠️ For a <b>wired/PoE device</b>, asleep is " +
+                "outcome, since it lands in the same place either way.") + "</p>"
+            ].join("")],
+        [id: "sleep", label: "Sleep status", title: "Awake and asleep", group: "Devices & connections", icon: "pi-moon",
+            body: [
+                "<p>" + ("<b>Awake</b> -- the last poll got a response. <b>Asleep</b> -- it didn't. For a " +
+                "battery device, asleep is normal, not an error. &#9888; For a <b>wired/PoE device</b>, asleep is " +
                 "NOT normal -- it points to a real connectivity or load issue. Motion/person/vehicle/etc. " +
-                "keep their last-known value rather than resetting to inactive when this happens."
-            paragraph tipsDivider()
-
-            paragraph pillHeader("Known older-firmware bug: false 'asleep' from garbled responses")
-            paragraph "⚠️ Some E1-series cameras on ~2021-era firmware have a known bug where the camera's " +
+                "keep their last-known value rather than resetting to inactive when this happens.") + "</p>"
+            ].join("")],
+        [id: "firmware", label: "Older firmware", title: "False asleep reports on older firmware", group: "Devices & connections", icon: "pi-exclamation-triangle",
+            body: [
+                "<p>" + ("&#9888; Some E1-series cameras on ~2021-era firmware have a known bug where the camera's " +
                 "web server intermittently returns corrupted data instead of a real response -- not a " +
                 "connectivity problem, just bad data from the camera itself, reported as <b>asleep</b> even " +
                 "though it's online. Tell-tale sign: flips to asleep with no real pattern, and Full logging " +
                 "shows parse errors on GetAiState/GetMdState rather than plain timeouts. Newer firmware on " +
-                "the same camera line doesn't show this."
-            paragraph "Fix, in order: (1) In the Reolink app, toggle this camera's HTTP/HTTPS off then back " +
+                "the same camera line doesn't show this.") + "</p>",
+                "<p>" + ("Fix, in order: (1) In the Reolink app, toggle this camera's HTTP/HTTPS off then back " +
                 "on under Network settings and reboot it -- reinitializes the web server. (2) If that doesn't " +
                 "help, check for a firmware update via the Reolink desktop app's Download Center, or contact " +
                 "Reolink support with your model/firmware version. Avoid any 'reset configuration' option " +
-                "unless you actually want to reset the camera."
-            paragraph tipsDivider()
-
-            paragraph pillHeader("PTZ")
-            paragraph "Reolink has no 'Home' command -- the equivalent is a saved preset. Use " +
+                "unless you actually want to reset the camera.") + "</p>"
+            ].join("")],
+        [id: "ptz", label: "PTZ presets", title: "PTZ presets", group: "Camera controls", icon: "pi-arrows-alt",
+            body: [
+                "<p>" + ("Reolink has no 'Home' command -- the equivalent is a saved preset. Use " +
                 "<b>savePresetHere</b> once (commonly preset ID 1) to save wherever the camera is currently " +
-                "pointed, then <b>ptzGoToPreset</b> with that ID any time to return there."
-            paragraph tipsDivider()
-
-            paragraph pillHeader("PTZ calibration")
-            paragraph "⚠️ Only applies to PTZ-capable cameras (e.g. Trackmix, E1 Zoom) -- non-PTZ cameras " +
+                "pointed, then <b>ptzGoToPreset</b> with that ID any time to return there.") + "</p>"
+            ].join("")],
+        [id: "calibration", label: "PTZ calibration", title: "PTZ calibration", group: "Camera controls", icon: "pi-compass",
+            body: [
+                "<p>" + ("&#9888; Only applies to PTZ-capable cameras (e.g. Trackmix, E1 Zoom) -- non-PTZ cameras " +
                 "just harmlessly error if you try it. Use <b>calibratePtz</b> if preset recall starts " +
                 "drifting off target over time; check progress with <b>checkPtzCalibrationStatus</b> " +
-                "(Required / Running / Done)."
-            paragraph tipsDivider()
-
-            paragraph pillHeader("PIR (motion trigger) on/off -- cameras only")
-            paragraph "Use <b>pirOn</b>/<b>pirOff</b> to enable or disable a camera's PIR trigger without " +
+                "(Required / Running / Done).") + "</p>"
+            ].join("")],
+        [id: "pir", label: "PIR trigger", title: "PIR motion trigger", group: "Camera controls", icon: "pi-bolt",
+            body: [
+                "<p>" + ("Use <b>pirOn</b>/<b>pirOff</b> to enable or disable a camera's PIR trigger without " +
                 "removing the device. Does NOT stop an in-progress recording -- it removes the trigger that " +
                 "would have woken a battery camera to record. Manual only, no auto-revert timer -- build " +
-                "battery-threshold automation with Rule Machine using the existing battery attribute."
-            paragraph tipsDivider()
-
-            paragraph pillHeader("Recording presets (NVR/Hub master switch + per-channel schedules)")
-            paragraph "Two independent controls: the bridge device's own <b>On/Off switch</b> is the NVR's " +
+                "battery-threshold automation with Rule Machine using the existing battery attribute.") + "</p>"
+            ].join("")],
+        [id: "recording", label: "Recording presets", title: "Recording presets", group: "Recording & snapshots", icon: "pi-video",
+            body: [
+                "<p>" + ("Two independent controls: the bridge device's own <b>On/Off switch</b> is the NVR's " +
                 "master switch (every channel at once -- no per-channel targeting, that's a hardware/API " +
                 "limitation). Loading a <b>preset</b> writes a named, per-channel schedule from the Recording " +
                 "Presets page. In practice: turn the master switch on once and leave it, then use presets to " +
                 "control what each channel actually records. A channel left as \"Don't manage\" in a preset " +
                 "is skipped -- its existing schedule stays untouched -- which is how to keep a battery-class " +
                 "channel out of a preset meant for wired ones. Every preset write is a fresh read-modify-write " +
-                "against the channel's current schedule, never a cached/restored snapshot."
-            paragraph "⚠️ <b>A preset's schedule covers continuous and AI/motion-triggered recording " +
+                "against the channel's current schedule, never a cached/restored snapshot.") + "</p>",
+                "<p>" + ("&#9888; <b>A preset's schedule covers continuous and AI/motion-triggered recording " +
                 "together, not separately.</b> Confirmed against real hardware: a channel has one time-table " +
                 "for continuous (\"TIMING\") and separate tables per AI type -- but a preset here sets all of " +
                 "them to the same hours. So \"Continuous 6pm-6am\" also limits AI-triggered clips to that same " +
                 "window. To get continuous-only-at-certain-hours while still catching AI events any time, use " +
-                "two presets (e.g. \"Daytime\"/\"Nighttime\") switched by a time-based Rule Machine schedule."
-            paragraph tipsDivider()
-
-            paragraph pillHeader("Snapshot tiles on dashboards")
-            paragraph "Snapshot URLs point at a local relay endpoint on this app, not the camera directly -- " +
+                "two presets (e.g. \"Daytime\"/\"Nighttime\") switched by a time-based Rule Machine schedule.") + "</p>"
+            ].join("")],
+        [id: "snapshots", label: "Snapshot tiles", title: "Snapshot tiles on dashboards", group: "Recording & snapshots", icon: "pi-image",
+            body: [
+                "<p>" + ("Snapshot URLs point at a local relay endpoint on this app, not the camera directly -- " +
                 "the camera is only contacted on its own snapshot interval (separate from poll interval), and " +
                 "the relay just serves whatever's cached. A dashboard tile can refresh as often as you like, " +
                 "but the picture only actually changes as often as that device's snapshot interval -- the " +
                 "tile's own refresh setting doesn't matter. Poll interval should stay tight for responsive " +
                 "motion automations; snapshot interval only affects image freshness and can stay looser " +
                 "(default 30s). If a tile feels slow to update, lower the device's snapshot interval, not the " +
-                "poll interval."
-            paragraph tipsDivider()
-
-            paragraph pillHeader("Log levels")
-            paragraph logLevelPill("Errors Only") + " Default. Warnings and errors only."
-            paragraph logLevelPill("Normal") + " Errors, plus meaningful one-time events: logins, " +
-                "asleep/awake, devices created, config changes. Routine unchanged polls log nothing."
-            paragraph logLevelPill("Full") + " Everything, including every routine poll step. " +
-                "<b>Automatically reverts to Normal after 60 minutes.</b>"
-            paragraph "⚠️ It's normal for Errors Only/Normal to show nothing for long stretches -- that means " +
+                "poll interval.") + "</p>"
+            ].join("")],
+        [id: "logging", label: "Log levels", title: "Log levels", group: "Logging", icon: "pi-file",
+            body: [
+                "<p>" + (logLevelPill("Errors Only") + " Default. Warnings and errors only.") + "</p>",
+                "<p>" + (logLevelPill("Normal") + " Errors, plus meaningful one-time events: logins, " +
+                "asleep/awake, devices created, config changes. Routine unchanged polls log nothing.") + "</p>",
+                "<p>" + (logLevelPill("Full") + " Everything, including every routine poll step. " +
+                "<b>Automatically reverts to Errors Only after 60 minutes.</b>") + "</p>",
+                "<p>" + ("&#9888; It's normal for Errors Only/Normal to show nothing for long stretches -- that means " +
                 "nothing worth flagging happened, not that the app stopped working. Switch to Full temporarily " +
-                "to confirm it's actually running."
-        }
-    }
-}
-
-/** Thin horizontal rule between Tips topics -- see tipsPage()'s note for why this replaced one-section-per-topic. */
-private String tipsDivider() {
-    return "<hr style='border:none;border-top:1px solid #ddd;margin:14px 0 10px 0;'>"
+                "to confirm it's actually running.") + "</p>"
+            ].join("")]
+    ]
+    def order = ["sources", "network", "compatibility", "removal", "ids", "polling", "events",
+                 "sleep", "firmware", "ptz", "calibration", "pir", "recording", "snapshots", "logging"]
+    order.collect { id -> topics.find { it.id == id } }
 }
 
 def addSourcePage(params) {
@@ -584,34 +873,74 @@ def addSourcePage(params) {
         app.removeSetting("newIsHub")
         return mainPage()
     }
-    dynamicPage(name: "addSourcePage", title: "Add a Reolink Source", nextPage: "mainPage") {
-        section {
-            href name: "cancelAddSource", title: "Cancel", description: "Back to Sources without saving",
-                page: "addSourcePage", params: [cancel: true]
-        }
-        section {
-            paragraph "<span style='display:inline-block;background:#FFF3E0;color:#E65100;font-weight:700;" +
-                "padding:2px 10px;border-radius:10px;font-size:11px;margin-right:6px;'>NOTE</span>" +
-                "<b>Before adding: check the camera's own Network > Advanced (or Server) settings and make " +
-                "sure HTTP, HTTPS, and ONVIF are enabled.</b> These are often off by default on every model " +
-                "tested so far, not just Reolink's E1 line -- this is the single most common reason a source " +
-                "fails to connect."
-            paragraph "Battery-class cameras/doorbells and Reolink's E1 line have additional connection quirks " +
-                "worth knowing about -- see the Tips page (link on the Sources list) if this one still refuses " +
-                "to connect after enabling the ports above."
+    dynamicPage(name: "addSourcePage", title: "Add a Reolink Source", nextPage: "mainPage", nextPageLabel: "Add source") {
+        section(sectionClass: "reolink-add-form") {
+            paragraph rawHtml: true, addSourceStylesHtml()
+            paragraph rawHtml: true, "<div class='reolink-status-heading font-semibold'>Source details</div>" +
+                "<div class='text-sm text-color-secondary mt-1'>Enter connection details for your Reolink camera, NVR, or Home Hub.</div>"
             input "newLabel", "text", title: "Label (e.g. 'Front Door Hub', 'Garage Cam')"
-            input "newHost", "text", title: "IP address"
-            input "newPort", "number", title: "HTTPS port", defaultValue: 443
+            input "newHost", "text", title: "IP address", width: 8
+            input "newPort", "number", title: "HTTPS port", defaultValue: 443, width: 4
             input "newUser", "text", title: "Username"
             input "newPass", "password", title: "Password"
-            input "newIsHub", "bool", title: "This is an NVR or Home Hub (multiple channels)", defaultValue: false
-            paragraph "Fill in Label, IP address, Username, and Password, then tap Next to save. " +
-                "Leaving any of those blank just returns you to the Sources list without creating anything."
+            input "newIsHub", "bool", title: "This is an NVR or Home Hub" +
+                "<div class='text-sm text-color-secondary mt-1'>Multiple channels from one source.</div>",
+                defaultValue: false, styleClass: "reolink-add-source-type"
+        }
+        section(sectionClass: "reolink-add-guidance") {
+            paragraph rawHtml: true, "<div class='reolink-status-heading font-semibold'>Before you connect</div>" +
+                "<div class='text-sm text-color-secondary mt-1'>Check the source's server settings in Reolink.</div>"
+            paragraph rawHtml: true, warningMessageHtml("<div class='font-semibold'>Enable HTTPS first</div>" +
+                "<div class='text-sm mt-2'>Enable HTTPS in Reolink Network &gt; Advanced (or Server) settings. " +
+                "Match the HTTPS port to the value configured there.</div>")
+            paragraph rawHtml: true, "<div class='p-message p-message-info reolink-message'>" +
+                "<div class='font-semibold'><i class='pi pi-info-circle mr-2' aria-hidden='true'></i>Real-time events</div>" +
+                "<div class='text-sm mt-2'>Allow Hubitat to reach TCP port 9000 on the source over your local network. " +
+                "If real-time events are unavailable, the app falls back to polling.</div></div>"
+            paragraph rawHtml: true, "<div class='bg-gray-50 border-round p-3'><div class='font-semibold'>Optional services</div>" +
+                "<div class='text-sm text-color-secondary mt-2'>RTSP is required for video streaming. HTTP, RTMP, and ONVIF are optional.</div></div>"
+            href name: "tips", title: "<i class='pi pi-info-circle' aria-hidden='true'></i>Tips & Troubleshooting",
+                description: "Known quirks and setup guidance", page: "tipsPage", width: 12, style: "margin:8px;"
+            paragraph rawHtml: true, "<div class='bg-gray-50 border-round p-3'><div class='font-semibold'>Compatibility note</div>" +
+                "<div class='text-sm text-color-secondary mt-2'>Some battery cameras, doorbells, and E1 models have additional " +
+                "connection limitations. See Tips &amp; Troubleshooting for details.</div></div>"
+        }
+        section(sectionClass: "reolink-add-footer") {
+            paragraph rawHtml: true, "<div class='text-sm text-color-secondary'>Fill in Label, IP address, Username, and Password, then select Add source. " +
+                "Leaving any of those blank returns to Sources without creating anything.</div>"
+            href name: "cancelAddSource", title: "Cancel", description: "",
+                page: "addSourcePage", params: [cancel: true], width: 3, style: "margin:8px;"
         }
     }
 }
 
+private String addSourceStylesHtml() {
+    """
+<style>
+  ${appPageSpacingCss()}
+  ${tipsCardCss()}
+  .reolink-add-form { float: left; width: calc(62% - 8px); }
+  .reolink-add-guidance { float: right; width: 38%; padding-left: 8px; border-left: 1px solid #e0e0e0; box-sizing: border-box; }
+  .reolink-add-form > .mdl-grid, .reolink-add-guidance > .mdl-grid { padding: 4px 0 !important; }
+  .reolink-add-form .mdl-cell:has(> style) { display: none; }
+  .reolink-add-source-type { background: #f5f7fa; border-radius: 4px; padding: 12px; box-sizing: border-box; }
+  .reolink-add-source-type .mdl-switch { height: auto; min-height: 24px; }
+  .reolink-add-source-type .mdl-switch__label { line-height: 24px; }
+  .reolink-add-footer { clear: both; border-top: 1px solid #e0e0e0; margin: 0 8px !important; }
+  .reolink-add-footer button.hrefElem { width: auto !important; min-height: 36px; padding: 0 16px; border-radius: 4px; font-family: inherit; font-size: 14px; line-height: 36px; }
+  .reolink-add-footer button.hrefElem::before, .reolink-add-footer button.hrefElem > br,
+  .reolink-add-footer button.hrefElem > .state-incomplete-text { display: none; }
+  #formApp:has(.reolink-add-form) #fieldsetAppButtons { margin-top: -48px; position: relative; float: right; }
+  #formApp:has(.reolink-add-form) #btnNext { background: var(--hubitat-primary-green, #81BC00) !important; color: #fff !important; border-radius: 4px; }
+  @media (max-width: 1000px) {
+    .reolink-add-form, .reolink-add-guidance { float: none; width: 100%; padding: 0; border-left: 0; }
+  }
+</style>
+"""
+}
+
 def discoverPage(params) {
+    state.remove("pendingSourceRemoval")
     def sourceId = params?.sourceId ?: state.currentDiscoverySourceId
     state.currentDiscoverySourceId = sourceId
     def src = getSource(sourceId)
@@ -667,44 +996,26 @@ def discoverPage(params) {
         }
     }
 
-    if (confirmRemoveSource && src) {
-        removeSource(sourceId)
-        app.updateSetting("confirmRemoveSource", [type: "bool", value: false])
-        return mainPage()
-    }
+    // Retire the old immediate-removal switch; a stale saved value must never delete a source.
+    if (settings.containsKey("confirmRemoveSource")) app.removeSetting("confirmRemoveSource")
 
-    return dynamicPage(name: "discoverPage", title: "Discover Channels - ${src?.label ?: '(source removed)'}", nextPage: "mainPage") {
+    return dynamicPage(name: "discoverPage", title: "Discover Channels - ${src?.label ?: '(source removed)'}", nextPage: "mainPage", nextPageLabel: "Done") {
         if (!src) {
             section {
                 paragraph "This source has been removed. Go back and use Add a source... if this was a mistake."
             }
         } else {
-            section {
-                paragraph pillHeader("Event Connection")
-                def connStatus = state.sourceConnMode?.get(sourceId.toString()) ?: "not started"
-                def statusColor = connStatus == "connected" ? "#22c55e" : connStatus == "reconnecting" ? "#f97316" : "#94a3b8"
-                input "useEventSubscription_${sourceId}", "bool",
-                    title: "Use event-driven updates for this source (falls back to polling automatically if it can't connect)",
-                    defaultValue: true, submitOnChange: true
-                paragraph "<span style='color:${statusColor};font-weight:700;font-size:12px;'>Status: ${connStatus}</span>"
+            section(sectionClass: "reolink-discovery-summary") {
+                paragraph rawHtml: true, discoveryOverviewHtml(channelCount,
+                    childrenForSource(sourceId as Integer).size(), !!state.lastDiscoveryError)
             }
-            section {
-                // Explicit warning here after a real-world case where a
-                // device deleted from Hubitat's Devices page (instead of this
-                // page) left the app's own checkbox state stale. Shortened
-                // to just point people to the recommended path and the
-                // fuller explanation, since the stuck-toggled-on part is
-                // now self-healing (see the "Deleting a device the wrong
-                // way" Tips topic for what's actually handled vs. still
-                // risky).
-                paragraph "<span style='display:inline-block;background:#FFEBEE;color:#C62828;font-weight:700;" +
-                    "padding:2px 10px;border-radius:10px;font-size:11px;margin-right:6px;'>HEADS UP</span>" +
-                    "<b>Remove devices from THIS page, not Hubitat's Devices page</b> -- see the Tips page " +
-                    "for what happens either way."
-                href name: "runDiscovery", title: "Re-run discovery",
-                    description: "Discovery already ran automatically when this page opened. Use this to " +
-                        "refresh the channel list, e.g. after pairing a new camera to an NVR/Home Hub.",
-                    page: "discoverPage", params: [sourceId: sourceId, run: true]
+            section(sectionClass: "reolink-discovery-channels") {
+                paragraph rawHtml: true, "<div class='reolink-discovery-heading font-semibold'>Channels</div>" +
+                    "<div class='text-color-secondary mt-1' style='font-size:14px;'>Toggle channels to add or remove devices.</div>", width: 7
+                href name: "runDiscovery", title: "<i class='pi pi-refresh mr-2' aria-hidden='true'></i>Re-run discovery",
+                    description: "",
+                    page: "discoverPage", params: [sourceId: sourceId, run: true], width: 5,
+                    style: "margin:8px;"
 
                 if (state.lastDiscoveryError) {
                     paragraph "⚠️ ${state.lastDiscoveryError}"
@@ -721,26 +1032,16 @@ def discoverPage(params) {
                     getSourceBridge(sourceId)?.getChildDevice(dni) != null
                 }
                 input "hideChannelList_${sourceId}", "bool",
-                    title: "Collapse the channel list below (just adds/removes devices -- collapse once you're done)",
-                    defaultValue: anyExisting, submitOnChange: true
+                    title: "Collapse channel list<span class='block text-sm text-color-secondary mt-1'>" +
+                        "Just hides or shows the channels below.</span>",
+                    defaultValue: anyExisting, submitOnChange: true,
+                    styleClass: "reolink-channel-toolbar"
                 def channelListHidden = settings["hideChannelList_${sourceId}"] ?: false
 
                 if (!channelListHidden) {
-                    // A full-width paragraph after each toggle (an earlier
-                    // colored badge design) forces the next item to a new
-                    // row, which is what prevented the two-per-row
-                    // width:6 layout below from packing -- colored emoji
-                    // baked directly into the toggle's own title text
-                    // sidesteps that entirely (no separate element, so
-                    // nothing to force a row break) while still giving a
-                    // real color cue, since emoji render as actual color
-                    // regardless of whether Hubitat treats a title as
-                    // plain text or HTML.
-                    paragraph "<span style='color:#5F5E5A;font-size:12px;'>ℹ️ \uD83D\uDFE2 marks a channel " +
-                        "that already has a device (toggle off + apply to remove it); \uD83C\uDD95 marks one " +
-                        "that doesn't have a device yet (toggle on + apply to create it).<br><b>Toggling a " +
-                        "device by itself doesn't apply anything -- use \"Apply changes now\" below once " +
-                        "you're done toggling.</b></span>"
+                    if (channelCount == 0 && !state.lastDiscoveryError) {
+                        paragraph "No channels found. Check the source's connection and re-run discovery."
+                    }
                     lastDiscovery.each { ch ->
                         def dni = childDni(sourceId, ch.channel)
                         def bridgeForList = getSourceBridge(sourceId)
@@ -782,59 +1083,227 @@ def discoverPage(params) {
                             forgetDeviceEverCreated(dni)
                         }
                         def doorbellTag = ch.deviceType == "doorbell" ? " (Doorbell)" : ""
-                        def statusTag = exists ? " \uD83D\uDFE2" : " \uD83C\uDD95"
+                        def statusTag = exists ? "<span class='bg-green-50 text-green-700 text-sm ml-3 px-2 py-1 border-round-xl'>Added</span>" :
+                            "<span class='bg-blue-50 text-blue-700 text-sm ml-3 px-2 py-1 border-round-xl'>New</span>"
                         input settingKey, "bool",
-                            title: "Ch ${ch.channel}: ${ch.name}${doorbellTag}${statusTag}",
-                            defaultValue: exists, submitOnChange: true, width: 6
+                            title: "Ch ${ch.channel}: ${discoveryEscapeHtml(ch.name)}${doorbellTag}${statusTag}",
+                            defaultValue: exists, submitOnChange: true, width: 12,
+                            styleClass: "reolink-channel-row"
                     }
 
                     if (channelCount > 1) {
+                        paragraph "<span class='text-sm text-color-secondary'>Select the channels you want, " +
+                            "then use <b>Apply changes now</b>. Added channels already have a device; New channels do not.</span>"
                         // A thin divider + a distinct icon/label (rather
                         // than a plain "Ch N: Name"-shaped row) so this
                         // doesn't visually blend into the channel toggles
                         // directly above it -- easy to mistake for just
                         // another device without some separation, since
                         // it's the exact same input type.
-                        paragraph "<hr style='border:none;border-top:1px solid #ddd;margin:10px 0;'>"
+                        paragraph "<hr class='border-0 border-top-1 border-gray-200 my-2'>"
                         input "confirmCreate", "bool", title: "<b>✅ Apply changes now</b>",
                             defaultValue: false, submitOnChange: true
                     } else if (channelCount == 1) {
-                        paragraph "Standalone source, one channel -- toggling it applies immediately (toggled on " +
-                            "creates it, toggled off removes it), no separate apply step needed."
+                        paragraph "<span class='text-sm text-color-secondary'>One channel: changes apply immediately. " +
+                            "Turn on to create the device; turn off to remove it.</span>"
                     }
                 } else {
-                    paragraph "<span style='color:#5F5E5A;font-size:12px;'>Channel list collapsed -- ${channelCount} " +
+                    paragraph "<span class='text-color-secondary text-xs'>Channel list collapsed -- ${channelCount} " +
                         "channel(s) found. Toggle the box above to expand it.</span>"
                 }
+                paragraph rawHtml: true, warningMessageHtml("<div class='font-semibold'>Remove devices here, not from Hubitat's Devices page.</div>" +
+                    "<div class='text-color-secondary mt-1' style='font-size:14px;'>See Tips &amp; Troubleshooting for details.</div>")
+                href name: "tips", title: "<i class='pi pi-info-circle' aria-hidden='true'></i>" +
+                        "Tips & Troubleshooting", page: "tipsPage",
+                    description: "Known quirks and setup guidance", width: 12, style: "margin:8px;"
             }
-            section {
-                paragraph pillHeader("Danger zone")
-                input "confirmRemoveSource", "bool",
-                    title: "Remove this ENTIRE source and ALL ${childrenForSource(sourceId as Integer).size()} of its device(s) -- unrelated to the toggles above",
-                    defaultValue: false, submitOnChange: true
+            section(title: "<div class='reolink-discovery-heading font-semibold'>Connection</div>" +
+                    "<div class='text-color-secondary mt-1' style='font-size:14px;'>Real-time updates from this source.</div>",
+                    sectionClass: "reolink-discovery-connection") {
+                input "useEventSubscription_${sourceId}", "bool",
+                    title: "Use event-driven updates for this source" +
+                        "<span class='block text-sm text-color-secondary mt-1'>Falls back to polling if the connection drops.</span>",
+                    defaultValue: true, submitOnChange: true, styleClass: "reolink-connection-toggle"
+                def connStatus = state.sourceConnMode?.get(sourceId.toString()) ?: "not started"
+                def statusClass = connStatus == "connected" ? "text-green-700" :
+                    connStatus == "reconnecting" ? "text-orange-700" : "text-color-secondary"
+                paragraph rawHtml: true, "<div class='border-top-1 border-gray-200 pt-3'>" +
+                    "<div class='flex gap-3 mb-3'><span class='w-6rem flex-shrink-0'>Status</span>" +
+                    "<span class='${statusClass} font-semibold'>&#9679; ${discoveryEscapeHtml(connStatus.capitalize())}</span></div>" +
+                    "<div class='flex gap-3'><span class='w-6rem flex-shrink-0'>Source</span>" +
+                    "<span>${discoveryEscapeHtml(src.label)} (${discoveryEscapeHtml(src.host)})" +
+                    "<span class='block text-sm text-color-secondary mt-1'>${src.isHub ? 'Hub/NVR' : 'Standalone camera'}</span></span></div></div>"
             }
-            // Recording Control is placed at the bottom of the page, below
-            // Danger Zone -- most people set an "Away"/"Present"-style
-            // preset once and never touch this again, so it shouldn't
-            // compete with the add/remove-devices workflow everyone
-            // actually uses every visit. Danger Zone stays last-but-one
-            // rather than last since it's specifically about the devices
-            // listed just above it; Recording Control is a separate,
-            // unrelated feature that belongs after it, not before.
             if (src.isHub) {
-                section {
-                    paragraph pillHeader("Recording Control")
-                    paragraph "Set what each channel records and when -- a completely separate thing from " +
-                        "adding/removing devices above. Most people only need to visit this once or twice to " +
-                        "define \"Away\"/\"Present\"-style presets, then trigger them from Rule Machine going " +
-                        "forward."
-                    href name: "presetsFromDiscover", title: "Recording Presets",
-                        description: "Define what each channel records and when, and load it from Rule Machine",
-                        page: "presetsPage", params: [sourceId: sourceId]
+                section(sectionClass: "reolink-discovery-recording") {
+                    paragraph rawHtml: true, "<div class='reolink-discovery-heading font-semibold'>Recording</div>" +
+                        "<div class='text-sm text-color-secondary mt-1'>Configure when each channel records.</div>"
+                    href name: "presetsFromDiscover", title: "<span class='text-blue-700 font-semibold'>" +
+                            "<i class='pi pi-video mr-2 text-blue-700'></i>Recording Presets</span>",
+                        description: "Set recording schedules per channel",
+                        page: "presetsPage", params: [sourceId: sourceId], width: 12, style: "margin:calc(8px + 0.75rem) 8px 8px;"
                 }
+            }
+            section(sectionClass: "reolink-discovery-danger bg-red-50 border-1 border-red-200 border-round") {
+                paragraph rawHtml: true, "<div class='reolink-discovery-heading font-semibold text-red-700'>Danger zone</div>" +
+                    "<div class='text-color-secondary mt-1' style='font-size:14px;'>Remove this source and its devices from Hubitat. " +
+                    "You will be asked to confirm before anything is removed.</div>"
+                href name: "reviewSourceRemoval", title: "<span class='text-red-700 font-semibold'>Remove source...</span>",
+                    description: "Review the source and devices before confirming",
+                    page: "removeSourcePage", params: [sourceId: sourceId], width: 12, style: "margin:8px;"
             }
         }
     }
+}
+
+/** Two-step removal, bound to the source reviewed on this confirmation page. */
+def removeSourcePage(params) {
+    def sourceId = params?.sourceId
+    def src = sourceId != null ? getSource(sourceId as Integer) : null
+    if (!src) {
+        state.remove("pendingSourceRemoval")
+        return mainPage()
+    }
+    if (params?.action == "cancel") {
+        state.remove("pendingSourceRemoval")
+        return discoverPage([sourceId: sourceId])
+    }
+    def pending = state.pendingSourceRemoval
+    if (params?.action == "remove" && pending?.sourceId?.toString() == sourceId.toString() &&
+        pending?.token && params?.token == pending.token) {
+        // Consume before deleting so refresh/back cannot repeat a confirmed operation.
+        state.remove("pendingSourceRemoval")
+        removeSource(sourceId)
+        return mainPage()
+    }
+
+    String token = java.util.UUID.randomUUID().toString()
+    state.pendingSourceRemoval = [sourceId: sourceId.toString(), token: token]
+    def devices = childrenForSource(sourceId as Integer)
+    dynamicPage(name: "removeSourcePage", title: "Confirm source removal") {
+        section(sectionClass: "reolink-removal-confirmation") {
+            paragraph rawHtml: true, "<style>${tileSecondaryTextCss()} #formApp:has(.reolink-removal-confirmation) #fieldsetAppButtons button[value='Done'] { display: none !important; }</style>" +
+                "<div class='bg-red-50 border-1 border-red-200 border-round p-3'>" +
+                "<div class='font-semibold text-red-700'>Remove ${discoveryEscapeHtml(src.label)}?</div>" +
+                "<div class='mt-2'>${discoveryEscapeHtml(src.host)} &middot; ${countText(devices.size(), 'device')}</div>" +
+                "<div class='mt-2'>This removes the source, its bridge, all devices listed below, and its saved " +
+                "recording presets from Hubitat. It cannot be undone. The physical cameras are not reset.</div></div>"
+            if (devices) {
+                paragraph rawHtml: true, "<ul>" + devices.collect { device ->
+                    "<li>${discoveryEscapeHtml(device.label ?: device.name)}</li>"
+                }.join("") + "</ul>"
+            }
+            href name: "cancelSourceRemoval", title: "Cancel and keep this source",
+                description: "Return without removing anything", page: "removeSourcePage",
+                params: [sourceId: sourceId, action: "cancel"]
+            href name: "confirmSourceRemoval", title: "<span class='text-red-700 font-semibold'>Yes, remove this source</span>",
+                description: "Permanently remove ${countText(devices.size(), 'device')} and this source",
+                page: "removeSourcePage", params: [sourceId: sourceId, action: "remove", token: token]
+        }
+    }
+}
+
+/** Display-only markup; native Hubitat inputs and href actions remain in their sections. */
+private String discoveryOverviewHtml(int channelCount, int deviceCount, boolean discoveryFailed) {
+    String tone = discoveryFailed ? "p-message p-message-warn reolink-message" : "bg-green-50 border-green-200"
+    String icon = discoveryFailed ? "fa-solid fa-exclamation-triangle text-yellow-700" : "pi pi-check-circle text-green-700"
+    String title = discoveryFailed ? "Discovery needs attention" : channelCount ? "Discovery complete" : "No channels found"
+    return """
+<style>
+  ${appPageSpacingCss()}
+  ${tipsCardCss()}
+  .reolink-discovery-heading { font-size: 16px; }
+  .reolink-discovery-summary { margin-bottom: 8px !important; }
+  .reolink-discovery-channels > .mdl-grid,
+  .reolink-discovery-recording > .mdl-grid,
+  .reolink-discovery-danger > .mdl-grid { padding: 4px 0 !important; }
+  .reolink-discovery-channels { float: left; width: calc(62% - 8px); }
+  .reolink-discovery-connection, .reolink-discovery-recording {
+    float: right; width: 38%; border-left: 1px solid #e0e0e0; padding-left: 8px; box-sizing: border-box;
+  }
+  .reolink-discovery-recording { clear: right; }
+  .reolink-discovery-danger {
+    clear: both; padding: 0 8px; position: relative; box-sizing: border-box;
+    width: calc(100% - 16px); margin: 0 8px 16px !important;
+  }
+  .reolink-discovery-danger::before {
+    content: ''; position: absolute; left: 0; right: 0; top: -9px; border-top: 1px solid #dfe3e8;
+  }
+  .reolink-discovery-connection > .mdl-grid {
+    margin: 12px 8px 0; padding: 4px !important; border: 1px solid #dfe3e8;
+    border-radius: 4px; background: #fff;
+  }
+  .reolink-channel-toolbar {
+    background: #f7f8fa; border: 1px solid #dfe3e8; border-radius: 4px 4px 0 0;
+    padding: 12px; margin-bottom: 0;
+  }
+  .reolink-channel-toolbar:not(:has(~ .reolink-channel-row)) { border-radius: 4px; margin-bottom: 8px; }
+  .reolink-channel-row {
+    background: #fafbfc; border: 1px solid #dfe3e8; border-top: 0;
+    padding: 8px; margin-top: 0; margin-bottom: 0;
+  }
+  .reolink-channel-row:not(:has(~ .reolink-channel-row)) { border-radius: 0 0 4px 4px; margin-bottom: 8px; }
+  .reolink-channel-row > .w-fit {
+    width: 100% !important; box-sizing: border-box; background: #fff;
+    border: 1px solid #dfe3e8; border-radius: 4px; padding: 10px 12px;
+  }
+  .reolink-channel-row .mdl-switch, .reolink-channel-toolbar .mdl-switch,
+  .reolink-connection-toggle .mdl-switch { height: auto; min-height: 24px; }
+  .reolink-channel-row .mdl-switch__label { line-height: 24px; }
+  .reolink-discovery-danger { background: #fff5f5 !important; border-color: #edb7bb !important; }
+  .reolink-discovery-summary .bg-green-50 { background: #f3faf1 !important; border-color: #bdd8b1 !important; }
+  .reolink-discovery-channels button.hrefElem,
+  .reolink-discovery-recording button.hrefElem {
+    background: #fff; color: #1565c0; border: 1px solid #e0e0e0;
+    border-radius: 4px; box-shadow: none;
+  }
+  .reolink-discovery-recording button[name^='_action_href_presetsFromDiscover|'],
+  .reolink-discovery-channels button[name^='_action_href_tips|'] {
+    height: 62px; box-sizing: border-box;
+  }
+  .reolink-discovery-recording button[name^='_action_href_presetsFromDiscover|'] > .state-incomplete-text,
+  .reolink-discovery-channels button[name^='_action_href_tips|'] > .state-incomplete-text {
+    display: inline-block; padding-bottom: 0.5em;
+  }
+  .reolink-discovery-channels button.hrefElem .state-incomplete-text,
+  .reolink-discovery-recording button.hrefElem .state-incomplete-text { font-size: 14px; }
+  .reolink-discovery-recording button[name^='_action_href_presetsFromDiscover|'] > span:first-child,
+  .reolink-discovery-recording button[name^='_action_href_presetsFromDiscover|'] > span:first-child > span {
+    font-size: 16px !important;
+  }
+  .reolink-discovery-channels button.hrefElem::before,
+  .reolink-discovery-recording button.hrefElem::before { color: #1565c0; }
+  .reolink-discovery-channels .mdl-cell:has(> button[name^='_action_href_runDiscovery|']) { text-align: right; }
+  .reolink-discovery-channels button[name^='_action_href_runDiscovery|'] {
+    display: inline-block; width: auto !important; min-height: 36px; padding: 0 16px;
+    background: rgba(158,158,158,0.2); color: #363636; border: 0; border-radius: 4px;
+    font-family: inherit; font-size: 14px; font-weight: 500; line-height: 36px;
+    box-shadow: 0 2px 2px 0 rgba(0,0,0,.14), 0 3px 1px -2px rgba(0,0,0,.2), 0 1px 5px 0 rgba(0,0,0,.12);
+  }
+  .reolink-discovery-channels button[name^='_action_href_runDiscovery|']::before,
+  .reolink-discovery-channels button[name^='_action_href_runDiscovery|'] > br,
+  .reolink-discovery-channels button[name^='_action_href_runDiscovery|'] > .state-incomplete-text { display: none; }
+  .reolink-discovery-channels button[name^='_action_href_runDiscovery|']:hover { background: #cacfc8; }
+  .reolink-discovery-channels button[name^='_action_href_runDiscovery|']:focus-visible { outline: 2px solid #386a95; outline-offset: 2px; }
+  @media (max-width: 1000px) {
+    .reolink-discovery-channels, .reolink-discovery-connection, .reolink-discovery-recording {
+      float: none; width: 100%; border-left: 0; padding-left: 0;
+    }
+  }
+</style>
+<div class='flex align-items-center gap-3 ${tone} border-1 border-round p-3'>
+  <div class='flex-shrink-0'><i class='${icon} text-2xl' aria-hidden='true'></i></div>
+  <div class='min-w-0'><div class='reolink-status-heading font-semibold'>${title}</div>
+    <div class='text-color-secondary mt-1' style='font-size:14px;'>${countText(channelCount, 'channel')} found &middot; ${countText(deviceCount, 'device')} added</div>
+    ${discoveryFailed ? "<div class='mt-2' style='font-size:14px;'><b>Check Reolink Server Settings:</b> HTTPS must be enabled, and the app's configured HTTPS port must match. HTTP, RTMP, RTSP, and ONVIF are not required by this integration.<br>Real-time events also use TCP port 9000; allow Hubitat to reach it on your local network. If unavailable, the app falls back to polling.</div>" : ""}
+  </div>
+</div>
+"""
+}
+
+private String discoveryEscapeHtml(Object value) {
+    (value == null ? "" : value.toString()).replace("&", "&amp;").replace("<", "&lt;")
+        .replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#39;")
 }
 
 /**
@@ -992,58 +1461,39 @@ def presetsPage(params) {
     }.join(", ")
     bridgeForButtons?.receivePresetsSummary(presetsSummaryText ?: "(none defined yet)")
 
-    dynamicPage(name: "presetsPage", title: "Recording Presets - ${src?.label ?: ''}") {
-        section {
-            paragraph pillHeader("Rule Machine shortcuts")
-            paragraph "This source's bridge device (\"Reolink Device Bridge (${src?.label ?: ''})\") also " +
-                "exposes standard Switch and Button capabilities now, so both of these are available in Rule " +
-                "Machine's simple pickers -- no Custom Action needed:"
-            paragraph "&nbsp;&nbsp;• <b>Turn the bridge switch on/off</b> \u2192 the NVR's master record " +
-                "switch."
-            paragraph "&nbsp;&nbsp;• <b>Push the bridge's button N</b> \u2192 loads whichever preset is shown " +
-                "as \"Button N\" below."
-            paragraph "Each preset's button number is assigned once, permanently, and is never reused even " +
-                "if that preset is later deleted -- so a rule built around a button number stays pointed at " +
-                "the SAME preset for as long as it exists, and just does nothing (rather than firing a " +
-                "different preset) if that preset is ever removed."
-        }
-        section {
-            paragraph pillHeader("What this does")
-            paragraph "Each preset controls what a source's channels record, per channel: leave a channel " +
-                "alone (Reolink's own app stays in control of it), actively silence it, set it to continuous, " +
-                "or give it a daily time window (e.g. 6:00 PM to 6:00 AM every night). Loading a preset -- via " +
-                "the bridge device's \"Load Selected Preset\" command, its Push button, or Rule Machine -- " +
-                "applies whatever you've set here to the real NVR."
-            paragraph "<b>\"Don't manage\" is the default for every channel</b> -- a channel you never touch " +
-                "stays completely untouched by this preset, which is the recommended way to exclude a " +
-                "battery-class channel (e.g. a WiFi doorbell) from a preset meant for wired channels, or to " +
-                "just let Reolink's own app handle a channel entirely. <b>\"Never record\" is different</b> -- " +
-                "it actively writes a silent (all-zero) schedule to that channel, rather than leaving whatever " +
-                "was already there alone."
-            paragraph "This is separate from the NVR's master recording switch (the bridge device's own " +
-                "On/Off) -- that switch applies to every channel at once and has no per-channel targeting at " +
-                "the API level. The usual pattern is: turn the master switch on once and leave it on, then " +
-                "use presets to control what each channel actually records."
-            input "advancedScheduleEditing_${sourceId}", "bool",
-                title: "Advanced: edit raw per-hour schedule strings directly (power users only)",
-                defaultValue: false, submitOnChange: true
-            if (advancedMode) {
-                paragraph "<span style='display:inline-block;background:#FFF3E0;color:#E65100;font-weight:700;" +
-                    "padding:2px 10px;border-radius:10px;font-size:11px;margin-right:6px;'>WARNING</span>" +
-                    "You're editing raw 168-character schedule strings (one digit per hour of the week, " +
-                    "Sunday 12am first, 1=record/0=don't) instead of the simple picker. Almost nobody needs " +
-                    "this -- it exists only for a schedule the simple picker can't express, like different " +
-                    "hours on different days. A malformed string is rejected on save (exact length, only 0/1 " +
-                    "characters), but a well-formed WRONG string will be written to your NVR exactly as typed."
+    // Presentation-only selection; does not load or modify a recording preset.
+    def selectedBySource = state.presetsUiSelection ?: [:]
+    def selectedPreset = params?.preset ?: selectedBySource[sourceId.toString()]
+    if (!presets.containsKey(selectedPreset)) selectedPreset = presets.keySet().find { true }
+    selectedBySource[sourceId.toString()] = selectedPreset
+    state.presetsUiSelection = selectedBySource
+
+    dynamicPage(name: "presetsPage", title: "Recording Presets - ${src?.label ?: ''}",
+        nextPage: "discoverPage", nextPageLabel: "Done") {
+
+        section(sectionClass: "reolink-presets-index") {
+            paragraph rawHtml: true, presetsStylesHtml()
+            paragraph rawHtml: true, "<div class='reolink-status-heading font-semibold'>Presets</div>"
+            if (!presets) paragraph "<span class='text-base text-color-secondary'>No presets yet. Add one below to get started.</span>"
+            presets.keySet().eachWithIndex { name, index ->
+                def btnNum = (state.recPresetButtonNumbers ?: [:])[sourceId.toString()]?.get(name)
+                href name: "selectPreset_${index}", page: "presetsPage",
+                    params: [sourceId: sourceId, preset: name],
+                    title: "<span class='text-blue-700 ${name == selectedPreset ? 'reolink-preset-selected' : ''}'>${discoveryEscapeHtml(name)}</span>",
+                    description: btnNum ? "Button ${btnNum}" : "", width: 12, style: "margin:0 8px;"
             }
-        }
-        section {
-            paragraph pillHeader("Add a preset")
+            paragraph rawHtml: true, "<div class='reolink-status-heading font-semibold border-top-1 border-gray-200 pt-3 mt-3'>Add a preset</div>"
             input "newPresetName", "text", title: "New preset name (e.g. 'Away', 'Present')", submitOnChange: true
         }
         presets.each { name, chMap ->
             def btnNum = (state.recPresetButtonNumbers ?: [:])[sourceId.toString()]?.get(name)
-            section("Preset: ${name}${btnNum ? " (Button ${btnNum})" : ""}") {
+            section(sectionClass: "reolink-preset-editor ${name == selectedPreset ? '' : 'reolink-preset-hidden'}") {
+                paragraph rawHtml: true, "<div class='reolink-status-heading font-semibold'>${discoveryEscapeHtml(name)} " +
+                    (btnNum ? "<span class='text-base text-blue-700 bg-blue-50 border-round px-2 py-1 ml-2'>Button ${btnNum}</span>" : "") +
+                    "</div><div class='text-base text-color-secondary mt-1'>Editing or saving this preset does not load it.</div>"
+                paragraph rawHtml: true, "<div class='reolink-preset-card-heading font-semibold'>Channel recording modes</div>"
+                if (!channels) paragraph "No devices have been added for this source. Add devices on Discover Channels to configure their recording modes."
+
                 if (advancedMode) {
                     channels.each { ch ->
                         def channelNum = ch.getDataValue("channel")
@@ -1055,13 +1505,14 @@ def presetsPage(params) {
                         // plain paragraph makes the lock visually
                         // unmistakable and genuinely un-editable.
                         if (ch.getSetting("excludeFromRecordingPresets") == true) {
-                            paragraph "🔒 <b>${ch.label ?: ch.name} (ch ${channelNum})</b> -- excluded from all " +
+                            paragraph "<i class='pi pi-lock text-color-secondary mr-2'></i><b>${discoveryEscapeHtml(ch.label ?: ch.name)} (ch ${channelNum})</b> -- excluded from all " +
                                 "presets (locked on the device's own preferences page). This preset will never " +
                                 "write a schedule to it."
                             return
                         }
                         def key = "preset_${sourceId}_${name}_${channelNum}"
-                        input key, "text", title: "${ch.label ?: ch.name} (ch ${channelNum})",
+                        input key, "text", title: "${discoveryEscapeHtml(ch.label ?: ch.name)} (ch ${channelNum})",
+                            styleClass: "reolink-preset-channel",
                             defaultValue: chMap[channelNum] ?: ""
                     }
                 } else {
@@ -1072,7 +1523,7 @@ def presetsPage(params) {
                         // see that comment for why this is a paragraph,
                         // not a disabled input.
                         if (ch.getSetting("excludeFromRecordingPresets") == true) {
-                            paragraph "🔒 <b>${ch.label ?: ch.name} (ch ${channelNum})</b> -- excluded from all " +
+                            paragraph "<i class='pi pi-lock text-color-secondary mr-2'></i><b>${discoveryEscapeHtml(ch.label ?: ch.name)} (ch ${channelNum})</b> -- excluded from all " +
                                 "presets (locked on the device's own preferences page). This preset will never " +
                                 "write a schedule to it."
                             return
@@ -1080,34 +1531,153 @@ def presetsPage(params) {
                         def simpleCfg = simpleForPreset[channelNum]
                         def modeKey = "presetMode_${sourceId}_${name}_${channelNum}"
                         def currentMode = settings[modeKey] ?: simpleCfg?.mode ?: REC_MODE_OFF
-                        input modeKey, "enum", title: "${ch.label ?: ch.name} (ch ${channelNum})",
+                        input modeKey, "enum", title: "${discoveryEscapeHtml(ch.label ?: ch.name)} (ch ${channelNum})",
+                            styleClass: "reolink-preset-channel",
                             options: [REC_MODE_OFF, REC_MODE_NEVER, REC_MODE_CONTINUOUS, REC_MODE_RANGE],
                             defaultValue: simpleCfg?.mode ?: REC_MODE_OFF, submitOnChange: true
                         if (currentMode == REC_MODE_RANGE) {
                             def defaultStart = simpleCfg?.start != null ? REC_HOUR_LABELS[simpleCfg.start as Integer] : REC_HOUR_LABELS[18]
                             def defaultEnd = simpleCfg?.end != null ? REC_HOUR_LABELS[simpleCfg.end as Integer] : REC_HOUR_LABELS[6]
                             input "presetStart_${sourceId}_${name}_${channelNum}", "enum",
-                                title: "&nbsp;&nbsp;&nbsp;&nbsp;Start recording at",
+                                title: "Start recording at", width: 6,
                                 options: REC_HOUR_LABELS, defaultValue: defaultStart, submitOnChange: true
                             input "presetEnd_${sourceId}_${name}_${channelNum}", "enum",
-                                title: "&nbsp;&nbsp;&nbsp;&nbsp;Stop recording at",
+                                title: "Stop recording at", width: 6,
                                 options: REC_HOUR_LABELS, defaultValue: defaultEnd, submitOnChange: true
-                            paragraph "<span style='color:#5F5E5A;font-size:12px;margin-left:16px;'>ℹ️ Same " +
+                            paragraph "<span class='text-color-secondary text-base'>Same " +
                                 "window every day. An end time earlier than the start time (e.g. 6:00 PM to " +
                                 "6:00 AM) is treated as overnight, wrapping past midnight.</span>"
                         }
                     }
                 }
-                input "savePreset_${name}", "bool", title: "Save changes to '${name}'",
-                    defaultValue: false, submitOnChange: true
-                input "deletePreset_${name}", "bool", title: "Delete preset '${name}'",
-                    defaultValue: false, submitOnChange: true
             }
         }
-        section {
-            href name: "backToDiscoverFromPresets", title: "« Back", page: "discoverPage", params: [sourceId: sourceId]
+
+        section(sectionClass: "reolink-presets-help") {
+            if (!presets) {
+                paragraph rawHtml: true, "<div class='border-1 border-gray-200 border-round p-3'><div class='reolink-status-heading font-semibold'>Create your first preset</div>" +
+                    "<div class='text-base text-color-secondary mt-2'>Enter a name on the left, then configure what each channel records. New channels default to Don't manage, leaving their existing schedules untouched.</div></div>"
+            }
+            paragraph rawHtml: true, presetsGuidanceHtml(src?.label ?: "")
+            input "advancedScheduleEditing_${sourceId}", "bool",
+                title: "Advanced: edit raw per-hour schedule strings directly (power users only)",
+                defaultValue: false, submitOnChange: true
+            if (advancedMode) {
+                paragraph "<span class='inline-block bg-orange-50 text-orange-700 font-bold text-xs px-2 py-1 " +
+                    "border-round-xl mr-2'><i class='fa-solid fa-exclamation-triangle mr-2' aria-hidden='true'></i>WARNING</span>" +
+                    "You're editing raw 168-character schedule strings (one digit per hour of the week, " +
+                    "Sunday 12am first, 1=record/0=don't) instead of the simple picker. Almost nobody needs " +
+                    "this -- it exists only for a schedule the simple picker can't express, like different " +
+                    "hours on different days. A malformed string is rejected on save (exact length, only 0/1 " +
+                    "characters), but a well-formed WRONG string will be written to your NVR exactly as typed."
+            }
+        }
+
+        if (selectedPreset != null) {
+            def selectedButton = (state.recPresetButtonNumbers ?: [:])[sourceId.toString()]?.get(selectedPreset)
+            section(sectionClass: "reolink-presets-actions") {
+                paragraph rawHtml: true, "<div class='text-base text-color-secondary'>Actions for ${discoveryEscapeHtml(selectedPreset)}</div>"
+                input "presetAction_delete_${sourceId}_${selectedButton}", "button",
+                    title: "<i class='fa-regular fa-trash mr-2' aria-hidden='true'></i>Delete preset",
+                    width: 6, submitOnChange: true, styleClass: "reolink-preset-delete", inputClass: "p-button p-button-danger"
+                input "presetAction_save_${sourceId}_${selectedButton}", "button",
+                    title: "<i class='fa-regular fa-floppy-disk mr-2' aria-hidden='true'></i>Save preset",
+                    width: 6, submitOnChange: true, styleClass: "reolink-preset-save", inputClass: "p-button bg-hubitat-primary-green text-white"
+            }
         }
     }
+}
+
+/** Native buttons feed the same pending flags formerly set by the save/delete switches. */
+void appButtonHandler(String buttonName) {
+    def match = buttonName =~ /^presetAction_(save|delete)_(\d+)_(\d+)$/
+    if (!match.matches()) return
+    String action = match[0][1]
+    String sourceId = match[0][2]
+    Integer buttonNumber = match[0][3] as Integer
+    // Resolve the permanent button number, rather than embedding a user-entered preset name.
+    def presetName = (state.recPresetButtonNumbers ?: [:])[sourceId]?.find { name, number ->
+        number == buttonNumber
+    }?.key
+    if (presetName == null || !(state.recPresets ?: [:])[sourceId]?.containsKey(presetName)) return
+    if (sourceId != state.currentPresetsSourceId?.toString()) return
+    app.updateSetting("${action == 'save' ? 'savePreset' : 'deletePreset'}_${presetName}",
+        [type: "bool", value: true])
+}
+
+/** Preset navigation and styling only; recording handlers remain in presetsPage(). */
+private String presetsStylesHtml() {
+    """
+<style>
+  ${appPageSpacingCss()}
+  .reolink-presets-index { float: left; width: calc(27% - 8px); box-sizing: border-box; }
+  .reolink-preset-editor, .reolink-presets-help, .reolink-presets-actions {
+    float: right; width: 73%; padding-left: 8px; border-left: 1px solid #e0e0e0; box-sizing: border-box;
+  }
+  .reolink-presets-help, .reolink-presets-actions { clear: right; }
+  .reolink-preset-hidden { display: none !important; }
+  .reolink-presets-index > .mdl-grid, .reolink-preset-editor > .mdl-grid,
+  .reolink-presets-help > .mdl-grid, .reolink-presets-actions > .mdl-grid { padding: 4px 0 !important; }
+  .reolink-presets-index .mdl-cell:has(> style) { display: none; }
+  .reolink-presets-index button.hrefElem {
+    background: transparent; border: 0; border-left: 3px solid transparent;
+    border-radius: 0; box-shadow: none; padding: 12px; font-family: inherit; font-size: 16px;
+  }
+  .reolink-presets-index button.hrefElem::before { display: none; }
+  .reolink-presets-index button.hrefElem:has(.reolink-preset-selected) {
+    background: #eaf2fc; border-left-color: #1565c0;
+  }
+  .reolink-presets-index button.hrefElem:hover { background: #f3f6fa; }
+  .reolink-presets-index button.hrefElem:focus-visible { outline: 2px solid #1565c0; outline-offset: 2px; }
+  .reolink-preset-card-heading {
+    font-size: 16px; background: #f5f7fa; border: 1px solid #dfe3e8; border-radius: 4px; padding: 12px;
+  }
+  .reolink-preset-channel {
+    background: #fafbfc; border: 1px solid #dfe3e8; border-radius: 4px; padding: 12px; box-sizing: border-box;
+  }
+  .reolink-presets-actions > .mdl-grid { border-top: 1px solid #e0e0e0; margin: 0 8px; }
+  .reolink-preset-save { text-align: right; }
+  .reolink-preset-save button { background: var(--hubitat-primary-green, #81BC00) !important; color: #fff !important; border-radius: 4px; }
+  .reolink-preset-delete button { background: #D32F2F !important; color: #fff !important; border-radius: 4px; }
+  .reolink-preset-editor .mdl-switch, .reolink-presets-help .mdl-switch { height: auto; min-height: 24px; }
+  .reolink-preset-editor .mdl-switch__label, .reolink-presets-help .mdl-switch__label { line-height: 24px; }
+  .reolink-preset-guidance { border: 1px solid #dfe3e8; border-radius: 4px; margin-top: 16px; }
+  .reolink-preset-guidance summary { padding: 12px; background: #f5f7fa; cursor: pointer; list-style: none; font-size: 16px; }
+  .reolink-preset-guidance summary::-webkit-details-marker { display: none; }
+  .reolink-preset-guidance summary::after { content: '\\203A'; float: right; color: #386a95; }
+  .reolink-preset-guidance[open] summary::after { transform: rotate(90deg); }
+  .reolink-preset-guidance p { margin: 0 0 12px; }
+  .reolink-preset-guidance p:last-child { margin-bottom: 0; }
+  #formApp:has(.reolink-presets-index) #fieldsetAppButtons { clear: both; }
+  @media (max-width: 1000px) {
+    .reolink-presets-index, .reolink-preset-editor, .reolink-presets-help, .reolink-presets-actions {
+      float: none; width: 100%; padding: 0; border-left: 0;
+    }
+  }
+</style>
+"""
+}
+
+private String presetsGuidanceHtml(String sourceLabel) {
+    """
+<div class='p-message p-message-info reolink-message'>
+  <div class='reolink-status-heading font-semibold text-blue-700'><i class='pi pi-cog mr-2' aria-hidden='true'></i>Rule Machine shortcuts</div>
+  <div class='text-base mt-2'>Use <b>Reolink Device Bridge (${discoveryEscapeHtml(sourceLabel)})</b> in Rule Machine's standard Switch and Button pickers. No Custom Action is needed.</div>
+  <div class='text-base mt-2'><b>Switch on/off:</b> controls master recording for all channels.<br><b>Push button N:</b> loads the preset labeled Button N.</div>
+  <div class='text-base mt-2'>You can also use the bridge's <b>Load Selected Preset</b> command. Button numbers are permanent and never reused; a deleted preset's button does nothing.</div>
+</div>
+<details class='reolink-preset-guidance'>
+  <summary class='font-semibold'><i class='pi pi-book mr-2' aria-hidden='true'></i>Recording modes &amp; guidance</summary>
+  <div class='p-3 text-base'>
+    <p><b>Don't manage (default):</b> leaves the channel's existing schedule untouched. Use this to let Reolink manage a channel, or to leave a battery-class channel out of a preset intended for wired cameras.</p>
+    <p><b>Never record:</b> actively writes a silent, all-zero recording schedule. This is different from Don't manage.</p>
+    <p><b>Continuous:</b> records throughout the day.</p>
+    <p><b>Daily time window:</b> records during the same hours every day. An end time earlier than the start time wraps past midnight, such as 6:00 PM to 6:00 AM.</p>
+    <p>Saving a preset stores its configuration. Loading it through the bridge or Rule Machine applies its per-channel schedules to the source.</p>
+  </div>
+</details>
+${warningMessageHtml("The master recording switch affects all channels at once. Normally, leave it on and use presets to control each channel's recording schedule.", "mt-3 text-base")}
+"""
 }
 
 // ---------- Source management ----------
@@ -1868,6 +2438,7 @@ def createSelectedChildren(sourceId) {
         log.warn "Reolink source ${sourceId}: no bridge device available, cannot create/remove children"
         return
     }
+    def src = getSource(sourceId)
     (state.lastDiscovery ?: []).each { ch ->
         def wantIt = settings["create_${sourceId}_${ch.channel}"]
         def dni = childDni(sourceId, ch.channel)
@@ -1888,6 +2459,7 @@ def createSelectedChildren(sourceId) {
             // this single creation-time call succeeding.
             if (child) {
                 child.receiveBatteryMode(ch.isBattery ? "battery" : "wired")
+                configureRtspChild(child, src, ch.channel)
                 // v1.5.2: records this DNI as genuinely created, so
                 // discoverPage()'s self-heal check can later tell a
                 // deleted-externally device apart from a channel that's
@@ -1896,6 +2468,9 @@ def createSelectedChildren(sourceId) {
                 markDeviceEverCreated(dni)
             }
             logNormal "Created child ${dni} (${driverName}) via bridge, poll interval defaulted to ${pollDefault}s (${ch.isBattery ? 'battery' : 'wired'}), features: ${ch.supportedFeatures ? ch.supportedFeatures.join(', ') : 'none detected'}"
+        } else if (wantIt && existing) {
+            // Re-discovery also repairs a child that predates RTSP support.
+            configureRtspChild(existing, src, ch.channel)
         } else if (!wantIt && existing) {
             bridge.removeChannelDevice(dni)
             forgetSchedulingState(dni)
@@ -1909,6 +2484,24 @@ def createSelectedChildren(sourceId) {
         }
     }
     initializePolling()
+}
+
+/**
+ * Copies source login settings to an RTSP-capable child after its channel data
+ * value exists. The hub stream service reads these private device settings.
+ *
+ * @param child camera device created by the bridge or found during discovery
+ * @param src source holding the camera/NVR host and login
+ * @param channel zero-based Reolink API channel number
+ */
+private void configureRtspChild(child, src, channel) {
+    if (!child?.hasCapability("RTSPStream")) return
+    if (!src?.host || channel == null) {
+        log.warn "Reolink ${child.deviceNetworkId}: cannot configure RTSP without a source host and channel"
+        return
+    }
+    child.receiveRtspConfig([host: src.host, username: src.username,
+        password: src.password, channel: channel])
 }
 
 // ---------- Polling ----------
@@ -1979,6 +2572,13 @@ def initialize() {
         }
     }
     runMigrations()
+
+    // Keep existing camera children in sync when the app or driver is upgraded.
+    (state.sources ?: []).each { src ->
+        childrenForSource(src.id).each { child ->
+            configureRtspChild(child, src, child.getDataValue("channel"))
+        }
+    }
     initializePolling()
     if (logLevel == "Full") {
         runIn(3600, "revertToNormalLogging")

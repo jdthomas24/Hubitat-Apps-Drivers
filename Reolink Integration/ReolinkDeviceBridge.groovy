@@ -1,6 +1,6 @@
 /**
  * Reolink Device Bridge (Internal Parent Driver)
- * Version: 1.5.4
+ * Version: 1.6.0
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- ONE instance per SOURCE (Hub/NVR or standalone).
@@ -150,10 +150,10 @@ metadata {
         // actually does, so this explains it up front instead.
         input name: "onOffExplainer", type: "paragraph", element: "paragraph",
             title: "⚠️ What the On / Off switch above actually does",
-            description: "<div style='border:2px solid #185FA5;border-radius:8px;background:#E6F1FB;" +
-                "padding:10px 14px;'><b style='color:#042C53;'>NVR's MASTER recording switch -- applies to " +
+            description: "<div class='border-2 border-blue-700 border-round bg-blue-50 p-3'>" +
+                "<b class='text-blue-900'>NVR's MASTER recording switch -- applies to " +
                 "EVERY channel at once, can't target one channel (hardware/API limitation).</b><br><br>" +
-                "<span style='color:#0C447C;'>Does NOT control which hours get recorded -- that's set by " +
+                "<span class='text-blue-800'>Does NOT control which hours get recorded -- that's set by " +
                 "loading a preset instead (Push button, or the app's Recording Presets page). Turn on once " +
                 "and leave on.</span></div>"
         input name: "loggingInfo", type: "paragraph", element: "paragraph",
