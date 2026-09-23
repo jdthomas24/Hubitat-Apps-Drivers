@@ -1,6 +1,6 @@
 /**
  * Reolink Device Bridge (Internal Parent Driver)
- * Version: 1.5.3
+ * Version: 1.5.4
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- ONE instance per SOURCE (Hub/NVR or standalone).
@@ -65,6 +65,11 @@
  * silently failing to reschedule itself on an unexpected stage change.
  * Added isEventConnectionStale() for the app's new independent audit job.
  * See ParentApp.groovy's v1.5.3 note for the full incident.
+ * Logging refined after real-world feedback: the trigger for a reconnect
+ * (staleness detected, socket closed, handshake timeout) is now silent
+ * by default (logNormal), not log.warn -- a single reconnect is routine.
+ * scheduleReconnect() itself now escalates: attempt 1 stays silent,
+ * attempt 2+ is log.warn, and exhausting all 10 attempts is log.error.
  *
  * v1.4.2 -- No functional change to this driver (version kept in sync with
  * the app); the paragraph() hotfix was in the Camera/Doorbell driver files.
@@ -430,12 +435,19 @@ def socketStatus(String status) {
     if (status?.contains("error") || status?.contains("close")) {
         if (state.stage == "SUBSCRIBED") {
             unschedule("sendKeepalive")
-            log.warn "Reolink Device Bridge (source ${state.sourceId}): connection lost, scheduling reconnect"
+            // v1.5.3 refinement: this is the TRIGGER for a reconnect
+            // cycle, not yet evidence of a real problem -- a closed/errored
+            // socket is routine over a long-lived connection (network
+            // blip, a lease renewal, etc.) and self-heals via the normal
+            // reconnect flow below almost always. scheduleReconnect()
+            // itself escalates to log.warn/log.error if it actually takes
+            // more than one attempt.
+            parent?.logNormal "Reolink Device Bridge (source ${state.sourceId}): connection lost, scheduling reconnect"
             sendEvent(name: "connectionStatus", value: "reconnecting")
             parent?.componentEventConnectionStatus(this, state.sourceId, "reconnecting")
             scheduleReconnect()
         } else if (state.stage && state.stage != "DONE") {
-            log.warn "Reolink Device Bridge (source ${state.sourceId}): socket closed/errored mid-handshake (stage was ${state.stage})"
+            parent?.logNormal "Reolink Device Bridge (source ${state.sourceId}): socket closed/errored mid-handshake (stage was ${state.stage})"
             sendEvent(name: "connectionStatus", value: "disconnected")
             parent?.componentEventConnectionStatus(this, state.sourceId, "disconnected")
         }
@@ -445,17 +457,30 @@ def socketStatus(String status) {
 
 @Field static final int MAX_RECONNECT_ATTEMPTS = 10
 
+/**
+ * v1.5.3 refinement: a real escalation ladder instead of a flat log.warn
+ * on every attempt. A single reconnect attempt is routine (transient
+ * network blip, brief camera hiccup, an IP lease renewing) and stays
+ * silent by default; only a SECOND consecutive attempt -- meaning the
+ * first one didn't resolve it -- escalates to log.warn, and exhausting
+ * every attempt (a real, actionable failure) is log.error, not log.warn,
+ * since that's the one outcome here that genuinely needs attention.
+ */
 private void scheduleReconnect() {
     int attempt = (state.reconnectAttempts ?: 0) + 1
     state.reconnectAttempts = attempt
     if (attempt > MAX_RECONNECT_ATTEMPTS) {
-        log.warn "Reolink Device Bridge (source ${state.sourceId}): giving up after ${MAX_RECONNECT_ATTEMPTS} attempts -- falling back to polling"
+        log.error "Reolink Device Bridge (source ${state.sourceId}): giving up after ${MAX_RECONNECT_ATTEMPTS} attempts -- falling back to polling"
         sendEvent(name: "connectionStatus", value: "disconnected")
         parent?.componentEventConnectionStatus(this, state.sourceId, "disconnected")
         return
     }
     int delaySec = Math.min(300, 5 * (int) Math.pow(2, attempt - 1))
-    log.warn "Reolink Device Bridge (source ${state.sourceId}): reconnect attempt ${attempt}/${MAX_RECONNECT_ATTEMPTS} in ${delaySec}s"
+    if (attempt == 1) {
+        parent?.logNormal "Reolink Device Bridge (source ${state.sourceId}): reconnect attempt ${attempt}/${MAX_RECONNECT_ATTEMPTS} in ${delaySec}s"
+    } else {
+        log.warn "Reolink Device Bridge (source ${state.sourceId}): reconnect attempt ${attempt}/${MAX_RECONNECT_ATTEMPTS} in ${delaySec}s"
+    }
     runIn(delaySec, "reconnectEventSubscription")
 }
 
@@ -471,7 +496,10 @@ def reconnectEventSubscription() {
  */
 def flowTimeoutCheck() {
     if (state.stage && state.stage != "DONE" && state.stage != "SUBSCRIBED") {
-        log.warn "Reolink Device Bridge (source ${state.sourceId}): timed out waiting for handshake response (stage ${state.stage}), scheduling reconnect"
+        // v1.5.3 refinement: trigger-level event, same reasoning as
+        // socketStatus() above -- silent by default, scheduleReconnect()
+        // escalates if it doesn't resolve on the first attempt.
+        parent?.logNormal "Reolink Device Bridge (source ${state.sourceId}): timed out waiting for handshake response (stage ${state.stage}), scheduling reconnect"
         try { interfaces.rawSocket.close() } catch (e) { }
         state.stage = null
         sendEvent(name: "connectionStatus", value: "reconnecting")
@@ -523,7 +551,12 @@ def sendKeepalive() {
         // connection is alive.
         def lastReal = (state.lastRealMessageAt ?: 0) as Long
         if (now() - lastReal > (STALE_CONNECTION_THRESHOLD_SEC * 1000L)) {
-            log.warn "Reolink Device Bridge (source ${state.sourceId}): no real traffic received in " +
+            // v1.5.3 refinement: this is the TRIGGER for a reconnect, not
+            // yet evidence of a real problem -- silent by default
+            // (logNormal, not log.warn). scheduleReconnect() below is what
+            // actually escalates to log.warn/log.error, based on whether
+            // this resolves on the first attempt or needs more.
+            parent?.logNormal "Reolink Device Bridge (source ${state.sourceId}): no real traffic received in " +
                 "${STALE_CONNECTION_THRESHOLD_SEC}s despite reporting connected, treating as a dead " +
                 "(likely half-open) connection and forcing a reconnect"
             unschedule("sendKeepalive")
