@@ -1,6 +1,6 @@
 {
     "packageName": "Reolink Integration",
-    "releaseNotes": "v1.5.3 fixed a source's event connection silently going dead while still reporting connected. v1.6.0 refines the logging around that fix so routine reconnects stay quiet and only real failures are logged as errors.",
+    "releaseNotes": "v1.6.0 adds RTSP live video for cameras and doorbells (supported hubs only) and a redesigned app UI, contributed by gopher.ny. This is the version Hubitat is adopting as its built-in Reolink integration.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "communityLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "author": "jdthomas24",
