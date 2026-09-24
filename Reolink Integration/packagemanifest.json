@@ -5,7 +5,7 @@
     "communityLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "author": "jdthomas24",
     "version": "1.6.0",
-    "minimumHEVersion": "2.3.0",
+    "minimumHEVersion": "2.5.1.122",
     "dateReleased": "2026-08-14",
     "category": "Integrations",
     "tags": "Cameras & Video",
