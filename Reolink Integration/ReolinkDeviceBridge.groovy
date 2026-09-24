@@ -383,7 +383,14 @@ def configureConnection(String host, Integer port, String username, String passw
     state.sourceId = sourceId
 }
 
+/** Opens the event socket after cancelling any obsolete delayed close.
+ * @param isReconnect true when continuing a retry cycle
+ */
 def startEventSubscription(boolean isReconnect = false) {
+    // A previous intentional stop must never close this new socket later.
+    unschedule("closeSocket")
+    state.eventSubscriptionWanted = true
+
     parent?.logNormal "Reolink Device Bridge (source ${state.sourceId}): ${isReconnect ? 'reconnecting' : 'starting'}"
     if (!isReconnect) {
         state.reconnectAttempts = 0
@@ -412,7 +419,12 @@ def startEventSubscription(boolean isReconnect = false) {
     runIn(15, "flowTimeoutCheck")
 }
 
+/** Cancels pending connection work and closes the event socket immediately. */
 def stopEventSubscription() {
+    state.eventSubscriptionWanted = false
+    unschedule("sendNonceRequest")
+    unschedule("closeSocket")
+
     parent?.logNormal "Reolink Device Bridge (source ${state.sourceId}): stopping event subscription"
     unschedule("sendKeepalive")
     unschedule("flowTimeoutCheck")
@@ -425,8 +437,8 @@ def stopEventSubscription() {
             sendRaw(header)
         } catch (e) { /* best effort logout, fine either way */ }
     }
-    runIn(1, "closeSocket")
     state.stage = "DONE"
+    closeSocket()
     sendEvent(name: "connectionStatus", value: "disconnected")
     parent?.componentEventConnectionStatus(this, state.sourceId, "disconnected")
 }
@@ -484,7 +496,9 @@ private void scheduleReconnect() {
     runIn(delaySec, "reconnectEventSubscription")
 }
 
+/** Retries only while event subscription remains requested. */
 def reconnectEventSubscription() {
+    if (state.eventSubscriptionWanted == false) return
     startEventSubscription(true)
 }
 

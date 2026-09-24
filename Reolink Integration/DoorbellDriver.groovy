@@ -6,6 +6,8 @@
  * event so Rule Machine can trigger straight off "pushed 1" for a doorbell
  * ring, separate from AI person/motion detection.
  *
+ * v1.6.0 -- Added RTSPStream support using the same hub video stream service
+ * and parent-managed source settings as the camera driver.
  * v1.5.1 -- No functional change to this driver (version kept in sync with
  * the rest of the release); the actual fix was six missing passthrough
  * methods in ReolinkStandaloneDevices.groovy -- see that file's header for
@@ -48,11 +50,19 @@ metadata {
         // pulled into the app's auto battery-check scheduler, which keys
         // off hasCapability("Battery") rather than device type.
         capability "Battery"
+        capability "ImageUrl"
+        capability "RTSPStream"
         attribute "person", "enum", ["active", "inactive"]
         attribute "vehicle", "enum", ["active", "inactive"]
         attribute "pet", "enum", ["active", "inactive"]
         attribute "package", "enum", ["active", "inactive"]
         attribute "snapshotUrl", "string"
+        attribute "rtspUrl", "string"
+        attribute "status", "string"
+        attribute "width", "number"
+        attribute "height", "number"
+        attribute "cpuUsage", "number"
+        attribute "streamSubscribers", "number"
         attribute "batteryMode", "enum", ["wired", "battery", "unknown"]
         // Both "charging" and "not_charging" confirmed against real
         // hardware -- see CameraDriver.groovy's matching attribute comment.
@@ -106,6 +116,15 @@ metadata {
             description: "When ON, loading ANY preset will never write a new recording schedule to this " +
                 "device, no matter what that preset specifies for it. Direct manual commands aimed at this " +
                 "device are unaffected. Off by default."
+        input name: "rtspInfo", type: "paragraph", title: "<b>RTSP live stream</b>",
+            description: "The source address and login come from the Reolink app. Enable RTSP on the source. " +
+                "Live video uses Hubitat's video stream service (supported hubs only)."
+        input name: "cameraUser", type: "text", title: "RTSP username (managed by app)"
+        input name: "cameraPassword", type: "password", title: "RTSP password (managed by app)"
+        input name: "ipAddress", type: "text", title: "RTSP source IP (managed by app)"
+        input name: "port", type: "number", title: "RTSP port", defaultValue: 554, range: "1..65535"
+        input name: "rtspPath", type: "text", title: "RTSP path (managed by app)"
+        input name: "outputWidth", type: "number", title: "Live video width", defaultValue: 640, range: "640..1920"
     }
 }
 def installed() {
@@ -113,6 +132,89 @@ def installed() {
 }
 def refresh() {
     parent?.componentRefresh(this, device.deviceNetworkId)
+    refreshRtsp()
+}
+
+/** Applies changes to the RTSP port or MJPEG output width on device save. */
+def updated() {
+    refreshRtsp()
+}
+
+/** Rebuilds the doorbell's Reolink stream settings after source or channel discovery. */
+def receiveRtspConfig(Map config) {
+    if (!config?.host || config.channel == null) return
+    String path = "/Preview_${String.format('%02d', (config.channel as Integer) + 1)}_sub"
+    boolean changed = false
+    [cameraUser: config.username, cameraPassword: config.password,
+     ipAddress: config.host, rtspPath: path].each { key, value ->
+        String type = key == "cameraPassword" ? "password" : "text"
+        if (settings[key]?.toString() != value?.toString()) {
+            device.updateSetting(key, [type: type, value: value?.toString() ?: ""])
+            changed = true
+        }
+    }
+    [port: config.rtspPort ?: 554, outputWidth: config.outputWidth ?: 640].each { key, value ->
+        if (settings[key] == null) {
+            device.updateSetting(key, [type: "number", value: value])
+            changed = true
+        }
+    }
+    if (changed || !device.currentValue("imageUrl")) refreshRtsp(config + [rtspPath: path])
+}
+
+/** Publishes the hub MJPEG endpoint and asks the hub to validate its RTSP source. */
+private void refreshRtsp(Map config = [:]) {
+    String host = (config.host ?: settings.ipAddress)?.toString()?.trim()
+    String path = (config.rtspPath ?: settings.rtspPath)?.toString()?.trim()
+    String user = (config.username ?: settings.cameraUser)?.toString()
+    String password = (config.password ?: settings.cameraPassword)?.toString()
+    Integer rtspPort
+    try { rtspPort = (settings.port ?: 554) as Integer } catch (Exception ignored) { rtspPort = null }
+    if (!host || !path?.startsWith("/") || !rtspPort || rtspPort < 1 || rtspPort > 65535) {
+        sendEvent(name: "status", value: "invalid RTSP settings")
+        return
+    }
+    String encodedUser = user ? URLEncoder.encode(user, "UTF-8").replace("+", "%20") : null
+    String credentials = encodedUser ? "${encodedUser}${password ? ':********' : ''}@" : ""
+    sendEvent(name: "rtspUrl", value: "rtsp://${credentials}${host}:${rtspPort}${path}")
+    sendEvent(name: "refreshRate", value: 86400)
+    if (getNumericHubVersion() < 9) {
+        sendEvent(name: "status", value: "not supported on C8 or earlier hubs")
+        return
+    }
+    sendEvent(name: "imageUrl", value: "/hub2/videoStream/${device.id}.mjpg")
+    String generation = UUID.randomUUID().toString()
+    state.rtspValidationGeneration = generation
+    sendEvent(name: "status", value: "validating")
+    try {
+        asynchttpPost("rtspValidationHandler", [
+            uri: "http://127.0.0.1:8080/hub2/videoStream/${device.id}/validate",
+            contentType: "application/json", timeout: 12
+        ], [generation: generation])
+    } catch (Exception ignored) {
+        if (state.rtspValidationGeneration == generation)
+            sendEvent(name: "status", value: "unable to start RTSP validation")
+    }
+}
+
+/** Handles the current validation request and exposes detected stream dimensions. */
+def rtspValidationHandler(response, Map data) {
+    if (!data?.generation || state.rtspValidationGeneration != data.generation) return
+    state.remove("rtspValidationGeneration")
+    if (response.status != 200 || !(response.json instanceof Map)) {
+        sendEvent(name: "status", value: "RTSP validation request failed")
+        return
+    }
+    Map result = response.json as Map
+    if (result.success == true) {
+        if (result.width instanceof Number && result.height instanceof Number) {
+            sendEvent(name: "width", value: result.width)
+            sendEvent(name: "height", value: result.height)
+        }
+        sendEvent(name: "status", value: "validated")
+    } else {
+        sendEvent(name: "status", value: result.message ?: "RTSP validation failed")
+    }
 }
 def takeSnapshot() {
     parent?.componentTakeSnapshot(this, device.deviceNetworkId)

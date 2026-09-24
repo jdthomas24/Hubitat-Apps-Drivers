@@ -1,6 +1,11 @@
+// hubitat start
+// hub: 127.0.0.1
+// type: app
+// id: 5224
+// hubitat end
 /**
  * Reolink Integration (Parent App)
- * Version: 1.6.0
+ * Version: 1.6.1
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -19,6 +24,9 @@
  * in-app Tips page, not duplicated here. TODO markers mark spots needing
  * exact command/param names verified against firmware (field names can
  * drift by version). Full history prior to 1.3.6 is in GitHub commit history.
+ *
+ * v1.6.1 -- Pass RTSP port and output width defaults when configuring newly
+ * created children so the doorbell driver saves all stream settings at creation.
  *
  * BREAKING CHANGE (v1.3.8): every camera/doorbell became a child of a new
  * per-source "Reolink Device Bridge" instead of a child of this app directly
@@ -291,8 +299,11 @@ private String buildRangeBitstring(int startHour, int endHour) {
 preferences {
     page(name: "mainPage")
     page(name: "addSourcePage")
+    page(name: "discoverSourcesPage")
     page(name: "discoverPage")
     page(name: "removeSourcePage")
+    page(name: "editSourcePage")
+    page(name: "findChangedIpPage")
     page(name: "presetsPage")
     page(name: "tipsPage")
 }
@@ -305,7 +316,15 @@ mappings {
     }
 }
 
+/** Renders the source list and clears abandoned editing/recovery sessions.
+ * @return main configuration page
+ */
 def mainPage() {
+    state.remove("sourceDiscovery")
+    state.remove("sourceDiscoverySelection")
+    state.remove("ipRecovery")
+    state.remove("editSourceId")
+    app.removeSetting("editPass")
     state.remove("pendingSourceRemoval")
     if (newLabel && newHost && newUser && newPass) {
         addSource()
@@ -348,6 +367,9 @@ def mainPage() {
             }
 
             // Keep native navigation inside the same column layout as discovery.
+            href name: "discoverSources", title: "<i class='fa-solid fa-magnifying-glass mr-2' aria-hidden='true'></i>Discover sources",
+                description: "Find Reolink devices on the local network",
+                page: "discoverSourcesPage", width: 12, style: "margin:8px;"
             href name: "addSource", title: "<span><i class='fa-regular fa-plus mr-2'></i>Add source</span>",
                 description: "Standalone camera, NVR, or Home Hub",
                 page: "addSourcePage", width: 12, style: "margin:8px;"
@@ -725,7 +747,7 @@ private List tipsTopics() {
             body: [
                 "<p>" + ("Remove a Camera/Doorbell from its source's Discover Channels page, not Hubitat's Devices page. " +
                 "For one channel, turning it off removes the device immediately. For multiple channels, turn it off " +
-                "and use <b>Apply changes now</b>. To remove a whole source, choose <b>Remove source...</b>, " +
+                "and use <b>Apply device changes</b>. To remove a whole source, choose <b>Remove source...</b>, " +
                 "review the affected devices, and confirm. Hubitat gives apps no way to be notified when a " +
                 "device is deleted directly from the Devices page, so doing that can leave stale app records.") + "</p>",
                 "<p>" + ("<b>What's handled automatically:</b> the next time you open that source's Discover " +
@@ -863,8 +885,128 @@ private List tipsTopics() {
     order.collect { id -> topics.find { it.id == id } }
 }
 
+/** Finds LAN sources without authenticating or creating devices. */
+def discoverSourcesPage() {
+    if (state.remove("cancelSourceDiscoveryRequested")) return mainPage()
+    if (!state.sourceDiscovery) startSourceDiscovery()
+    def scan = state.sourceDiscovery
+    boolean busy = scan.phase == "searching"
+    dynamicPage(name: "discoverSourcesPage", title: "Discover sources", refreshInterval: busy ? 2 : 0) {
+        section {
+            paragraph rawHtml: true, recoveryStylesHtml()
+            paragraph scan.message
+            (scan.candidates ?: []).eachWithIndex { candidate, index ->
+                def existing = discoveredSourceMatch(candidate)
+                String title = "Reolink device (${discoveryEscapeHtml(candidate.host)})"
+                if (existing) {
+                    paragraph rawHtml: true, "<div class='border-1 border-gray-200 border-round p-3'>" +
+                        "<div class='font-semibold'>${title}</div>" +
+                        "<div class='text-sm text-color-secondary mt-1'>ID: ${discoveryEscapeHtml(candidate.uid)}</div>" +
+                        "<div class='text-green-700 mt-2'>Already added: ${discoveryEscapeHtml(existing.label)}</div></div>"
+                } else {
+                    href name: "discoveredSource_${index}",
+                        title: "<i class='fa-regular fa-plus mr-2' aria-hidden='true'></i>${title}",
+                        description: "Set up this source - ID: ${candidate.uid}", page: "addSourcePage",
+                        params: [discoveryNonce: scan.nonce, candidateIndex: index], width: 12, style: "margin:8px;"
+                }
+            }
+            paragraph "Select a new source to review its details and enter credentials. Devices must be on the same local network; sleeping devices may not respond."
+        }
+        section(sectionClass: "reolink-recovery-actions") {
+            input "rescanSources", "button", title: "<i class='fa-solid fa-rotate-right mr-2' aria-hidden='true'></i>Search again",
+                width: 4, submitOnChange: true, disabled: busy, inputClass: "p-button"
+            input "cancelSourceDiscovery", "button",
+                title: "<i class='fa-regular fa-xmark mr-2' aria-hidden='true'></i>Cancel",
+                width: 4, submitOnChange: true, inputClass: "p-button"
+        }
+    }
+}
+
+private def discoveredSourceMatch(Map candidate) {
+    (state.sources ?: []).find { src ->
+        (normalizeSourceUid(candidate.uid) && normalizeSourceUid(candidate.uid) == normalizeSourceUid(src.identity?.uid)) ||
+            src.host?.toString()?.trim() == candidate.host
+    }
+}
+
+private void startSourceDiscovery() {
+    if (state.sourceDiscovery?.phase == "searching") return
+    def scan = [nonce: java.util.UUID.randomUUID().toString(), phase: "searching", startedAt: now(),
+        candidates: [], message: "Searching the local network..."]
+    state.remove("sourceDiscoverySelection")
+    try {
+        scan.scanId = hubitat.helper.NetworkUtils.startReolinkDiscovery()
+        state.sourceDiscovery = scan
+        runIn(4, "completeSourceDiscovery", [data: [nonce: scan.nonce, scanId: scan.scanId]])
+    } catch (MissingMethodException ignored) {
+        scan.phase = "error"
+        scan.message = "This hub firmware does not support Reolink LAN discovery. Select Cancel, then Add source to enter the connection details."
+    } catch (Exception ignored) {
+        scan.phase = "error"
+        scan.message = "Discovery could not start. Try again or add the source manually."
+    }
+    state.sourceDiscovery = scan
+}
+
+/** Collects a bounded scan and ignores callbacks from abandoned pages or older searches. */
+def completeSourceDiscovery(data) {
+    def scan = state.sourceDiscovery
+    if (!scan || scan.nonce != data.nonce || scan.scanId != data.scanId || scan.phase != "searching") return
+    try {
+        def result = hubitat.helper.NetworkUtils.getReolinkDiscoveryStatus(scan.scanId)
+        if (result.status == "running" && now() - scan.startedAt < 15000L) {
+            runIn(2, "completeSourceDiscovery", [data: data])
+            return
+        }
+        if (result.status == "complete") {
+            scan.candidates = (result.candidates ?: []).findAll { candidate ->
+                String host = candidate.host?.toString()
+                normalizeSourceUid(candidate.uid) && host && host ==~ /(?:\d{1,3}\.){3}\d{1,3}/ &&
+                    host.tokenize('.').every { it.toInteger() <= 255 }
+            }.collect { [host: it.host.toString(), uid: normalizeSourceUid(it.uid)] }
+                .unique { "${it.uid}|${it.host}" }.sort { a, b -> a.host <=> b.host }
+            scan.phase = "done"
+            scan.message = scan.candidates ? "Found ${scan.candidates.size()} Reolink device(s)." :
+                "No Reolink devices found. Check power and network connections, then search again or add a source manually."
+        } else {
+            scan.phase = "error"
+            scan.message = result.errorCode == "reply_port_in_use" ?
+                "UDP port 3000 is already in use. Close Reolink Client if it is running on the same computer as this hub, wait 10 seconds, then search again." :
+                "Discovery failed or expired. Try again or add the source manually."
+        }
+    } catch (Exception ignored) {
+        scan.phase = "error"
+        scan.message = "Discovery could not complete. Try again or add the source manually."
+    }
+    if (state.sourceDiscovery?.nonce == data.nonce && state.sourceDiscovery?.scanId == data.scanId)
+        state.sourceDiscovery = scan
+}
+
+/** Prepares a fresh draft once per selected scan result, preserving subsequent user edits. */
+private boolean prepareDiscoveredSource(params) {
+    def scan = state.sourceDiscovery
+    String indexText = params.candidateIndex?.toString()
+    if (!scan || scan.phase != "done" || scan.nonce != params.discoveryNonce || !indexText?.isInteger()) return false
+    int index = indexText.toInteger()
+    if (index < 0 || index >= (scan.candidates ?: []).size()) return false
+    def candidate = scan.candidates[index]
+    if (discoveredSourceMatch(candidate)) return false
+    String selection = "${scan.nonce}:${index}"
+    if (state.sourceDiscoverySelection != selection) {
+        app.updateSetting("newLabel", [type: "text", value: "Reolink ${candidate.host}"])
+        app.updateSetting("newHost", [type: "text", value: candidate.host])
+        app.updateSetting("newPort", [type: "number", value: 443])
+        app.removeSetting("newUser")
+        app.removeSetting("newPass")
+        app.removeSetting("newIsHub")
+        state.sourceDiscoverySelection = selection
+    }
+    return true
+}
+
 def addSourcePage(params) {
-    if (params?.cancel) {
+    def action = state.remove("addSourceAction")
+    if (params?.cancel || action == "cancel") {
         app.removeSetting("newLabel")
         app.removeSetting("newHost")
         app.removeSetting("newPort")
@@ -873,9 +1015,11 @@ def addSourcePage(params) {
         app.removeSetting("newIsHub")
         return mainPage()
     }
-    dynamicPage(name: "addSourcePage", title: "Add a Reolink Source", nextPage: "mainPage", nextPageLabel: "Add source") {
+    if (action == "add") return mainPage()
+    if (params?.discoveryNonce && !prepareDiscoveredSource(params)) return discoverSourcesPage()
+    dynamicPage(name: "addSourcePage", title: "Add a Reolink Source") {
         section(sectionClass: "reolink-add-form") {
-            paragraph rawHtml: true, addSourceStylesHtml()
+            paragraph rawHtml: true, recoveryStylesHtml() + addSourceStylesHtml()
             paragraph rawHtml: true, "<div class='reolink-status-heading font-semibold'>Source details</div>" +
                 "<div class='text-sm text-color-secondary mt-1'>Enter connection details for your Reolink camera, NVR, or Home Hub.</div>"
             input "newLabel", "text", title: "Label (e.g. 'Front Door Hub', 'Garage Cam')"
@@ -908,8 +1052,15 @@ def addSourcePage(params) {
         section(sectionClass: "reolink-add-footer") {
             paragraph rawHtml: true, "<div class='text-sm text-color-secondary'>Fill in Label, IP address, Username, and Password, then select Add source. " +
                 "Leaving any of those blank returns to Sources without creating anything.</div>"
-            href name: "cancelAddSource", title: "Cancel", description: "",
-                page: "addSourcePage", params: [cancel: true], width: 3, style: "margin:8px;"
+        }
+        section(sectionClass: "reolink-recovery-actions reolink-add-actions") {
+            input "confirmAddSource", "button",
+                title: "<i class='fa-solid fa-plus mr-2' aria-hidden='true'></i>Add source",
+                width: 4, submitOnChange: true, styleClass: "reolink-recovery-primary",
+                inputClass: "p-button bg-hubitat-primary-green text-white"
+            input "cancelAddSource", "button",
+                title: "<i class='fa-regular fa-xmark mr-2' aria-hidden='true'></i>Cancel",
+                width: 4, submitOnChange: true, inputClass: "p-button"
         }
     }
 }
@@ -927,11 +1078,7 @@ private String addSourceStylesHtml() {
   .reolink-add-source-type .mdl-switch { height: auto; min-height: 24px; }
   .reolink-add-source-type .mdl-switch__label { line-height: 24px; }
   .reolink-add-footer { clear: both; border-top: 1px solid #e0e0e0; margin: 0 8px !important; }
-  .reolink-add-footer button.hrefElem { width: auto !important; min-height: 36px; padding: 0 16px; border-radius: 4px; font-family: inherit; font-size: 14px; line-height: 36px; }
-  .reolink-add-footer button.hrefElem::before, .reolink-add-footer button.hrefElem > br,
-  .reolink-add-footer button.hrefElem > .state-incomplete-text { display: none; }
-  #formApp:has(.reolink-add-form) #fieldsetAppButtons { margin-top: -48px; position: relative; float: right; }
-  #formApp:has(.reolink-add-form) #btnNext { background: var(--hubitat-primary-green, #81BC00) !important; color: #fff !important; border-radius: 4px; }
+  .reolink-add-actions { clear: both; }
   @media (max-width: 1000px) {
     .reolink-add-form, .reolink-add-guidance { float: none; width: 100%; padding: 0; border-left: 0; }
   }
@@ -939,7 +1086,14 @@ private String addSourceStylesHtml() {
 """
 }
 
+/** Shows channels and connection actions for the selected source.
+ * @param params navigation arguments containing sourceId and optional discovery action
+ * @return source configuration page
+ */
 def discoverPage(params) {
+    state.remove("ipRecovery")
+    state.remove("editSourceId")
+    app.removeSetting("editPass")
     state.remove("pendingSourceRemoval")
     def sourceId = params?.sourceId ?: state.currentDiscoverySourceId
     state.currentDiscoverySourceId = sourceId
@@ -976,10 +1130,12 @@ def discoverPage(params) {
     def lastDiscovery = cachedForThisSource ? (state.lastDiscovery ?: []) : []
     def channelCount = lastDiscovery.size()
 
-    if (confirmCreate) {
+    // Consume the button action once, and only for the source it was clicked on.
+    def pendingDeviceSourceId = state.remove("pendingDeviceSourceId")
+    if (src && pendingDeviceSourceId != null && pendingDeviceSourceId.toString() == sourceId.toString()) {
         createSelectedChildren(sourceId)
-        app.updateSetting("confirmCreate", [type: "bool", value: false])
     }
+    if (settings.containsKey("confirmCreate")) app.removeSetting("confirmCreate")
 
     // Fires on EITHER direction of the per-channel checkbox: checking an
     // absent device (create) or unchecking a present one (remove), by
@@ -1012,7 +1168,7 @@ def discoverPage(params) {
             section(sectionClass: "reolink-discovery-channels") {
                 paragraph rawHtml: true, "<div class='reolink-discovery-heading font-semibold'>Channels</div>" +
                     "<div class='text-color-secondary mt-1' style='font-size:14px;'>Toggle channels to add or remove devices.</div>", width: 7
-                href name: "runDiscovery", title: "<i class='pi pi-refresh mr-2' aria-hidden='true'></i>Re-run discovery",
+                href name: "runDiscovery", title: "<i class='fa-solid fa-rotate-right mr-2' aria-hidden='true'></i>Re-run discovery",
                     description: "",
                     page: "discoverPage", params: [sourceId: sourceId, run: true], width: 5,
                     style: "margin:8px;"
@@ -1093,16 +1249,11 @@ def discoverPage(params) {
 
                     if (channelCount > 1) {
                         paragraph "<span class='text-sm text-color-secondary'>Select the channels you want, " +
-                            "then use <b>Apply changes now</b>. Added channels already have a device; New channels do not.</span>"
-                        // A thin divider + a distinct icon/label (rather
-                        // than a plain "Ch N: Name"-shaped row) so this
-                        // doesn't visually blend into the channel toggles
-                        // directly above it -- easy to mistake for just
-                        // another device without some separation, since
-                        // it's the exact same input type.
+                            "then use <b>Apply device changes</b>. Added channels already have a device; New channels do not.</span>"
                         paragraph "<hr class='border-0 border-top-1 border-gray-200 my-2'>"
-                        input "confirmCreate", "bool", title: "<b>✅ Apply changes now</b>",
-                            defaultValue: false, submitOnChange: true
+                        input "applyDeviceChanges_${sourceId}", "button",
+                            title: "<i class='fa-solid fa-floppy-disk mr-2' aria-hidden='true'></i>Apply device changes",
+                            width: 12
                     } else if (channelCount == 1) {
                         paragraph "<span class='text-sm text-color-secondary'>One channel: changes apply immediately. " +
                             "Turn on to create the device; turn off to remove it.</span>"
@@ -1120,6 +1271,12 @@ def discoverPage(params) {
             section(title: "<div class='reolink-discovery-heading font-semibold'>Connection</div>" +
                     "<div class='text-color-secondary mt-1' style='font-size:14px;'>Real-time updates from this source.</div>",
                     sectionClass: "reolink-discovery-connection") {
+                href name: "findChangedIp", title: "<i class='fa-solid fa-magnifying-glass mr-2' aria-hidden='true'></i>Find changed IP",
+                    page: "findChangedIpPage", params: [sourceId: sourceId],
+                    description: "Locate this source on the local network"
+                href name: "editSource", title: "<i class='fa-solid fa-gear mr-2' aria-hidden='true'></i>Edit connection settings",
+                    page: "editSourcePage", params: [sourceId: sourceId, begin: true],
+                    description: "IP/hostname, HTTPS port, username, and password"
                 input "useEventSubscription_${sourceId}", "bool",
                     title: "Use event-driven updates for this source" +
                         "<span class='block text-sm text-color-secondary mt-1'>Falls back to polling if the connection drops.</span>",
@@ -1138,22 +1295,368 @@ def discoverPage(params) {
                 section(sectionClass: "reolink-discovery-recording") {
                     paragraph rawHtml: true, "<div class='reolink-discovery-heading font-semibold'>Recording</div>" +
                         "<div class='text-sm text-color-secondary mt-1'>Configure when each channel records.</div>"
-                    href name: "presetsFromDiscover", title: "<span class='text-blue-700 font-semibold'>" +
-                            "<i class='pi pi-video mr-2 text-blue-700'></i>Recording Presets</span>",
+                    href name: "presetsFromDiscover", title: "<i class='pi pi-video mr-2' aria-hidden='true'></i>Recording Presets",
                         description: "Set recording schedules per channel",
-                        page: "presetsPage", params: [sourceId: sourceId], width: 12, style: "margin:calc(8px + 0.75rem) 8px 8px;"
+                        page: "presetsPage", params: [sourceId: sourceId]
                 }
             }
             section(sectionClass: "reolink-discovery-danger bg-red-50 border-1 border-red-200 border-round") {
                 paragraph rawHtml: true, "<div class='reolink-discovery-heading font-semibold text-red-700'>Danger zone</div>" +
                     "<div class='text-color-secondary mt-1' style='font-size:14px;'>Remove this source and its devices from Hubitat. " +
                     "You will be asked to confirm before anything is removed.</div>"
-                href name: "reviewSourceRemoval", title: "<span class='text-red-700 font-semibold'>Remove source...</span>",
+                href name: "reviewSourceRemoval", title: "<span class='text-red-700 font-semibold'><i class='fa-solid fa-trash mr-2' aria-hidden='true'></i>Remove source...</span>",
                     description: "Review the source and devices before confirming",
                     page: "removeSourcePage", params: [sourceId: sourceId], width: 12, style: "margin:8px;"
             }
         }
     }
+}
+
+/** Draft connection settings are committed only by the explicit Save button. */
+def editSourcePage(params) {
+    def sourceId = params?.sourceId ?: state.editSourceId
+    def src = sourceId != null ? getSource(sourceId) : null
+    if (!src) return mainPage()
+    if (state.remove("cancelSourceEditRequested")) return discoverPage([sourceId: src.id])
+    if (state.editSourceId?.toString() != sourceId.toString()) {
+        state.editSourceId = src.id
+        state.remove("editSourceMessage")
+        app.updateSetting("editHost", [type: "text", value: src.host])
+        app.updateSetting("editPort", [type: "number", value: src.port])
+        app.updateSetting("editUser", [type: "text", value: src.username])
+        app.removeSetting("editPass")
+    }
+    dynamicPage(name: "editSourcePage", title: "Connection settings - ${discoveryEscapeHtml(src.label)}") {
+        section {
+            paragraph rawHtml: true, recoveryStylesHtml()
+            if (state.editSourceMessage) paragraph state.editSourceMessage
+            input "editHost", "text", title: "IP address / hostname", required: true, width: 8
+            input "editPort", "number", title: "HTTPS port", range: "1..65535", required: true, width: 4
+            input "editUser", "text", title: "Username", required: true
+            input "editPass", "password", title: "New password (leave blank to keep current password)"
+            paragraph "These settings apply to all devices belonging to this source."
+        }
+        section(sectionClass: "reolink-recovery-actions") {
+            input "saveSourceConnection", "button",
+                title: "<i class='fa-regular fa-floppy-disk mr-2' aria-hidden='true'></i>Save changes",
+                width: 4, submitOnChange: true, styleClass: "reolink-recovery-primary",
+                inputClass: "p-button bg-hubitat-primary-green text-white"
+            input "cancelSourceEdit", "button",
+                title: "<i class='fa-regular fa-xmark mr-2' aria-hidden='true'></i>Cancel",
+                width: 4, submitOnChange: true, inputClass: "p-button"
+        }
+    }
+}
+
+/** Validates and commits the active connection editor draft. */
+private void saveSourceConnection() {
+    def src = state.editSourceId != null ? getSource(state.editSourceId) : null
+    if (!src) return
+    String host = settings.editHost?.toString()?.trim()
+    String user = settings.editUser?.toString()?.trim()
+    String portText = settings.editPort?.toString()
+    if (!host || host =~ /[\s\/:?#@]/ || !user || !portText?.isInteger() ||
+        portText.toInteger() < 1 || portText.toInteger() > 65535) {
+        state.editSourceMessage = "Enter an IP address or hostname (without a URL), username, and a whole-number HTTPS port from 1 to 65535."
+        return
+    }
+    String password = settings.editPass?.toString() ?: src.password
+    boolean changed = src.host != host || src.port?.toString() != portText ||
+        src.username != user || src.password != password
+    if (changed) applySourceConnection(src, host, portText.toInteger(), user, password)
+    app.removeSetting("editPass")
+    state.editSourceMessage = "Connection settings saved."
+}
+
+/** Reconnects only the latest saved connection revision.
+ * @param data sourceId and revision captured at save time
+ */
+def reconnectEditedSource(data) {
+    def src = getSource(data.sourceId)
+    if (src && (src.connectionRevision ?: 0) == data.revision && getSourceBridge(data.sourceId)) {
+        state.sourceConnMode?.remove(data.sourceId.toString())
+        ensureSourceBridge(data.sourceId)
+    }
+}
+
+/** Recovery UI. Merely opening or refreshing this page never starts a scan.
+ * @param params navigation arguments containing sourceId
+ * @return Hubitat dynamic page
+ */
+def findChangedIpPage(params) {
+    def sourceId = params?.sourceId ?: state.ipRecovery?.sourceId
+    def src = sourceId != null ? getSource(sourceId) : null
+    if (!src) return mainPage()
+    if (state.ipRecovery?.sourceId?.toString() != src.id.toString()) {
+        state.ipRecovery = [sourceId: src.id, revision: src.connectionRevision ?: 0,
+            nonce: java.util.UUID.randomUUID().toString(), message: "Search the local network for this source."]
+    }
+    if (state.ipRecovery?.cancelRequested) return discoverPage([sourceId: src.id])
+    def recovery = state.ipRecovery
+    boolean busy = recovery.phase in ["searching", "verifying"]
+    boolean verified = recovery.phase == "verified"
+    boolean hasUid = !!src.identity?.uid
+    // Prefer the installed driver type, then cached discovery; never infer type from a user label.
+    boolean doorbell = !src.isHub && (childrenForSource(src.id).any { it.name == "Reolink Doorbell" } ||
+        (state.lastDiscoverySourceId?.toString() == src.id.toString() &&
+            (state.lastDiscovery ?: []).any { it.deviceType == "doorbell" }))
+    String icon = src.isHub ? "fa-server" : doorbell ? "fa-bell" : "fa-video"
+    String type = src.isHub ? "Hub / NVR" : doorbell ? "Doorbell" : "Standalone camera"
+    dynamicPage(name: "findChangedIpPage", title: "Find changed IP", refreshInterval: busy ? 2 : 0) {
+        section(sectionClass: "reolink-recovery-summary") {
+            paragraph rawHtml: true, recoveryStylesHtml() +
+                "<div class='text-color-secondary mb-3'>Reconnect your device without adding it again.</div>" +
+                "<div class='reolink-status-heading font-semibold flex align-items-center gap-2'>" +
+                "<i class='fa-solid ${icon}' aria-hidden='true'></i><span>${discoveryEscapeHtml(src.label)}</span></div>" +
+                "<div class='text-sm text-color-secondary mt-1 mb-3'>${type}</div>" +
+                "<div class='reolink-recovery-row'><span>Device UID</span><div>" +
+                "<code>${discoveryEscapeHtml(src.identity?.uid ?: 'Not saved yet')}</code>" +
+                "<div class='text-sm text-color-secondary mt-1'>Permanent Reolink identifier</div></div></div>" +
+                "<div class='reolink-recovery-row'><span>Saved IP</span><code>${discoveryEscapeHtml(src.host)}</code></div>"
+        }
+        section(sectionClass: "reolink-recovery-status") {
+            String tone = verified ? "green" : (!hasUid || recovery.phase == "error") ? "yellow" : "blue"
+            String statusIcon = verified ? "fa-circle-check" : busy ? "fa-spinner fa-spin" :
+                tone == "yellow" ? "fa-circle-exclamation" : "fa-magnifying-glass"
+            String heading = verified ? "Device verified" : !hasUid ? "Device identity not saved" :
+                recovery.phase == "searching" ? "Finding your device" : recovery.phase == "verifying" ? "Verifying device identity" :
+                recovery.phase == "error" ? "Unable to verify device" : recovery.phase == "done" ? "Search result" : "Ready to locate this device"
+            String message = !hasUid ? "Connect this source at its current IP and refresh a device to save its identity. If it has already moved, use Edit connection settings." :
+                verified ? "The device UID matches your saved source." : recovery.message ?: "Search your local network for the same device."
+            paragraph rawHtml: true, "<div class='bg-${tone}-50 border-1 border-${tone}-200 border-round p-3'>" +
+                "<div class='reolink-status-heading font-semibold flex align-items-center gap-2'>" +
+                "<i class='fa-solid ${statusIcon} text-${tone}-700' aria-hidden='true'></i><span>${heading}</span></div>" +
+                (verified ? "<div class='flex align-items-center flex-wrap gap-3 mt-3'>" +
+                    "<div><div class='text-sm text-color-secondary mb-1'>Saved IP</div><code>${discoveryEscapeHtml(src.host)}</code></div>" +
+                    "<i class='fa-solid fa-arrow-right text-color-secondary' aria-hidden='true'></i>" +
+                    "<div><div class='text-sm text-color-secondary mb-1'>New IP</div><code class='font-semibold'>${discoveryEscapeHtml(recovery.host)}</code></div></div>" : "") +
+                "<div class='text-color-secondary mt-2'>${discoveryEscapeHtml(message)}</div></div>"
+        }
+        section(sectionClass: "reolink-recovery-actions") {
+            // Use native button inputs and the same classes as the recording preset actions.
+            if (verified) {
+                input "applyIp_${recovery.nonce}", "button", title: "<i class='fa-solid fa-check mr-2' aria-hidden='true'></i>Use this IP",
+                    width: 4, submitOnChange: true, styleClass: "reolink-recovery-primary", inputClass: "p-button bg-hubitat-primary-green text-white"
+            }
+            if (hasUid) {
+                input "findIp_${recovery.nonce}", "button", title: "<i class='fa-solid ${verified ? 'fa-rotate-right' : 'fa-magnifying-glass'} mr-2' aria-hidden='true'></i>${verified ? 'Search again' : 'Search LAN'}",
+                    width: 4, submitOnChange: true, disabled: busy, styleClass: verified ? "reolink-recovery-secondary" : "reolink-recovery-primary",
+                    inputClass: verified ? "p-button p-button-outlined" : "p-button bg-hubitat-primary-green text-white"
+            }
+            input "cancelIp_${recovery.nonce}", "button", title: "<i class='fa-regular fa-xmark mr-2' aria-hidden='true'></i>Cancel",
+                width: 4, submitOnChange: true, disabled: busy, inputClass: "p-button"
+        }
+        section(sectionClass: "reolink-recovery-footer") {
+            paragraph rawHtml: true, "<div class='border-top-1 border-gray-200 pt-3 text-sm text-color-secondary'>" +
+                "${verified ? 'Your devices, labels, and automations stay in place.' : 'Devices must be on the same local network. Sleeping devices or devices on other VLANs may not respond.'}</div>"
+        }
+    }
+}
+
+/** Matches the main/discovery page spacing and the preset page's native button styling.
+ * @return scoped recovery page styles
+ */
+private String recoveryStylesHtml() {
+    """
+<style>
+  ${appPageSpacingCss()}
+  ${tileSecondaryTextCss()}
+  .reolink-recovery-summary > .mdl-grid, .reolink-recovery-status > .mdl-grid,
+  .reolink-recovery-actions > .mdl-grid, .reolink-recovery-footer > .mdl-grid { padding: 4px 0 !important; }
+  .reolink-recovery-summary .reolink-status-heading i, .reolink-recovery-status .reolink-status-heading i { font-size: 1em; }
+  .reolink-recovery-row { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 16px; padding: 14px 0; border-top: 1px solid #e0e0e0; }
+  .reolink-recovery-summary code, .reolink-recovery-status code { font-size: 16px; overflow-wrap: anywhere; }
+  .reolink-recovery-actions button { min-width: 128px; min-height: 40px; padding: 0 16px; border-radius: 4px; font-family: inherit; font-size: 14px; }
+  .reolink-recovery-primary button { background: var(--hubitat-primary-green, #81BC00) !important; color: #fff !important; }
+  .reolink-recovery-secondary button { background: #fff; color: #1565c0; border: 1px solid #b0bec5; box-shadow: none; }
+  .reolink-recovery-actions button:disabled { opacity: 0.6; cursor: not-allowed; }
+  .reolink-recovery-actions button:focus-visible { outline: 2px solid #1565c0; outline-offset: 2px; }
+  @media (max-width: 480px) { .reolink-recovery-row { grid-template-columns: 1fr; gap: 6px; } }
+</style>
+"""
+}
+
+/** Starts an explicit bounded scan without exposing credentials to the hub helper. */
+private void startIpRecovery() {
+    def recovery = state.ipRecovery
+    def src = recovery ? getSource(recovery.sourceId) : null
+    if (!src?.identity?.uid) return
+    if (recovery.phase in ["searching", "verifying"]) return
+    recovery.nonce = java.util.UUID.randomUUID().toString()
+    recovery.revision = src.connectionRevision ?: 0
+    recovery.remove("host")
+    try {
+        recovery.scanId = hubitat.helper.NetworkUtils.startReolinkDiscovery()
+        recovery.phase = "searching"
+        recovery.message = "Searching the local network..."
+        recovery.startedAt = now()
+        state.ipRecovery = recovery
+        runIn(4, "completeIpRecovery", [data: [nonce: recovery.nonce, scanId: recovery.scanId]])
+    } catch (MissingMethodException ignored) {
+        recovery.phase = "error"
+        recovery.message = "This hub firmware does not support Reolink LAN discovery. Use Edit connection settings."
+        state.ipRecovery = recovery
+    } catch (Exception ignored) {
+        recovery.phase = "error"
+        recovery.message = "LAN discovery could not start. Try again or use Edit connection settings."
+        state.ipRecovery = recovery
+    }
+}
+
+/** Completes a scan, matching UID before attempting authentication.
+ * @param data scheduled nonce and scanId identifying the active recovery request
+ */
+def completeIpRecovery(data) {
+    def recovery = state.ipRecovery
+    if (!recovery || recovery.nonce != data.nonce || recovery.scanId != data.scanId) return
+    def src = getSource(recovery.sourceId)
+    if (!src || (src.connectionRevision ?: 0) != recovery.revision) return
+    try {
+        def scan = hubitat.helper.NetworkUtils.getReolinkDiscoveryStatus(recovery.scanId)
+        if (scan.status == "running" && now() - recovery.startedAt < 15000L) {
+            runIn(2, "completeIpRecovery", [data: data])
+            return
+        }
+        def matches = (scan.candidates ?: []).findAll { normalizeSourceUid(it.uid) == src.identity?.uid }
+        def hosts = matches.collect { it.host }.unique()
+        recovery.phase = "done"
+        if (scan.status != "complete") {
+            recovery.message = scan.errorCode == "reply_port_in_use" ?
+                "UDP port 3000 is already in use. Close Reolink Client if it is running on the same computer as this hub, wait 10 seconds, then search again." :
+                "Discovery failed or expired. Try again."
+        } else if (hosts.size() != 1) {
+            recovery.message = hosts ? "Multiple addresses claim this device identity. No settings were changed." :
+                "No matching device found. Check power, network, and VLAN settings, or edit the IP manually."
+        } else if (hosts[0] == src.host) {
+            recovery.message = "The device still reports its saved IP address. No address change is needed."
+        } else {
+            recovery.phase = "verifying"
+            recovery.message = "Checking the matching device..."
+            state.ipRecovery = recovery
+            String uid = verifyCandidateIdentity(src, hosts[0])
+            // The user may have cancelled or edited the source during the HTTP request.
+            if (state.ipRecovery?.nonce != data.nonce || state.ipRecovery?.scanId != data.scanId ||
+                (getSource(src.id)?.connectionRevision ?: 0) != recovery.revision) return
+            recovery.phase = uid == src.identity.uid ? "verified" : "error"
+            recovery.message = uid == src.identity.uid ? "Device identity verified. Choose Use this IP to save it." :
+                "Could not verify this device with the saved HTTPS port and credentials. No settings were changed."
+            if (uid == src.identity.uid) {
+                recovery.host = hosts[0]
+                recovery.verifiedAt = now()
+            }
+        }
+    } catch (Exception ignored) {
+        recovery.phase = "error"
+        recovery.message = "Discovery could not complete. No settings were changed."
+    }
+    if (state.ipRecovery?.nonce == data.nonce && state.ipRecovery?.scanId == data.scanId) state.ipRecovery = recovery
+}
+
+/** Rechecks identity and commits only the IP of the current, unexpired result. */
+private void applyRecoveredIp() {
+    def recovery = state.ipRecovery
+    def src = recovery ? getSource(recovery.sourceId) : null
+    if (!src || recovery.phase != "verified") return
+    if ((src.connectionRevision ?: 0) != recovery.revision || now() - recovery.verifiedAt > 60000L) {
+        recovery.phase = "error"
+        recovery.message = "This result has expired or connection settings changed. Search again."
+        state.ipRecovery = recovery
+        return
+    }
+    recovery.phase = "verifying"
+    recovery.message = "Verifying the address before saving..."
+    state.ipRecovery = recovery
+    String uid = verifyCandidateIdentity(src, recovery.host)
+    def current = getSource(src.id)
+    if (!current || state.ipRecovery?.nonce != recovery.nonce || state.ipRecovery?.scanId != recovery.scanId ||
+        (current.connectionRevision ?: 0) != recovery.revision) return
+    recovery.phase = "done"
+    if (uid != src.identity?.uid) {
+        recovery.message = "Device verification failed. No settings were changed."
+    } else {
+        applySourceConnection(current, recovery.host, current.port as Integer, current.username, current.password)
+        recovery.message = "IP address updated. Reconnecting existing devices."
+    }
+    state.ipRecovery = recovery
+}
+
+/** Normalizes a Reolink UID without accepting names or arbitrary response text.
+ * @param value UID returned by a device
+ * @return normalized UID, or null for an invalid/missing value
+ */
+private String normalizeSourceUid(value) {
+    String uid = value?.toString()?.trim()?.toUpperCase()
+    return uid && uid ==~ /[A-Z0-9]{6,64}/ ? uid : null
+}
+
+/** Makes an isolated request without changing source tokens or availability state.
+ * @param src temporary connection configuration
+ * @param cmd Reolink command
+ * @param param command parameters
+ * @param token optional temporary authentication token
+ * @return command value map, or null on failure
+ */
+private Map recoveryRequest(src, String cmd, Map param = [:], String token = null) {
+    def result = null
+    try {
+        String uri = "https://${src.host}:${src.port}/cgi-bin/api.cgi?cmd=${cmd}"
+        if (token) uri += "&token=${java.net.URLEncoder.encode(token, 'UTF-8')}"
+        def command = [cmd: cmd, param: param]
+        if (!(cmd in ["Login", "Logout"])) command.action = 0
+        httpPost([uri: uri, ignoreSSLIssues: true, requestContentType: "application/json", timeout: 5,
+            body: groovy.json.JsonOutput.toJson([command])]) { response ->
+            def parsed = parseReolinkResponse(response)
+            if (parsed instanceof List && parsed && parsed[0]?.code == 0 && parsed[0]?.value instanceof Map)
+                result = parsed[0].value
+        }
+    } catch (Exception ignored) { /* Candidate failures must not mark the saved source unreachable. */ }
+    return result
+}
+
+/** Authenticates only a UID-matched candidate and reads its source UID.
+ * @param src saved source configuration, never modified
+ * @param host candidate IPv4 address
+ * @return authenticated UID, or null if login/identity retrieval failed
+ */
+private String verifyCandidateIdentity(src, String host) {
+    if (!(host ==~ /(?:\d{1,3}\.){3}\d{1,3}/) || host.tokenize('.').any { it.toInteger() > 255 }) return null
+    def candidate = [host: host, port: src.port]
+    String token = recoveryRequest(candidate, "Login", [User: [userName: src.username, password: src.password]])?.Token?.name
+    if (!token) return null
+    try {
+        return normalizeSourceUid(recoveryRequest(candidate, "GetP2p", [:], token)?.P2p?.uid)
+    } finally {
+        recoveryRequest(candidate, "Logout", [:], token)
+    }
+}
+
+/** Persists connection changes while preserving device identity, IDs, labels, and port preferences.
+ * @param src source being updated
+ * @param host new hostname/IP
+ * @param port HTTPS port
+ * @param username login username
+ * @param password login password
+ */
+private void applySourceConnection(src, String host, Integer port, String username, String password) {
+    def bridge = getSourceBridge(src.id)
+    if (bridge) bridge.stopEventSubscription()
+    src.host = host
+    src.port = port
+    src.username = username
+    src.password = password
+    src.token = null
+    src.tokenExpires = 0
+    src.connectionRevision = (src.connectionRevision ?: 0) + 1
+    state.sources = (state.sources ?: []).collect { it.id == src.id ? src : it }
+    state.sourceUnreachable?.remove(src.id.toString())
+    childrenForSource(src.id).each { child ->
+        try { configureRtspChild(child, src, child.getDataValue("channel")) }
+        catch (Exception ignored) { log.warn "Reolink source ${src.id}: stream refresh failed; refresh the device to retry" }
+        markPollDueNow(child.deviceNetworkId)
+        markSnapshotDueNow(child.deviceNetworkId)
+    }
+    if (bridge) runIn(3, "reconnectEditedSource", [overwrite: false,
+        data: [sourceId: src.id, revision: src.connectionRevision]])
 }
 
 /** Two-step removal, bound to the source reviewed on this confirmation page. */
@@ -1252,27 +1755,18 @@ private String discoveryOverviewHtml(int channelCount, int deviceCount, boolean 
   .reolink-channel-row .mdl-switch__label { line-height: 24px; }
   .reolink-discovery-danger { background: #fff5f5 !important; border-color: #edb7bb !important; }
   .reolink-discovery-summary .bg-green-50 { background: #f3faf1 !important; border-color: #bdd8b1 !important; }
-  .reolink-discovery-channels button.hrefElem,
-  .reolink-discovery-recording button.hrefElem {
+  .reolink-discovery-channels button.hrefElem {
     background: #fff; color: #1565c0; border: 1px solid #e0e0e0;
     border-radius: 4px; box-shadow: none;
   }
-  .reolink-discovery-recording button[name^='_action_href_presetsFromDiscover|'],
   .reolink-discovery-channels button[name^='_action_href_tips|'] {
     height: 62px; box-sizing: border-box;
   }
-  .reolink-discovery-recording button[name^='_action_href_presetsFromDiscover|'] > .state-incomplete-text,
   .reolink-discovery-channels button[name^='_action_href_tips|'] > .state-incomplete-text {
     display: inline-block; padding-bottom: 0.5em;
   }
-  .reolink-discovery-channels button.hrefElem .state-incomplete-text,
-  .reolink-discovery-recording button.hrefElem .state-incomplete-text { font-size: 14px; }
-  .reolink-discovery-recording button[name^='_action_href_presetsFromDiscover|'] > span:first-child,
-  .reolink-discovery-recording button[name^='_action_href_presetsFromDiscover|'] > span:first-child > span {
-    font-size: 16px !important;
-  }
-  .reolink-discovery-channels button.hrefElem::before,
-  .reolink-discovery-recording button.hrefElem::before { color: #1565c0; }
+  .reolink-discovery-channels button.hrefElem .state-incomplete-text { font-size: 14px; }
+  .reolink-discovery-channels button.hrefElem::before { color: #1565c0; }
   .reolink-discovery-channels .mdl-cell:has(> button[name^='_action_href_runDiscovery|']) { text-align: right; }
   .reolink-discovery-channels button[name^='_action_href_runDiscovery|'] {
     display: inline-block; width: auto !important; min-height: 36px; padding: 0 16px;
@@ -1342,7 +1836,7 @@ def presetsPage(params) {
     def advancedMode = settings["advancedScheduleEditing_${sourceId}"] ?: false
 
     // Handle any pending save/delete toggles for existing presets before
-    // rendering, same pattern as discoverPage()'s confirmCreate handling.
+    // rendering, before building the updated editor.
     presets.keySet().toList().each { name ->
         if (settings["savePreset_${name}"]) {
             def updated = [:]
@@ -1588,8 +2082,56 @@ def presetsPage(params) {
     }
 }
 
-/** Native buttons feed the same pending flags formerly set by the save/delete switches. */
+/** Dispatches source recovery, connection editing, and recording preset actions.
+ * @param buttonName native button name, including a recovery nonce where applicable
+ */
 void appButtonHandler(String buttonName) {
+    def deviceAction = buttonName =~ /^applyDeviceChanges_(\d+)$/
+    if (deviceAction.matches()) {
+        String sourceId = deviceAction[0][1]
+        if (sourceId == state.currentDiscoverySourceId?.toString() &&
+            sourceId == state.lastDiscoverySourceId?.toString()) {
+            state.pendingDeviceSourceId = sourceId
+        }
+        return
+    }
+    if (buttonName == "cancelSourceDiscovery") {
+        state.cancelSourceDiscoveryRequested = true
+        return
+    }
+    if (buttonName in ["confirmAddSource", "cancelAddSource"]) {
+        state.addSourceAction = buttonName == "confirmAddSource" ? "add" : "cancel"
+        return
+    }
+    if (buttonName == "rescanSources") {
+        startSourceDiscovery()
+        return
+    }
+    if (buttonName == "cancelSourceEdit") {
+        state.cancelSourceEditRequested = true
+        return
+    }
+    if (state.ipRecovery && buttonName == "cancelIp_${state.ipRecovery.nonce}") {
+        if (!(state.ipRecovery.phase in ["searching", "verifying"])) {
+            def recovery = state.ipRecovery
+            recovery.cancelRequested = true
+            state.ipRecovery = recovery
+        }
+        return
+    }
+    if (state.ipRecovery && buttonName == "findIp_${state.ipRecovery.nonce}") {
+        startIpRecovery()
+        return
+    }
+    if (state.ipRecovery && buttonName == "applyIp_${state.ipRecovery.nonce}") {
+        applyRecoveredIp()
+        return
+    }
+
+    if (buttonName == "saveSourceConnection") {
+        saveSourceConnection()
+        return
+    }
     def match = buttonName =~ /^presetAction_(save|delete)_(\d+)_(\d+)$/
     if (!match.matches()) return
     String action = match[0][1]
@@ -1836,9 +2378,14 @@ private forgetSchedulingState(String dni) {
 
 // ---------- Auth ----------
 
+/** Authenticates the source and captures or verifies its stable UID.
+ * @param sourceId saved source identifier
+ * @return token, or null if authentication or identity verification fails
+ */
 private String reolinkLogin(sourceId) {
     def src = getSource(sourceId)
-    if (src.token && now() < src.tokenExpires) {
+    if (src.token && now() < src.tokenExpires &&
+        (src.identity?.uid || (src.identityCheckedAt && now() - src.identityCheckedAt < 3600000L))) {
         logFull "Reolink source ${sourceId}: reusing cached token, expires in ${(src.tokenExpires - now()) / 1000}s"
         return src.token
     }
@@ -1879,6 +2426,19 @@ private String reolinkLogin(sourceId) {
     // following "no token available" abort look inexplicable. Failure logs
     // the raw response so the actual field shape/error is visible.
     if (token) {
+        // Learn the physical source UID on fresh login, before trusting this address.
+        String uid = normalizeSourceUid(recoveryRequest(src, "GetP2p", [:], token)?.P2p?.uid)
+        src.identityCheckedAt = now()
+        if (src.identity?.uid && src.identity.uid != uid) {
+            src.token = null
+            src.tokenExpires = 0
+            log.warn "Reolink source ${sourceId}: could not verify the saved device identity; use Find changed IP"
+            return null
+        }
+        if (uid && !src.identity?.uid) {
+            src.identity = [version: 1, uid: uid, verifiedAt: now()]
+            state.sources = (state.sources ?: []).collect { it.id == src.id ? src : it }
+        }
         logNormal "Reolink source ${sourceId}: new token acquired, leaseTime=${leaseSec}s"
         markSourceReachable(sourceId)
     } else {
@@ -2490,7 +3050,7 @@ def createSelectedChildren(sourceId) {
  * Copies source login settings to an RTSP-capable child after its channel data
  * value exists. The hub stream service reads these private device settings.
  *
- * @param child camera device created by the bridge or found during discovery
+ * @param child camera or doorbell created by the bridge or found during discovery
  * @param src source holding the camera/NVR host and login
  * @param channel zero-based Reolink API channel number
  */
@@ -2500,8 +3060,11 @@ private void configureRtspChild(child, src, channel) {
         log.warn "Reolink ${child.deviceNetworkId}: cannot configure RTSP without a source host and channel"
         return
     }
+    // src.port is the Reolink HTTP API port, not the RTSP port. The doorbell
+    // driver saves these stream defaults only when its fields are unset.
     child.receiveRtspConfig([host: src.host, username: src.username,
-        password: src.password, channel: channel])
+        password: src.password, channel: channel, rtspPort: 554,
+        outputWidth: 640])
 }
 
 // ---------- Polling ----------
