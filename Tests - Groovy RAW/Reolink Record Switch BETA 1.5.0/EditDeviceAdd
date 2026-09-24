@@ -1,0 +1,76 @@
+Edit-source feature (drafted, untested) -- for reference against discoverPage() rework
+Parked feature: lets a source's label/host/port/username/password be edited in place instead of
+delete-and-recreate. Only touches ParentApp.groovy's `discoverPage()`. Two pieces:
+1. Handler -- goes at the top of discoverPage(params), right after `def src = getSource(sourceId)`
+```groovy
+    // v1.5.4: apply a pending "Save connection details" edit before
+    // anything below (discovery, bridge lookup) runs against src, since a
+    // host/credential change here needs to take effect immediately, not
+    // on the NEXT page load.
+    if (src && settings["applyEditSource_${sourceId}"]) {
+        def newLabelVal = settings["editLabel_${sourceId}"]
+        def newHostVal = settings["editHost_${sourceId}"]
+        def newPortVal = (settings["editPort_${sourceId}"] ?: 443) as Integer
+        def newUserVal = settings["editUser_${sourceId}"]
+        def newPassVal = settings["editPass_${sourceId}"]
+        def hostChanged = newHostVal && (newHostVal != src.host || newPortVal != (src.port as Integer))
+        def credsChanged = (newUserVal && newUserVal != src.username) || newPassVal
+        src.label = newLabelVal ?: src.label
+        src.host = newHostVal ?: src.host
+        src.port = newPortVal
+        src.username = newUserVal ?: src.username
+        // Password field left blank means "keep the existing password" --
+        // avoids forcing a re-type every time only the label/host is being
+        // edited, and avoids ever displaying or re-saving an empty one.
+        if (newPassVal) src.password = newPassVal
+        if (hostChanged || credsChanged) {
+            // The cached HTTP auth token was issued for the OLD host/
+            // credentials -- must not be reused against whatever's now
+            // configured.
+            src.token = null
+            src.tokenExpires = 0
+            // configureConnection() (called unconditionally inside
+            // ensureSourceBridge() below) updates the BRIDGE's stored
+            // connection details, but a live Baichuan socket that's
+            // already connected keeps using whatever it originally
+            // connected with -- it doesn't notice a config change on its
+            // own. Force a stop here so ensureSourceBridge()'s normal
+            // "not currently running -> start" logic picks it back up
+            // fresh, against the new host/credentials, right below.
+            def bridgeToReconnect = getSourceBridge(sourceId)
+            if (bridgeToReconnect) {
+                try { bridgeToReconnect.stopEventSubscription() } catch (e) { /* best effort */ }
+            }
+        }
+        app.updateSetting("applyEditSource_${sourceId}", [type: "bool", value: false])
+        app.removeSetting("editPass_${sourceId}")
+        logNormal "Reolink source ${sourceId}: connection details updated" +
+            (hostChanged ? " (host/port changed, forcing reconnect)" : "")
+        ensureSourceBridge(sourceId)
+    }
+```
+2. UI section -- goes wherever fits your new layout (originally placed right before Danger Zone)
+```groovy
+            section {
+                paragraph pillHeader("Connection Details")
+                paragraph "Edit this source's label, IP/hostname, port, or credentials without deleting and " +
+                    "re-adding it, which would also delete every device and setting under it. A hostname " +
+                    "works here too, not just an IP address, if your network can resolve it -- this field " +
+                    "was never restricted to IPs specifically."
+                input "editLabel_${sourceId}", "text", title: "Label", defaultValue: src.label
+                input "editHost_${sourceId}", "text", title: "IP address or hostname", defaultValue: src.host
+                input "editPort_${sourceId}", "number", title: "HTTPS port", defaultValue: src.port
+                input "editUser_${sourceId}", "text", title: "Username", defaultValue: src.username
+                input "editPass_${sourceId}", "password", title: "Password (leave blank to keep the current password)"
+                input "applyEditSource_${sourceId}", "bool", title: "<b>✅ Save connection details</b>",
+                    defaultValue: false, submitOnChange: true
+            }
+```
+Notes for whoever picks this up
+Not yet tested against real hardware -- logic reviewed, not run.
+Only fires when the "Save connection details" toggle is explicitly set, so it's a no-op on every
+normal page load/Done/Update elsewhere.
+The forced reconnect only triggers if host/port/username/password actually changed -- editing just
+the label leaves the live connection untouched.
+Applies to whichever source you're on regardless of type (standalone camera or Hub/NVR) -- a Hub
+edit here covers every channel behind it, since they never had separate connection info of their own.
