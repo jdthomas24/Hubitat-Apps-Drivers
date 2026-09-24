@@ -1,6 +1,6 @@
 /**
  * Reolink Device Bridge (Internal Parent Driver)
- * Version: 1.5.4
+ * Version: 1.6.0
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- ONE instance per SOURCE (Hub/NVR or standalone).
@@ -150,10 +150,10 @@ metadata {
         // actually does, so this explains it up front instead.
         input name: "onOffExplainer", type: "paragraph", element: "paragraph",
             title: "⚠️ What the On / Off switch above actually does",
-            description: "<div style='border:2px solid #185FA5;border-radius:8px;background:#E6F1FB;" +
-                "padding:10px 14px;'><b style='color:#042C53;'>NVR's MASTER recording switch -- applies to " +
+            description: "<div class='border-2 border-blue-700 border-round bg-blue-50 p-3'>" +
+                "<b class='text-blue-900'>NVR's MASTER recording switch -- applies to " +
                 "EVERY channel at once, can't target one channel (hardware/API limitation).</b><br><br>" +
-                "<span style='color:#0C447C;'>Does NOT control which hours get recorded -- that's set by " +
+                "<span class='text-blue-800'>Does NOT control which hours get recorded -- that's set by " +
                 "loading a preset instead (Push button, or the app's Recording Presets page). Turn on once " +
                 "and leave on.</span></div>"
         input name: "loggingInfo", type: "paragraph", element: "paragraph",
@@ -383,7 +383,14 @@ def configureConnection(String host, Integer port, String username, String passw
     state.sourceId = sourceId
 }
 
+/** Opens the event socket after cancelling any obsolete delayed close.
+ * @param isReconnect true when continuing a retry cycle
+ */
 def startEventSubscription(boolean isReconnect = false) {
+    // A previous intentional stop must never close this new socket later.
+    unschedule("closeSocket")
+    state.eventSubscriptionWanted = true
+
     parent?.logNormal "Reolink Device Bridge (source ${state.sourceId}): ${isReconnect ? 'reconnecting' : 'starting'}"
     if (!isReconnect) {
         state.reconnectAttempts = 0
@@ -412,7 +419,12 @@ def startEventSubscription(boolean isReconnect = false) {
     runIn(15, "flowTimeoutCheck")
 }
 
+/** Cancels pending connection work and closes the event socket immediately. */
 def stopEventSubscription() {
+    state.eventSubscriptionWanted = false
+    unschedule("sendNonceRequest")
+    unschedule("closeSocket")
+
     parent?.logNormal "Reolink Device Bridge (source ${state.sourceId}): stopping event subscription"
     unschedule("sendKeepalive")
     unschedule("flowTimeoutCheck")
@@ -425,8 +437,8 @@ def stopEventSubscription() {
             sendRaw(header)
         } catch (e) { /* best effort logout, fine either way */ }
     }
-    runIn(1, "closeSocket")
     state.stage = "DONE"
+    closeSocket()
     sendEvent(name: "connectionStatus", value: "disconnected")
     parent?.componentEventConnectionStatus(this, state.sourceId, "disconnected")
 }
@@ -484,7 +496,9 @@ private void scheduleReconnect() {
     runIn(delaySec, "reconnectEventSubscription")
 }
 
+/** Retries only while event subscription remains requested. */
 def reconnectEventSubscription() {
+    if (state.eventSubscriptionWanted == false) return
     startEventSubscription(true)
 }
 

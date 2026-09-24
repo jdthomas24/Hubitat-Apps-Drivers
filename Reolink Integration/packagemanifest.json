@@ -1,10 +1,10 @@
 {
     "packageName": "Reolink Integration",
-    "releaseNotes": "v1.5.3 fixed a source's event connection silently going dead while still reporting connected. v1.5.4 refines the logging around that fix so routine reconnects stay quiet and only real failures are logged as errors.",
+    "releaseNotes": "v1.5.3 fixed a source's event connection silently going dead while still reporting connected. v1.6.0 refines the logging around that fix so routine reconnects stay quiet and only real failures are logged as errors.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "communityLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "author": "jdthomas24",
-    "version": "1.5.4",
+    "version": "1.6.0",
     "minimumHEVersion": "2.3.0",
     "dateReleased": "2026-08-14",
     "category": "Integrations",
