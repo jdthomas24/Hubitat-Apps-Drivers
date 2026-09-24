@@ -51,7 +51,13 @@ metadata {
         // off hasCapability("Battery") rather than device type.
         capability "Battery"
         capability "ImageUrl"
-        capability "RTSPStream"
+
+        try {
+            capability "RTSPStream"
+        } catch (Exception e) {
+            // not supported on 2.5.2.121 and earlier
+        }
+
         attribute "person", "enum", ["active", "inactive"]
         attribute "vehicle", "enum", ["active", "inactive"]
         attribute "pet", "enum", ["active", "inactive"]
