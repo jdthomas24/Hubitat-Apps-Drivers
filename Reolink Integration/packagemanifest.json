@@ -1,10 +1,10 @@
 {
     "packageName": "Reolink Integration",
-    "releaseNotes": "v1.6.0 adds RTSP live video for cameras and doorbells (supported hubs only) and a redesigned app UI, contributed by gopher.ny. This is the version Hubitat is adopting as its built-in Reolink integration.",
+    "releaseNotes": "v1.6.1 adds RTSP live video for cameras and doorbells (supported hubs only) and a redesigned app UI, contributed by gopher.ny. This is the version Hubitat is adopting as its built-in Reolink integration.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "communityLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "author": "jdthomas24",
-    "version": "1.6.0",
+    "version": "1.6.1",
     "minimumHEVersion": "2.3.0",
     "dateReleased": "2026-08-14",
     "category": "Integrations",
