@@ -1,11 +1,6 @@
-// hubitat start
-// hub: 127.0.0.1
-// type: app
-// id: 5224
-// hubitat end
 /**
  * Reolink Integration (Parent App)
- * Version: 1.6.0
+ * Version: 1.6.1
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -211,7 +206,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.6.0"
+@Field static final String APP_VERSION = "1.6.1"
 
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 
@@ -367,9 +362,11 @@ def mainPage() {
             }
 
             // Keep native navigation inside the same column layout as discovery.
-            href name: "discoverSources", title: "<i class='fa-solid fa-magnifying-glass mr-2' aria-hidden='true'></i>Discover sources",
-                description: "Find Reolink devices on the local network",
-                page: "discoverSourcesPage", width: 12, style: "margin:8px;"
+            if (supportsSourceDiscovery()) {
+                href name: "discoverSources", title: "<i class='fa-solid fa-magnifying-glass mr-2' aria-hidden='true'></i>Discover sources",
+                    description: "Find Reolink devices on the local network",
+                    page: "discoverSourcesPage", width: 12, style: "margin:8px;"
+            }
             href name: "addSource", title: "<span><i class='fa-regular fa-plus mr-2'></i>Add source</span>",
                 description: "Standalone camera, NVR, or Home Hub",
                 page: "addSourcePage", width: 12, style: "margin:8px;"
@@ -885,10 +882,32 @@ private List tipsTopics() {
     order.collect { id -> topics.find { it.id == id } }
 }
 
+/** Checks the minimum firmware that includes native source discovery.
+ * @return true for local builds or numeric firmware versions 2.5.2.122 or newer; false when unknown
+ */
+private boolean supportsSourceDiscovery() {
+    String version = location?.hub?.firmwareVersionString?.toString()
+    if (version?.startsWith("local.") || version?.endsWith(".local")) return true
+    if (!version || !(version ==~ /\d+\.\d+\.\d+\.\d+/)) return false
+    def actual = version.tokenize('.').collect { new BigInteger(it) }
+    def minimum = [2, 5, 2, 122]
+    // Compare components numerically so builds such as 99 sort before 122.
+    for (int i = 0; i < minimum.size(); i++) {
+        int comparison = actual[i] <=> minimum[i]
+        if (comparison != 0) return comparison > 0
+    }
+    return true
+}
+
 /** Finds LAN sources without authenticating or creating devices. */
 def discoverSourcesPage() {
     if (state.remove("cancelSourceDiscoveryRequested")) return mainPage()
     if (!state.sourceDiscovery) startSourceDiscovery()
+    // Initial setup apps cannot run scheduled jobs; page refresh also collects the scan.
+    def pendingScan = state.sourceDiscovery
+    if (pendingScan?.phase == "searching") {
+        completeSourceDiscovery([nonce: pendingScan.nonce, scanId: pendingScan.scanId])
+    }
     def scan = state.sourceDiscovery
     boolean busy = scan.phase == "searching"
     dynamicPage(name: "discoverSourcesPage", title: "Discover sources", refreshInterval: busy ? 2 : 0) {

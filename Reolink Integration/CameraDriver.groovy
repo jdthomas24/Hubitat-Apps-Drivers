@@ -1,6 +1,6 @@
 /**
  * Reolink Camera (Component Driver)
- * Version: 1.6.0
+ * Version: 1.6.1
  *
  * Thin device: no HTTP of its own. Delegates everything to the parent app via
  * parent.componentX(this, ...), using data values sourceId/channel to
@@ -35,7 +35,12 @@ metadata {
         capability "Sensor"
         capability "Battery"
         capability "ImageUrl"
-        capability "RTSPStream"
+
+        try {
+            capability "RTSPStream"
+        } catch (Exception e) {
+            // not supported on 2.5.2.121 and earlier
+        }
 
         attribute "person", "enum", ["active", "inactive"]
         attribute "vehicle", "enum", ["active", "inactive"]

@@ -1,6 +1,6 @@
 /**
  * Reolink Doorbell (Component Driver)
- * Version: 1.6.0
+ * Version: 1.6.1
  *
  * Same delegation pattern as Reolink Camera, plus a "visitor" (button press)
  * event so Rule Machine can trigger straight off "pushed 1" for a doorbell
@@ -51,7 +51,13 @@ metadata {
         // off hasCapability("Battery") rather than device type.
         capability "Battery"
         capability "ImageUrl"
-        capability "RTSPStream"
+
+        try {
+            capability "RTSPStream"
+        } catch (Exception e) {
+            // not supported on 2.5.2.121 and earlier
+        }
+
         attribute "person", "enum", ["active", "inactive"]
         attribute "vehicle", "enum", ["active", "inactive"]
         attribute "pet", "enum", ["active", "inactive"]
