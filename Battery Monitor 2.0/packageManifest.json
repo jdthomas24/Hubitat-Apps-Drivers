@@ -1,12 +1,12 @@
 {
   "packageName": "Battery Monitor 2.0",
   "author": "Jdthomas24",
-  "version": "2.5.33",
+  "version": "2.6.0",
   "category": "Convenience",
   "description": "Advanced Hubitat battery monitoring with analytics, trends and replacement tracking. Recurring scan schedule, confidence-weighted health, EWMA smoothing.",
   "dateReleased": "4/8/26",
   "minimumHEVersion": "2.3.0",
-  "releaseNotes": "v2.5.33 — Added RCR123A and RCR2 to the Rechargeable battery type list.",
+  "releaseNotes": "v2.6.0 is a major UI refresh with phone-friendly pages, a Needs attention list, and a matching web portal. Adds Li-ion cliff-drop alerts and automatic detection of dead-battery swaps. Fixes bulk actions skipping combined actions and history sorting across years.",
   "apps": [
     {
       "name": "Battery Monitor 2.0",
