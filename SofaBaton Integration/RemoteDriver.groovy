@@ -5,79 +5,30 @@
     Credits: this driver's X1/X1S local HTTP listener and DNI-routing logic
     is a fork of Derek Osborn's (dJOS1475) Hubitat community driver, which
     itself built on push-command building blocks originated by Mike Maxwell
-    (mike.maxwell). Full credit retained -- see author field below.
+    (mike.maxwell). Full credit retained, see author field below.
 
-	2026-09-10 jdthomas24  -- FORK, renamed "Sofabaton Remote"
-		-Converted to a child device created by the Sofabaton Integration app
-		 (via the Sofabaton Integration Bridge grouping device), so multiple
-		 hubs nest together in the Devices list instead of standing alone.
-	2026-09-16 jdthomas24
-		-Changed the hubModel preference dropdown from "X1/X1S" to "X1S",
-		 since the plain X1 isn't supported by the underlying driver this
-		 forks (matches the same change in the parent app).
-		-Added mqttHost/mqttPort/mqttUser as published attributes (X2 only)
-		 so the parent app's Edit Hub page can read back and pre-fill the
-		 broker connection fields. Password intentionally not exposed as a
-		 readable attribute.
-		-Added removeActivityDeviceByDni() so the parent app can remove an
-		 Activity child cleanly by its actual DNI, rather than needing to
-		 recompute the name-derived DNI itself.
-		-Added lastMqttMessage attribute + markMqttMessageSeen(), called by
-		 the Bridge on every recognized message for this hub's MAC. Best
-		 available stand-in for real connection status since the X2 has no
-		 known keepalive/presence topic of its own.
-		-Trimmed and reordered the preferences page: added a top notice that
-		 this device is configured via the parent app (not meant for manual
-		 editing), shortened the X2 MQTT setup paragraph since the app now
-		 duplicates that guidance, and condensed the X1S setup steps and
-		 per-field hints to cut clutter. Note: driver preferences render as
-		 one fixed-layout page with no conditional show/hide (confirmed
-		 against Hubitat's own docs -- that's a platform limitation, not
-		 something this file controls), so X1S and X2 fields will always
-		 both be visible regardless of which model is selected.
-		-Added removeAllActivityDevices(), called by the Bridge before it
-		 deletes this Remote device. Fixes a bug where removing a hub with
-		 Activity children still attached could silently fail to fully
-		 delete the Remote device, leaving an orphaned device that then
-		 blocked re-adding a hub with the same MAC-based DNI.
-
-	*OVERVIEW
-	 Represents one physical Sofabaton hub. X1S and X2 hubs share this
-	 driver but use different local mechanisms, both confirmed against real
-	 hardware:
-
-	   -X1S: unchanged from the original fork. IP is entered in this
-	    device's own preferences; the app pre-fills it and pre-computes the
-	    matching DNI (ipToHex()) at creation time so Hubitat's built-in
-	    local HTTP listener routes each hub's inbound PUT to the correct
-	    device. Activity state sync (handleActivityStateSync()) matches a
-	    fired button's label against a Sofabaton Activity child's name.
-
-	   -X2: identified by MAC address instead of IP (DNI = the bare
-	    uppercase MAC, matching the MQTT topic's MAC segment exactly, e.g.
-	    activity/14639332AA40/activity_control_up). No local HTTP listener
-	    is used for activity state -- the Bridge device holds one shared
-	    MQTT connection for all X2 hubs and calls receiveMqttActivityUpdate()
-	    on this device when a message for this hub's MAC arrives. Activity
-	    state sync matches the payload's numeric activity_id against a
-	    Sofabaton Activity child's configured Sofabaton Activity ID (there's
-	    no button-label matching for X2 the way X1S has, since MQTT reports
-	    ids, not labels). Confirmed: a normal activity start reports
-	    {"activity_id":<id>,"state":"on"}; the hardware Power Off key
-	    reports {"activity_id":255,"state":"off"} meaning every activity on
-	    the hub just went off, not just id 255.
-
-	 Both models can still have Sofabaton Activity children created under
-	 them by the parent app; which command path (webhook vs MQTT) each
-	 Activity uses is decided on the Activity device itself.
-
-	 NOTE: this is a fork of dJOS's driver, not a from-scratch rewrite for
-	 the X1S HTTP path. Full credit above retained.
+    Notes:
+     -Fork of dJOS's driver, renamed "Sofabaton Remote". Created by the app as a
+      child of the Bridge, so hubs nest together in the Devices list.
+     -X1S: DNI = ipToHex(ip) so Hubitat's local listener (port 39501) routes each
+      hub's PUT here. Body = a number 1-20, a user slot matchString, or on/off.
+      Activity sync matches the fired button's label to an Activity child's name.
+     -X2: DNI = bare uppercase MAC (matches the MQTT topic). No listener; the
+      Bridge calls receiveMqttActivityUpdate(). Sync matches the numeric
+      activity_id. 255 = hub-wide Power Off, every activity goes off.
+     -The original X1 isn't supported (dJOS's driver starts at X1S).
+     -Configured by the app. Driver preferences can't show/hide fields by model
+      (platform limit) and render in a fixed grid by declaration order, so the X2
+      pill sits on the MAC field's description rather than its own paragraph,
+      which would shift every field after it. Field titles can't take HTML.
+     -mqttHost/Port/User are published as attributes so the app can prefill Edit
+      Hub. The password is never exposed.
+     -lastMqttMessage is the only connection signal. The X2 has no keepalive topic.
+     -removeAllActivityDevices() must run before the Bridge deletes this device,
+      or Hubitat can leave an orphan that blocks re-adding the same DNI.
 */
 
-def version() {
-    return "1.2.0-jdthomas24"
-}
+def version() { return "1.0.0" }
 
 metadata {
     definition (name: "Sofabaton Remote", namespace: "jdthomas24", author: "Jason Thomas (fork of Derek Osborn/dJOS1475, building on Mike Maxwell/mike.maxwell, Gassgs, SViel)", importUrl: "") {
@@ -94,16 +45,16 @@ metadata {
         attribute "mqttUser", "string"
         attribute "lastMqttMessage", "string"
         preferences {
-            input name: "deviceInfo", type: "paragraph", element: "paragraph", title: "Sofabaton Remote", description: "Driver Version: ${version()}<br><b>Configured via the Sofabaton Integration app -- Add/Edit Hub there, not here.</b> The fields below reflect what the app set and update automatically; manual edits here can get out of sync with the app's records."
+            input name: "deviceInfo", type: "paragraph", element: "paragraph", title: "Sofabaton Remote", description: "Driver Version: ${version()}<br><b>Configured via the Sofabaton Integration app. Add or edit hubs there, not here.</b> Manual edits here can get out of sync with the app."
             input name: "hubModel", type: "enum", title: "Hub Model", options: ["X1S", "X2"], required: true
-            input name: "appConfig", type: "paragraph", element: "paragraph", title: "X1S Setup (one-time, in the Sofabaton app)", description: "Devices &rarr; Add Device &rarr; Wi-Fi &rarr; 'Create a virtual device for IP control'. URL: http://[Hubitat IP]:39501/, method PUT, body = a number 1-20 or a string matching a slot below, or on/off. Repeat per activity."
+            input name: "appConfig", type: "paragraph", element: "paragraph", title: "X1S Setup (one-time, in the Sofabaton app)", description: "<span style='background:#e8a33d;color:#fff;border-radius:10px;padding:2px 10px;font-size:0.85em;font-weight:bold'>X1S</span><br>Devices &rarr; Add Device &rarr; Wi-Fi &rarr; 'Create a virtual device for IP control'. URL: http://[Hubitat IP]:39501/, method PUT, body = a number 1-20, a string matching a slot below, or on/off. Repeat per activity."
             input name:"ip", type:"text", title: "Remote IP Address (X1S only)"
-            input name: "mac", type: "text", title: "Hub MAC Address (X2 only)"
+            input name: "mac", type: "text", title: "Hub MAC Address (X2 only)", description: "<span style='background:#5f8b6f;color:#fff;border-radius:10px;padding:2px 10px;font-size:0.85em;font-weight:bold'>X2</span> Connects this hub to the MQTT broker, along with the fields below."
             input name: "mqttHost", type: "text", title: "MQTT Broker Host/IP (X2 only)"
             input name: "mqttPort", type: "text", title: "MQTT Broker Port (X2 only)", defaultValue: "1883"
             input name: "mqttUser", type: "text", title: "MQTT Broker Username (X2 only)"
             input name: "mqttPass", type: "password", title: "MQTT Broker Password (X2 only)"
-            input name: "userInfo", type: "paragraph", element: "paragraph", title: "User Definable Buttons (X1S only)", description: "matchString|Description, e.g. watchTV|Watch TV. Fires buttons 11-20. A description matching a Sofabaton Activity child's name keeps that Activity's state synced automatically."
+            input name: "userInfo", type: "paragraph", element: "paragraph", title: "User Definable Buttons (X1S only)", description: "<span style='background:#e8a33d;color:#fff;border-radius:10px;padding:2px 10px;font-size:0.85em;font-weight:bold'>X1S</span><br>matchString|Description, e.g. watchTV|Watch TV. Fires buttons 11-20. A Description matching an Activity's name keeps that Activity in sync."
             input name:"usrBtn1", type:"text", title:"User 1 (11):", description:"matchString|Description", required:false
             input name:"usrBtn2", type:"text", title:"User 2 (12):", description:"matchString|Description", required:false
             input name:"usrBtn3", type:"text", title:"User 3 (13):", description:"matchString|Description", required:false
@@ -114,7 +65,7 @@ metadata {
             input name:"usrBtn8", type:"text", title:"User 8 (18):", description:"matchString|Description", required:false
             input name:"usrBtn9", type:"text", title:"User 9 (19):", description:"matchString|Description", required:false
             input name:"usrBtn10", type:"text", title:"User 10 (20):", description:"matchString|Description", required:false
-            input name: "numericInfo", type: "paragraph", element: "paragraph", title: "Numeric Buttons (X1S only)", description: "Labels for buttons 1-10."
+            input name: "numericInfo", type: "paragraph", element: "paragraph", title: "Numeric Buttons (X1S only)", description: "<span style='background:#e8a33d;color:#fff;border-radius:10px;padding:2px 10px;font-size:0.85em;font-weight:bold'>X1S</span><br>Labels for buttons 1-10."
             input name:"btnLabel1", type:"text", title:"1:", description:"Button 1 label", required:false
             input name:"btnLabel2", type:"text", title:"2:", description:"Button 2 label", required:false
             input name:"btnLabel3", type:"text", title:"3:", description:"Button 3 label", required:false
@@ -149,19 +100,12 @@ void updated(){
     sendEvent(name:"numberOfButtons", value:20)
     if (hubModel) sendEvent(name: "hubModel", value: hubModel)
 
-    // Truncate numeric button labels to 40 chars
+    // Numeric labels capped at 40 chars, user slots at 80 (match + pipe + description)
     for (int i = 1; i <= 10; i++) {
         def lbl = settings["btnLabel${i}"] ?: ""
-        if (lbl.length() > 40) {
-            device.updateSetting("btnLabel${i}", [value:lbl.take(40), type:"text"])
-        }
-    }
-    // Truncate user definable button entries to 80 chars (match + pipe + description)
-    for (int i = 1; i <= 10; i++) {
+        if (lbl.length() > 40) device.updateSetting("btnLabel${i}", [value:lbl.take(40), type:"text"])
         def val = settings["usrBtn${i}"] ?: ""
-        if (val.length() > 80) {
-            device.updateSetting("usrBtn${i}", [value:val.take(80), type:"text"])
-        }
+        if (val.length() > 80) device.updateSetting("usrBtn${i}", [value:val.take(80), type:"text"])
     }
     validateUserButtons()
 
@@ -172,7 +116,7 @@ void updated(){
                 device.deviceNetworkId = dni
                 sendEvent(name: "remoteMac", value: dni)
             } else {
-                log.error "$device.label: MAC '$mac' does not look like a valid 12-character hex MAC, DNI not updated"
+                log.error "$device.label: MAC '$mac' is not a valid 12-character hex MAC, DNI not updated"
             }
         }
         if (mqttHost) {
@@ -182,7 +126,7 @@ void updated(){
             parent?.ensureMqttConnected(mqttHost, mqttPort ?: "1883", mqttUser, mqttPass)
         }
     } else {
-        // Set the DNI last so a malformed IP cannot prevent any of the above from running
+        // DNI set last so a malformed IP can't block the steps above
         if (ip) {
             String dni = ipToHex(ip)
             if (dni) device.deviceNetworkId = dni
@@ -191,8 +135,7 @@ void updated(){
     }
 }
 
-// Warns about user definable slots that can never fire, so silent misconfiguration
-// shows up in the logs at save time rather than as a mystery later
+// Warns at save time about user slots that can never fire.
 private void validateUserButtons() {
     def seen = [:]
     for (int i = 1; i <= 10; i++) {
@@ -217,18 +160,15 @@ private void validateUserButtons() {
     }
 }
 
+// X1S local HTTP. Order: on/off, button number, user slot match.
 void parse(String description) {
     def msg = parseLanMessage(description)
-    if (logEnable) log.debug "String is: $msg"
-    if (logEnable) log.debug "String Header is: $msg.header"
-    if (logEnable) log.debug "String Body is: $msg.body"
+    if (logEnable) log.debug "$device.label received header: $msg.header, body: $msg.body"
     def data = msg.body?.trim()
     if (!data) {
-        if (logEnable) log.warn "$device.label Empty body received, ignoring"
+        if (logEnable) log.debug "$device.label empty body received, ignoring"
         return
     }
-
-    // 1. Check for on/off switch commands
     if (data.equalsIgnoreCase("on")) {
         sendEvent(name:"switch", value:"on")
         return
@@ -236,28 +176,20 @@ void parse(String description) {
         sendEvent(name:"switch", value:"off")
         return
     }
-
-    // 2. Check if body is a button number (1-10 numeric, 11-20 user definable)
     Integer btn = toButtonNumber(data)
     if (btn != null && btn >= 1 && btn <= 20) {
         firePushed(btn, labelForButton(btn), data)
         return
     }
-
-    // 3. Check against user definable match strings -> buttons 11-20
     def hit = matchUserButton(data)
     if (hit) {
         firePushed(hit[0] as Integer, hit[1] as String, data)
         return
     }
-
-    // 4. No match found
     log.warn "$device.label No match found for received body value: $data"
 }
 
-// Fires the numeric pushed event required by PushableButton, plus the string
-// attributes so rules can trigger on the raw value or the friendly label.
-// Also drives Activity child state sync -- see handleActivityStateSync().
+// pushed event for PushableButton, plus raw/label attributes for rules. Drives Activity sync.
 private void firePushed(Integer btn, String lbl, String raw) {
     if (txtEnable) log.info "$device.label Button $btn${lbl ? ' (' + lbl + ')' : ''} Pushed"
     sendEvent(name:"pushed", value:btn, isStateChange: true, descriptionText:"$device.label button $btn was pushed")
@@ -266,8 +198,7 @@ private void firePushed(Integer btn, String lbl, String raw) {
     handleActivityStateSync(lbl ?: raw)
 }
 
-// Coerces a button number from a String, Integer or BigDecimal ("11", "11.0", 11).
-// Returns null if the value is not a whole number.
+// Accepts "11", "11.0", or 11. Returns null if not a whole number.
 private Integer toButtonNumber(def val) {
     String s = val?.toString()?.trim()
     if (!s) return null
@@ -278,7 +209,7 @@ private Integer toButtonNumber(def val) {
     return null
 }
 
-// Label for any button 1-20: numeric labels for 1-10, user descriptions for 11-20.
+// Numeric labels for 1-10, user descriptions for 11-20.
 private String labelForButton(Integer btn) {
     if (btn <= 10) return settings["btnLabel${btn}"] ?: ""
     def val = settings["usrBtn${btn - 10}"] ?: ""
@@ -287,7 +218,7 @@ private String labelForButton(Integer btn) {
     return parts.size() > 1 ? parts[1].trim() : parts[0].trim()
 }
 
-// Returns [button, label] for a user definable slot matching str, or null.
+// Returns [button, label] for a matching user slot, or null.
 private List matchUserButton(String str) {
     for (int i = 1; i <= 10; i++) {
         def val = settings["usrBtn${i}"] ?: ""
@@ -303,8 +234,6 @@ private List matchUserButton(String str) {
 
 void push(data) {
     String str = data?.toString()?.trim() ?: ""
-
-    // Numeric buttons: 1-10 are the numeric slots, 11-20 the user definable ones
     Integer btn = toButtonNumber(str)
     if (btn != null) {
         if (btn < 1 || btn > 20) {
@@ -314,8 +243,6 @@ void push(data) {
         firePushed(btn, labelForButton(btn), str)
         return
     }
-
-    // String input: resolve it to its user definable button number
     def hit = matchUserButton(str)
     if (hit) {
         firePushed(hit[0] as Integer, hit[1] as String, str)
@@ -334,37 +261,29 @@ void off() {
     sendEvent(name:"switch", value:"off")
 }
 
-// Returns the hex DNI for an IPv4 address, or null (with an error logged) if malformed
+// Hex DNI for an IPv4 address, or null (with an error) if malformed. The app mirrors this.
 String ipToHex(String ipAddress) {
     List<String> quad = (ipAddress ?: "").trim().split(/\./)
     boolean valid = quad.size() == 4 && quad.every {
         it.isInteger() && it.toInteger() >= 0 && it.toInteger() <= 255
     }
     if (!valid) {
-        log.error "$device.label Remote IP Address '${ipAddress}' is not a valid IPv4 address - the remote will not be able to reach this device"
+        log.error "$device.label Remote IP Address '${ipAddress}' is not a valid IPv4 address, the remote will not be able to reach this device"
         return null
     }
     return quad.collect { Integer.toHexString(it.toInteger()).padLeft(2,"0").toUpperCase() }.join()
 }
 
-// Called by the Bridge on every recognized MQTT message for this hub's
-// MAC, whether or not it matches a configured Activity. There's no known
-// keepalive/presence topic from the X2 itself, so this timestamp is the
-// best available stand-in for "is the hub actually connected right now" --
-// it proves a real message arrived at a known time, even though the hub
-// only talks when an activity changes, not on a fixed heartbeat.
+// Called by the Bridge on every message for this MAC.
 void markMqttMessageSeen() {
     sendEvent(name: "lastMqttMessage", value: new Date().format("yyyy-MM-dd h:mm:ss a"))
 }
 
 // ============================================================
-// ============= ACTIVITY CHILD MANAGEMENT (jdthomas24) =========
+// Activity child management
 // ============================================================
 
-// Called by the parent app when an activity is added for this hub.
-// Sets webhookUrlOn/webhookUrlOff (X1S) or sofabatonActivityId (X2)
-// directly so the Activity device is immediately usable without a manual
-// preferences visit.
+// Sets webhook URLs and/or Activity ID directly so the device works without a preferences visit.
 def createActivityDevice(String name, String urlOn = null, String urlOff = null, Integer sofabatonActivityId = null) {
     String dni = "${device.deviceNetworkId}-activity-${name.replaceAll(/[^A-Za-z0-9]/, '')}"
     def existing = getChildDevice(dni)
@@ -379,12 +298,7 @@ def createActivityDevice(String name, String urlOn = null, String urlOff = null,
     return child
 }
 
-// Removes every Activity child of this hub. Must run BEFORE the Bridge
-// deletes this Remote device itself -- Hubitat can refuse (or only
-// partially complete) deleting a device that still has children attached,
-// and a Remote's Activity children are grandchildren of the Bridge, so the
-// Bridge can't reach them directly; it has to ask this device to clean up
-// its own children first.
+// Activities are grandchildren of the Bridge, so the Bridge asks this device to clear them first.
 void removeAllActivityDevices() {
     def activityChildren = getChildDevices()?.findAll { it.typeName == "Sofabaton Activity" }
     activityChildren?.each { act ->
@@ -402,23 +316,14 @@ void removeActivityDevice(String name) {
     if (child) deleteChildDevice(dni)
 }
 
-// Preferred removal path for the parent app: takes the child's actual DNI
-// directly (the app already has the device object from getChildDevices()),
-// avoiding any risk of the name-sanitization in removeActivityDevice()
-// above not exactly matching what was used at creation time.
+// Preferred by the app: uses the real DNI instead of recomputing it from the name.
 void removeActivityDeviceByDni(String dni) {
     def child = getChildDevice(dni)
     if (child) deleteChildDevice(dni)
 }
 
-// If the fired button's resolved label matches a Sofabaton Activity child's
-// name, mark it on (local sync only, no cloud call) and mark any other
-// Activity child under THIS hub that was on as off the same way. X1S only
-// -- X2 state sync comes through receiveMqttActivityUpdate() instead, since
-// MQTT reports numeric activity ids, not button labels. Mirrors Harmony's
-// one-activity-at-a-time behaviour without assuming the remote sends an
-// explicit "stopped" event for the previous activity -- it doesn't, this
-// driver only ever learns about the activity that just started.
+// X1S sync. One activity on at a time per hub. The remote only reports the
+// activity that started, never a "stopped" event for the previous one.
 private void handleActivityStateSync(String activityKey) {
     if (!activityKey) return
     def activityChildren = getChildDevices()?.findAll { it.typeName == "Sofabaton Activity" }
@@ -426,10 +331,9 @@ private void handleActivityStateSync(String activityKey) {
 
     def matched = activityChildren.find { it.getLabel()?.equalsIgnoreCase(activityKey) }
     if (!matched) {
-        if (logEnable) log.debug "$device.label: no Activity device matches '$activityKey', skipping state sync"
+        if (logEnable) log.debug "$device.label: no Activity matches '$activityKey', skipping state sync"
         return
     }
-
     activityChildren.findAll { it.deviceNetworkId != matched.deviceNetworkId && it.currentValue("switch") == "on" }.each {
         it.syncOff()
     }
@@ -437,13 +341,7 @@ private void handleActivityStateSync(String activityKey) {
 }
 
 // ============================================================
-// ================= X2 MQTT ACTIVITY SYNC (jdthomas24) ===========
-// The Bridge parses incoming MQTT activity_control_up messages and calls
-// this method on the matching Remote child, keyed by MAC (this device's
-// DNI for X2 hubs). Confirmed against real hardware:
-//   - normal activity start: the reported activity_id, state "on"
-//   - hub-wide Power Off: activity_id 255, state "off" -- means every
-//     activity on this hub is now off, not just activity 255
+// X2 MQTT sync (called by the Bridge)
 // ============================================================
 
 void receiveMqttActivityUpdate(Integer activityId, String activityState) {
@@ -451,14 +349,14 @@ void receiveMqttActivityUpdate(Integer activityId, String activityState) {
     if (!activityChildren) return
 
     if (activityId == 255) {
-        if (txtEnable) log.info "$device.label: MQTT hub-wide Power Off received, turning off all activities"
+        if (txtEnable) log.info "$device.label: hub-wide Power Off received, turning off all activities"
         activityChildren.each { it.syncOff() }
         return
     }
 
     def matched = activityChildren.find { (it.currentValue("sofabatonActivityId") as Integer) == activityId }
     if (!matched) {
-        if (logEnable) log.debug "$device.label: no Activity device configured with Sofabaton Activity ID $activityId, skipping state sync"
+        if (logEnable) log.debug "$device.label: no Activity configured with ID $activityId, skipping state sync"
         return
     }
 
@@ -470,13 +368,12 @@ void receiveMqttActivityUpdate(Integer activityId, String activityState) {
     }
 }
 
-// Called by an Activity child's on()/off() for MQTT-controlled (X2)
-// activities. Delegates the actual publish up to the Bridge, which owns
-// the shared MQTT connection.
+// Middle hop of the Activity -> Remote -> Bridge publish path.
 void componentPublishActivityControl(childDevice, Integer activityId, String desiredState) {
     if (hubModel != "X2" || !device.deviceNetworkId) {
-        log.error "$device.label: cannot publish MQTT activity control, this hub is not configured as X2 or has no MAC-based DNI set"
+        log.error "$device.label: cannot publish MQTT activity control, hub is not X2 or has no MAC-based DNI"
         return
     }
+    if (logEnable) log.debug "$device.label: forwarding to Bridge mac=${device.deviceNetworkId}, activityId=$activityId, state=$desiredState"
     parent?.publishMqttActivityControl(device.deviceNetworkId, activityId, desiredState)
 }
