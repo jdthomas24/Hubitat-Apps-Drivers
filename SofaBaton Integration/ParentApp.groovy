@@ -16,8 +16,13 @@
      -Add/Edit pages save ONLY on an explicit Save click (state.*SaveRequested),
       never because fields happen to be filled. Edit/Remove use buttons + state,
       not hrefs with params (Hubitat drops params across same-page hrefs).
+     -Explicit Save buttons exist because Cancel jumped to mainPage without running
+      creation, silently discarding input.
+     -No required:true on Add page inputs. Browser validation blocked the Cancel
+      button, since it's in the same form.
      -No refreshInterval on Add Activity (bounced to mainPage). Listen result
       persists in the Bridge until the page is reopened.
+     -uninstalled() must delete the Bridge, or everything under it is orphaned.
      -Model, MAC, and X1S IP set the DNI, so they're not editable. Remove and re-add.
      -UI follows HubitatAppUiTemplate (Reolink v1.6.1, UI design by gopher.ny).
 */
@@ -25,7 +30,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Sofabaton Integration"
-@Field static final String APP_VERSION = "0.9.0"
+@Field static final String APP_VERSION = "1.0.0"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com"   // TODO: release thread
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
@@ -208,7 +213,8 @@ private String hubCardHtml(hub, List activities) {
     String idShown = x2 ? (hub.currentValue("remoteMac") ?: "no MAC set") : (hub.currentValue("remoteIp") ?: "no IP set")
     StringBuilder card = new StringBuilder()
     card << "<div style='border:1px solid #ccc;border-radius:10px;padding:12px 14px;margin:4px 0;background:#fafafa'>"
-    card << "<div><span style='background:#5f8b6f;color:#fff;border-radius:8px;padding:2px 9px;font-size:0.9em;font-weight:bold'>${model}</span> "
+    String badge = x2 ? "#5f8b6f" : "#e8a33d"   // matches the Remote driver's pills
+    card << "<div><span style='background:${badge};color:#fff;border-radius:8px;padding:2px 9px;font-size:0.9em;font-weight:bold'>${model}</span> "
     card << "<span style='font-size:0.85em'>${hub.getLabel()}</span> "
     card << "<span style='color:#888;font-size:0.8em'>${idShown}</span></div>"
     if (x2) {
@@ -239,7 +245,12 @@ private String mqttStatusHtml(bridge, List x2Hubs) {
     String status = bridge?.currentValue("mqttStatus") ?: "not connected"
     String tone = status == "connected" ? "bg-green-50 text-green-700" :
         status in ["error", "connect failed"] ? "bg-red-50 text-red-700" : "bg-gray-100 text-gray-700"
-    String rows = x2Hubs.collect { h ->
+    Boolean broker = null
+    try { broker = bridge?.checkBuiltInBroker() } catch (e) { }
+    String brokerText = broker == null ? "Unknown" : (broker ? "Running" : "Not running (fine if you use an external broker)")
+    String brokerRow = "<div class='flex justify-content-between gap-3 py-1'><span>Built-in broker</span>" +
+        "<span class='text-color-secondary' style='font-size:14px;'>${brokerText}</span></div>"
+    String rows = brokerRow + x2Hubs.collect { h ->
         "<div class='flex justify-content-between gap-3 py-1'><span>${h.getLabel()}</span>" +
         "<span class='text-color-secondary' style='font-size:14px;'>${h.currentValue('lastMqttMessage') ?: 'No message yet'}</span></div>"
     }.join("")
@@ -639,7 +650,7 @@ private String ipToHexForApp(String ipAddress) {
 }
 
 // ============================================================================
-// Tips & Troubleshooting content. Keep SETUP-GUIDE.md in sync.
+// Tips & Troubleshooting content. This is the only setup guide; the README links here.
 // ============================================================================
 
 private String exampleBoxHtml(String content) {
@@ -653,8 +664,8 @@ private List tipsTopics() {
                 "<p>Setup moves back and forth between two apps, so each step is tagged:</p>" +
                 "<p>${HUBITAT_PILL}<br>This Hubitat app or a device page.</p>" +
                 "<p>${SOFABATON_PILL}<br>The Sofabaton mobile app.</p>",
-            checklist: [[title: "A static IP for your Sofabaton hub", detail: "Set a DHCP reservation on your router before adding either model."],
-                        [title: "Know your model", detail: "X1S uses local HTTP plus a cloud webhook. X2 uses MQTT. The original X1 isn't supported."],
+            checklist: [[title: "A static IP for your Sofabaton hub", detail: "Set a DHCP reservation on your router. If the IP changes later, the integration stops working with no error."],
+                        [title: "Know your model", detail: "It's printed on the hub, or shown in the Sofabaton app under the hub's settings. X1S uses local HTTP plus a cloud webhook, X2 uses MQTT. The original X1 isn't supported."],
                         [title: "X2 only: Hubitat's MQTT broker", detail: "Enabled through MQTT Import Integration. See X2 setup, step 1."]]],
 
         [id: "x2broker", label: "1. Enable the MQTT broker", title: "Enable Hubitat's MQTT broker", group: "X2 setup", icon: "pi-server",
@@ -662,7 +673,8 @@ private List tipsTopics() {
                 "<p>Write down the host, port, username, and password it shows. You'll enter them twice: in the Sofabaton app, and on the Add a Hub page here.</p>"],
         [id: "x2connect", label: "2. Connect the X2", title: "Point the X2 at the broker", group: "X2 setup", icon: "pi-wifi",
             body: "<p>${SOFABATON_PILL}<br>Tap <b>Me</b> &rarr; <b>Connect to Home Assistant (MQTT broker)</b> &rarr; <b>Confirmed MQTT Installed</b>. " +
-                "Enter your Hubitat hub's IP, then the port, username, and password from step 1.</p>",
+                "Enter your Hubitat hub's IP, then the port, username, and password from step 1. " +
+                "If it asks for Home Assistant account credentials, that's just the broker username and password. Confirm it shows connected before moving on.</p>",
             warning: "<b>Easy to skip, and nothing works without it.</b><br>Ignore the Home Assistant wording, you're pointing it at Hubitat's broker. " +
                 "<b>Devices &rarr; Add Device &rarr; Wi-Fi &rarr; Home Assistant Remote</b> is a different feature. Don't use it here."],
         [id: "x2mac", label: "3. Find the MAC ID", title: "Find the X2's MAC ID", group: "X2 setup", icon: "pi-search",
@@ -673,7 +685,8 @@ private List tipsTopics() {
                 "Also, this is the Sofabaton hub's MAC, not your Hubitat hub's."],
         [id: "x2add", label: "4. Add hub and activities", title: "Add the X2 hub and its activities", group: "X2 setup", icon: "pi-plus-circle",
             body: "<p>${HUBITAT_PILL}<br><b>Add a Hub</b> &rarr; Model X2 &rarr; enter the MAC ID and the broker details from step 1.</p>" +
-                "<p>${HUBITAT_PILL}<br><b>Add an Activity</b> &rarr; pick the hub, give it a name, and enter its Sofabaton Activity ID.</p>" +
+                "<p>${HUBITAT_PILL}<br><b>Add an Activity</b> &rarr; pick the hub, give it a name, and enter its Sofabaton Activity ID. " +
+                "For on/off control today, also paste a webhook URL (see the Known issue below).</p>" +
                 "<p>${HUBITAT_PILL}<br>Tap <b>Done</b> on the main page when finished.</p>" +
                 exampleBoxHtml("<b>Example, an Apple TV activity:</b><br>" +
                     "&bull; Sofabaton Activity ID: <code>101</code>, read from a payload like <code>{&quot;activity_id&quot;:101,&quot;state&quot;:&quot;on&quot;}</code><br>" +
@@ -686,13 +699,15 @@ private List tipsTopics() {
                 "<p>${SOFABATON_PILL}<br><b>Devices &rarr; Add Device &rarr; Wi-Fi &rarr; Create a virtual device for IP control</b>. " +
                 "URL <code>http://[Hubitat IP]:39501/</code>, method PUT. Create one per activity. Read <b>Buttons and name matching</b> before choosing a body value.</p>"],
         [id: "x1swebhook", label: "2. Webhook commands", title: "Add webhook commands", group: "X1S setup", icon: "pi-link",
-            body: "<p>${SOFABATON_PILL}<br>On the activity, turn on <b>Turn on API</b> and copy the webhook URL(s). " +
+            body: "<p>${SOFABATON_PILL}<br>On the activity, turn on <b>Turn on API</b> (just <b>API</b> in some app versions) and copy the webhook URL, " +
+                "a long <code>https://app1.sofabaton.com/...</code> link. Some versions give separate on and off URLs, others just one. " +
                 "This is separate from step 1. IP control only reports to Hubitat, the webhook sends commands.</p>" +
-                "<p>${HUBITAT_PILL}<br><b>Add an Activity</b> &rarr; name it to exactly match the button's Description &rarr; paste the webhook URL(s).</p>" +
+                "<p>${HUBITAT_PILL}<br><b>Add an Activity</b> &rarr; name it to exactly match the button's Description &rarr; paste the Start URL, " +
+                "and the Stop URL only if you got a separate one. A space in the URL is normal, it's encoded automatically.</p>" +
                 "<p>${HUBITAT_PILL}<br>Tap <b>Done</b> on the main page when finished.</p>"],
         [id: "x1smatch", label: "3. Buttons and name matching", title: "Buttons and name matching", group: "X1S setup", icon: "pi-th-large",
             body: "<p><b>Buttons 1-10</b> fire when the remote sends a plain number. <b>Buttons 11-20</b> are user-definable slots on the Remote device's Preferences tab, " +
-                "entered as <code>matchString|Description</code>. Most setups should use 11-20.</p>" +
+                "entered as <code>matchString|Description</code>. Most setups should use 11-20, e.g. <code>watchAppleTV</code> instead of remembering that 7 means Apple TV.</p>" +
                 "<p>Hubitat knows an activity changed by matching the slot's Description against the Activity Name here, exactly, including capitalization and spacing.</p>" +
                 exampleBoxHtml("<b>Example, an Apple TV activity:</b><br>" +
                     "&bull; Body value in the Sofabaton app: <code>appleTV</code><br>" +
@@ -706,7 +721,9 @@ private List tipsTopics() {
                 "<p>Until it's fixed, Hubitat won't see activity changes from the remote, the main page will show <b>Waiting for first MQTT message</b>, " +
                 "and <b>Listen for Next Activity</b> won't capture an ID. Enter IDs manually for now. Commands sent from Hubitat over MQTT haven't been confirmed yet either.</p>",
             warning: "<b>Workaround for on/off control today:</b><br>In the Sofabaton app, turn on <b>Turn on API</b> for the activity, then paste the webhook URL into " +
-                "Edit Activity here. Once the fix lands, clear the webhook URL to go back to local MQTT."],
+                "Edit Activity here. Once the fix lands, clear the webhook URL to go back to local MQTT.<br><br>" +
+                "<b>Workaround for state sync today:</b><br>Add the X2 as model <b>X1S</b> and follow the X1S setup instead. It uses IP and name matching " +
+                "rather than MAC and Activity ID. Switching to MQTT later means removing the hub and adding it again as X2."],
         [id: "traffic", label: "What creates MQTT traffic", title: "What creates MQTT traffic", group: "Troubleshooting", icon: "pi-info-circle",
             body: "<p>Only activity-level changes: starting or switching an activity, or the hub-wide Power Off. Button presses within an activity " +
                 "(volume, channel, play/pause) never touch the network. This integration reacts to activities, not individual button presses.</p>" +
