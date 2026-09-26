@@ -26,6 +26,9 @@
       command "..." declaration to show as buttons.
      -MQTTHelper needs a platform build that includes it. Older builds fail with
       "unable to resolve class", and the sandbox blocks Class.forName as a workaround.
+     -Connection state comes from interfaces.mqtt.isConnected(), not a state flag.
+      A hand-kept state.mqttConnected raced: Force Reconnect's execution saved its
+      "false" after the connect callback had already saved "true".
      -Remotes must clear their Activity children before deletion, or Hubitat
       can leave orphans that block re-adding the same DNI.
 */
@@ -57,6 +60,8 @@ void installed() {
 // MQTT connects on demand via ensureMqttConnected(), called by X2 Remote children.
 void updated() {
     if (logEnable) runIn(1800, "logsOff")
+    state.remove("mqttConnected")   // retired, see Notes
+    state.remove("mqttUrl")         // moved to atomicState
 }
 
 void logsOff() {
@@ -110,19 +115,18 @@ void removeRemoteDevice(String dni) {
 // cover hubs added later, so no resubscribe is needed per hub.
 void ensureMqttConnected(String host, String port, String user = null, String pass = null) {
     String url = "tcp://${host}:${port}"
-    if (state.mqttConnected && state.mqttUrl == url) {
+    if (mqttUp() && atomicState.mqttUrl == url) {
         if (logEnable) log.debug "Sofabaton Bridge: MQTT already connected to $url"
         return
     }
     try {
-        if (state.mqttConnected) {
+        if (mqttUp()) {
             try { interfaces.mqtt.disconnect() } catch (e) { }
         }
+        atomicState.mqttUrl = url
         interfaces.mqtt.connect(url, "sofabaton-hubitat-${device.id}", user ?: null, pass ?: null)
-        state.mqttUrl = url
     } catch (e) {
         log.error "Sofabaton Bridge: MQTT connection to $url failed: ${e.message}"
-        state.mqttConnected = false
         sendEvent(name: "mqttStatus", value: "connect failed")
     }
 }
@@ -130,13 +134,11 @@ void ensureMqttConnected(String host, String port, String user = null, String pa
 void mqttClientStatus(String message) {
     if (message.startsWith("Error")) {
         log.error "Sofabaton Bridge: MQTT error: $message"
-        state.mqttConnected = false
         sendEvent(name: "mqttStatus", value: "error")
         return
     }
     if (message.contains("Connection succeeded")) {
         log.info "Sofabaton Bridge: MQTT connected"
-        state.mqttConnected = true
         sendEvent(name: "mqttStatus", value: "connected")
         try {
             interfaces.mqtt.subscribe("activity/+/activity_control_up")
@@ -150,12 +152,17 @@ void mqttClientStatus(String message) {
     if (logEnable) log.debug "Sofabaton Bridge: MQTT status: $message"
 }
 
+// Live connection check. Replaces the old state.mqttConnected flag.
+private boolean mqttUp() {
+    try { return interfaces.mqtt.isConnected() } catch (e) { return false }
+}
+
 // Full disconnect/reconnect/resubscribe. An X2 Remote resupplies broker credentials.
 void forceReconnectMqtt() {
     log.info "Sofabaton Bridge: forcing MQTT reconnect"
     try { interfaces.mqtt.disconnect() } catch (e) { }
-    state.mqttConnected = false
-    state.remove("mqttUrl")
+    atomicState.remove("mqttUrl")
+    sendEvent(name: "mqttStatus", value: "reconnecting")
     def x2Hub = getChildDevices()?.find { it.currentValue("hubModel") == "X2" }
     if (x2Hub) {
         x2Hub.updated()
@@ -217,8 +224,8 @@ void parse(String description) {
 // Called via an X2 Remote on behalf of an Activity. Only the hub-wide Power Off (255)
 // shape is confirmed; starting a specific activity this way is unverified.
 void publishMqttActivityControl(String mac, Integer activityId, String desiredState) {
-    if (logEnable) log.debug "Sofabaton Bridge: publish requested mac=$mac, activityId=$activityId, state=$desiredState, connected=${state.mqttConnected}, url=${state.mqttUrl}"
-    if (!state.mqttConnected) {
+    if (logEnable) log.debug "Sofabaton Bridge: publish requested mac=$mac, activityId=$activityId, state=$desiredState, connected=${mqttUp()}, url=${atomicState.mqttUrl}"
+    if (!mqttUp()) {
         log.error "Sofabaton Bridge: cannot publish, MQTT is not connected"
         return
     }
