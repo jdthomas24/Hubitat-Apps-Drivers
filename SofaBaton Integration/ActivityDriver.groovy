@@ -7,47 +7,27 @@
     Hubitat community driver, built on push-command building blocks
     originated by Mike Maxwell (mike.maxwell).
 
-    2026-09-10 jdthomas24
-        -Initial publication
-
-    *OVERVIEW
-     Represents one Sofabaton activity as a standard Hubitat switch. Two
-     hub types command it two different ways, and this device picks
-     whichever is configured:
-
-       -X1S (cloud webhook): on()/off() hit Sofabaton's cloud API webhook
-        for this activity. webhookUrlOff is optional -- whether Sofabaton's
-        cloud API even exposes a genuine per-activity "stop" webhook
-        distinct from "start" is unconfirmed, so off() without one falls
-        back to a local-only state change with a clear warning instead of
-        guessing at an API shape.
-
-       -X2 (local MQTT): on()/off() publish to the parent Sofabaton Remote
-        device (which forwards to the Bridge's shared MQTT connection)
-        instead of calling out to the cloud. Confirmed against real
-        hardware: normal activity state broadcasts use
-        {"activity_id":<id>,"state":"on"/"off"}, and a hub-wide Power Off
-        broadcasts {"activity_id":255,"state":"off"} meaning EVERY activity
-        on that hub just went off, not just id 255. No per-activity MQTT
-        "stop" command has been confirmed to exist -- only that hub-wide
-        Power Off -- so off() on an MQTT-controlled activity powers off the
-        whole hub and says so in the log, rather than silently pretending
-        to stop just this one activity.
-
-     Which path is used is decided by which fields are populated: set
-     webhookUrlOn for X1S, or sofabatonActivityId for X2. A given Activity
-     device is expected to use one path, not both.
-
-       -STATE SYNC: syncOn()/syncOff(), called only by the parent Sofabaton
-        Remote device when the physical remote or hub changes activity on
-        its own (HTTP button match for X1S, or a parsed MQTT broadcast for
-        X2), just update the switch attribute to reflect reality. No
-        network call is made on this path.
+    Notes:
+     -One Sofabaton activity as a Switch. Path is picked by which field is set:
+      webhookUrlOn = cloud webhook (X1S, or X2 workaround), sofabatonActivityId =
+      local MQTT (X2). Webhook wins when both are set.
+     -X1S off() with no Stop URL sets local state only and warns. A per-activity
+      stop webhook is unconfirmed.
+     -X2 off() over MQTT sends activity_id 255 (hub-wide Power Off), turning off
+      every activity on that hub. No per-activity MQTT stop is confirmed.
+     -Webhook 408s were never timeouts: Sofabaton URLs embed raw activity names
+      with spaces (&id=Watch Apple TV), which Hubitat's HTTP client rejects instantly.
+      Spaces are encoded before every call. Timeout stays at 20s for the cloud round trip.
+     -AsyncResponse throws (not null) when a field like errorMessage or getData()
+      has no value. Every resp.* read is wrapped separately.
+     -MQTT publish has no delivery confirmation, so state is set optimistically.
+     -syncOn()/syncOff() are local state only, called by the Remote when the
+      physical remote or hub changes activity.
 */
 
 import groovy.json.JsonOutput
 
-def version() { return "1.1.0" }
+def version() { return "1.0.0" }
 
 metadata {
     definition (name: "Sofabaton Activity", namespace: "jdthomas24", author: "Jason Thomas") {
@@ -61,9 +41,9 @@ metadata {
         command "syncOff"
     }
     preferences {
-        input name: "webhookUrlOn", type: "text", title: "Start Activity Webhook URL (X1S only)", required: false
-        input name: "webhookUrlOff", type: "text", title: "Stop Activity Webhook URL (X1S only, optional -- unconfirmed feature, see driver notes)", required: false
-        input name: "sofabatonActivityId", type: "number", title: "Sofabaton Activity ID (X2 only -- read from the activity_control_up MQTT payload while triggering this activity)", required: false
+        input name: "webhookUrlOn", type: "text", title: "Start Activity Webhook URL", required: false
+        input name: "webhookUrlOff", type: "text", title: "Stop Activity Webhook URL (optional, unconfirmed feature)", required: false
+        input name: "sofabatonActivityId", type: "number", title: "Sofabaton Activity ID (X2 only)", required: false
         input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: false
         input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
     }
@@ -86,9 +66,7 @@ void logsOff() {
 }
 
 // ============================================================
-// ================= REAL COMMANDS =============================
-// Picks X1S cloud webhook or X2 local MQTT based on which fields
-// are configured on this device.
+// Commands
 // ============================================================
 
 void on() {
@@ -100,7 +78,7 @@ void on() {
         publishMqttCommand(sofabatonActivityId as Integer, "on")
         return
     }
-    log.error "$device.label: no Start Activity Webhook URL or Sofabaton Activity ID configured, cannot start this activity"
+    log.error "$device.label: no webhook URL or Sofabaton Activity ID configured, cannot start this activity"
 }
 
 void off() {
@@ -109,45 +87,46 @@ void off() {
         return
     }
     if (sofabatonActivityId != null) {
-        // UNCONFIRMED: no per-activity MQTT "stop" has been observed against real
-        // hardware -- only a hub-wide Power Off (activity_id 255, confirmed via
-        // testing) that turns every activity on the hub off at once. Until/unless
-        // a real per-activity stop is confirmed, off() here mirrors that: it powers
-        // off the WHOLE hub, not just this activity, and says so.
-        log.warn "$device.label: X2's MQTT protocol has no confirmed per-activity stop -- off() will power off the entire hub, turning off any other running activity on it too"
+        log.warn "$device.label: X2 has no confirmed per-activity stop, off() powers off the entire hub"
         publishMqttCommand(255, "off")
         return
     }
     if (!webhookUrlOn) {
-        log.error "$device.label: no Stop Activity Webhook URL or Sofabaton Activity ID configured, cannot stop this activity"
+        log.error "$device.label: no webhook URL or Sofabaton Activity ID configured, cannot stop this activity"
         return
     }
-    log.warn "$device.label: no Stop Activity Webhook URL configured -- this Sofabaton feature is unconfirmed against real hardware, see driver notes. Setting local state only, no command sent."
+    log.warn "$device.label: no Stop Activity Webhook URL configured, setting local state only"
     syncOff()
 }
 
 // ============================================================
-// ================= X1S CLOUD WEBHOOK PATH =====================
+// Cloud webhook (X1S, or X2 workaround). One retry after 2s.
 // ============================================================
 
 private void sendWebhookCall(String url, String intendedState, Integer attempt) {
+    String safeUrl = url?.trim()?.replace(" ", "%20")
+    if (safeUrl != url && logEnable) log.debug "$device.label: encoded webhook URL: $safeUrl"
     if (txtEnable) log.info "$device.label: calling Sofabaton webhook (attempt $attempt) to set $intendedState"
-    def params = [uri: url, timeout: 8]
-    asynchttpGet("handleWebhookResponse", params, [intendedState: intendedState, attempt: attempt, url: url])
+    asynchttpGet("handleWebhookResponse", [uri: safeUrl, timeout: 20], [intendedState: intendedState, attempt: attempt, url: safeUrl])
 }
 
 void handleWebhookResponse(resp, data) {
-    Integer status = resp?.status
+    Integer status = null
+    try { status = resp?.status } catch (e) { }
+    String errMsg = "unavailable"
+    try { errMsg = resp?.errorMessage ?: "none" } catch (e) { }
+    String bodyText = "unavailable"
+    try { bodyText = resp?.getData() ?: "none" } catch (e) { }
     boolean ok = (status != null && status >= 200 && status < 300)
     if (ok) {
         if (txtEnable) log.info "$device.label: Sofabaton webhook call succeeded (${status})"
         sendEvent(name: "switch", value: data.intendedState)
         sendEvent(name: "lastCallStatus", value: "success (${status})")
     } else if ((data.attempt as Integer) < 2) {
-        log.warn "$device.label: Sofabaton webhook call failed (${status}), retrying once"
+        log.warn "$device.label: Sofabaton webhook call failed (status=${status}, error=${errMsg}, data=${bodyText}), retrying once"
         runIn(2, "retryWebhookCall", [data: [url: data.url, intendedState: data.intendedState, attempt: (data.attempt as Integer) + 1]])
     } else {
-        log.error "$device.label: Sofabaton webhook call failed after retry (${status})"
+        log.error "$device.label: Sofabaton webhook call failed after retry (status=${status}, error=${errMsg}, data=${bodyText}, url=${data.url})"
         sendEvent(name: "lastCallStatus", value: "failed (${status})")
     }
     sendEvent(name: "lastCallTime", value: new Date().toString())
@@ -158,18 +137,16 @@ void retryWebhookCall(data) {
 }
 
 // ============================================================
-// ================= X2 LOCAL MQTT PATH =========================
-// Delegates to the parent Sofabaton Remote device, which forwards to the
-// Bridge's shared MQTT connection. MQTT publish has no synchronous
-// delivery confirmation, so state here is set optimistically rather than
-// waiting on a response the way the webhook path does.
+// Local MQTT (X2). Goes Remote -> Bridge, which owns the connection.
+// Debug logs at each hop trace a command end to end.
 // ============================================================
 
 private void publishMqttCommand(Integer activityId, String desiredState) {
     if (!parent) {
-        log.error "$device.label: no parent Sofabaton Remote device found, cannot send MQTT activity command"
+        log.error "$device.label: no parent Sofabaton Remote device found, cannot send MQTT command"
         return
     }
+    if (logEnable) log.debug "$device.label: requesting MQTT activityId=$activityId state=$desiredState via ${parent.displayName}"
     parent.componentPublishActivityControl(device, activityId, desiredState)
     sendEvent(name: "switch", value: desiredState)
     sendEvent(name: "lastCallStatus", value: "sent (MQTT, unconfirmed delivery)")
@@ -177,19 +154,15 @@ private void publishMqttCommand(Integer activityId, String desiredState) {
 }
 
 // ============================================================
-// ============= STATE SYNC (local, no network) =================
-// Called only by the parent Remote device when the physical remote or hub
-// changed activity on its own (X1S: HTTP button match. X2: parsed MQTT
-// broadcast).
+// State sync (local only, no network call)
 // ============================================================
 
 void syncOn() {
-    if (txtEnable) log.info "$device.label: state sync -- now on (via remote/hub, no cloud/MQTT call made)"
+    if (txtEnable) log.info "$device.label: now on (changed from remote/hub)"
     sendEvent(name: "switch", value: "on")
 }
 
 void syncOff() {
-    if (txtEnable) log.info "$device.label: state sync -- now off (via remote/hub, no cloud/MQTT call made)"
+    if (txtEnable) log.info "$device.label: now off (changed from remote/hub)"
     sendEvent(name: "switch", value: "off")
 }
-   
