@@ -6,208 +6,33 @@
     fork of Derek Osborn's (dJOS1475) Hubitat community driver, built on
     push-command building blocks originated by Mike Maxwell (mike.maxwell).
 
-    2026-09-10 jdthomas24
-        -Initial publication
-    2026-09-16 jdthomas24
-        -Fixed addHubPage: removed submitOnChange from newHubIp/newHubMac/
-         newHubMqttHost, which was forcing a page postback (and required-
-         field validation reset) on every keystroke into those fields.
-        -Relabeled the X2 MAC field to "Sofabaton Hub MAC ID" and added
-         guidance on where to find it (it's the X2's own MAC, read out of
-         the activity_control_up topic name via a tool like MQTT Explorer --
-         not the Hubitat hub's MAC, which is an easy mix-up).
-        -Fixed getBridge() to lazily create the Bridge device if missing,
-         instead of only creating it in initialize() (which only runs after
-         the first "Done" on the main page). Previously, adding a hub before
-         ever completing that first install would silently fail since there
-         was no Bridge yet to attach the child device to.
-        -Added a "Listen for Next Activity" button to the X2 branch of Add
-         Activity, working with the Bridge driver's new learn-mode support:
-         press Listen, press the activity's button on the physical remote,
-         and the numeric Sofabaton Activity ID auto-fills, no more manual
-         MQTT Explorer lookup required. Page auto-refreshes while listening.
-        -Added a "Cancel and go back" link to both Add Hub and Add Activity,
-         and mainPage() now clears any half-entered fields from those pages
-         whenever it's reached, so a cancelled attempt doesn't leave stale
-         values sitting in the form the next time it's opened.
-        -Changed the Hub Model dropdown from "X1/X1S" to just "X1S", since
-         the plain X1 isn't supported by the underlying driver this forks.
-        -Main page now lists each hub's activities nested underneath it
-         instead of just a count, so with multiple hubs it's clear which
-         activity belongs to which hub.
-        -Added Edit (name, and for X2 the broker host/port/user/pass) and
-         Remove for hubs, and Remove for activities, right on the main
-         page. Model, MAC, and X1S IP are intentionally not editable after
-         creation (those change the device's DNI) -- remove and re-add if
-         one of those needs to change. Editing relies on new mqttHost/
-         mqttPort/mqttUser attributes published by the Remote driver.
-        -FIXED A REAL BUG: neither Add Hub nor Add Activity had an actual
-         "finish" button for fields with no submitOnChange (the X2 broker
-         fields, the X1S webhook URL fields). The only clickable thing on
-         the page was the "Cancel and go back" link, which jumps straight
-         to mainPage() without ever running the creation logic in
-         addHubPage()/addActivityPage() -- and since mainPage() clears
-         those fields on entry, clicking Cancel (easy to do by mistake,
-         since it looked like the way to finish) silently discarded
-         everything with zero error, zero log output. Added explicit
-         "Add This Hub" / "Add This Activity" buttons that actually submit
-         the page and trigger creation.
-        -FIXED ANOTHER REAL BUG: the Listen-mode methods (startActivityLearn,
-         getActivityLearnResult, cancelActivityLearn, clearActivityLearnResult)
-         live on the Bridge device, but addActivityPage() and
-         appButtonHandler() were calling them on the individual hub
-         (Remote) device instead -- those methods don't exist there, so
-         every click of "Listen for Next Activity" would have errored out
-         silently. Now calls bridge.* directly.
-        -FIXED A THIRD REAL BUG: required:true on the page's inputs (Hub
-         Name, Hub Model, etc.) triggers the browser's own HTML5 "please
-         fill out this field" validation, which blocks submitting the form
-         at all -- including clicking "Cancel and go back", since it's the
-         same <form>. That made Cancel completely unusable on a partially
-         filled page. Dropped required:true from every field on both
-         pages; the app's own logic already gates real creation on those
-         fields being present, so nothing is lost except the native red
-         asterisk/validation nudge.
-        -FIXED A FOURTH REAL BUG: Edit used an href with params to reach
-         addHubPage(), but the main page also has a plain "Add a Hub" href
-         to that same page name with no params -- Hubitat has a confirmed
-         platform bug where multiple hrefs targeting the same page name
-         with different params can mix up or drop those params. Replaced
-         Edit (and Cancel, for consistency and to let it properly exit
-         edit mode) with buttons that set/clear state directly instead,
-         the same button+state pattern already proven reliable tonight
-         for Remove and Listen mode.
-        -FIXED A FIFTH REAL BUG: Edit's prefill step and its save-check ran
-         in the same page pass -- the prefill echoed the hub's own current
-         values into the form fields, and the very next lines immediately
-         re-read those same fields as if the user had just submitted them,
-         silently saving (a no-op, since it was the hub's own data) and
-         returning to the main page before the form was ever shown. Added
-         a justPrefilled guard so the save-check only fires on an actual
-         later postback (the Save button), not the same pass as prefill.
-        -Wrapped each hub's summary line in a bordered/pill-styled box
-         (model shown as a small badge) instead of plain text, so multiple
-         hubs read as distinct cards rather than a flat list.
-        -Styled the model badge blue, capped the card's width instead of
-         stretching full-page, and put Edit/Remove side by side (width: 6
-         each) instead of stacked, using Hubitat's input width grid.
-        -FIXED A SIXTH REAL BUG (same family as the Hub Edit one, caught
-         proactively before it surfaced): if the Activity Name was typed
-         before pressing Listen, the auto-refresh that captures the ID
-         would read it as a real submission on that same pass and silently
-         create the Activity before the user ever saw the captured ID.
-         Added the same justCaptured-style guard so a captured ID only
-         fills the field; creation still requires an explicit later click
-         of "Add This Activity".
-        -Main page now shows each X2 activity's Sofabaton Activity ID
-         inline next to its name (e.g. "Watch TV (ID: 101)"), so it's
-         visible without opening the device page.
-        -FIXED A SEVENTH REAL BUG, confirmed by live logs this time: the
-         page's refreshInterval (meant to auto-poll while Listening) was
-         bouncing straight back to mainPage() every cycle instead of
-         reloading addActivityPage() -- matches a known class of Hubitat
-         auto-refresh bug (confirmed via community reports of the same
-         "bounces back unexpectedly" behavior). Removed refreshInterval
-         entirely rather than fight an unreliable platform mechanism;
-         Listen mode now relies on state persisting across navigation
-         instead -- press Listen, press the remote whenever, then simply
-         reopen Add an Activity and the captured ID will already be there.
-        -SUPERSEDED the justPrefilled/justCapturedLearn patches above with
-         a more fundamental fix, after a live test showed the underlying
-         bug family wasn't actually closed: any field becoming non-null on
-         its own (Edit's prefill, Listen's capture) could still trigger a
-         save on a LATER, unrelated page reload, not just the exact same
-         pass -- because the save logic only ever checked "are the fields
-         full", never "did the user actually just click Save". Both
-         addHubPage() and addActivityPage() now gate all creation/update
-         behind an explicit state.hubSaveRequested / state.
-         activitySaveRequested flag, set only by the Save button's own
-         click handler and consumed (cleared) the instant it's checked.
-         Field values being present is no longer sufficient on its own,
-         under any circumstance, to trigger a save. A saveError message
-         now also shows on the page if Save is clicked with required
-         fields still missing, instead of silently doing nothing.
-        -FIXED: added a missing uninstalled() method. Without it, removing
-         the app left the Bridge device (and everything under it) orphaned
-         on the hub with nothing to clean it up, guaranteeing a DNI
-         conflict on the next install. Now explicitly deletes the Bridge
-         child, which triggers its own uninstalled() to tear down MQTT and
-         its children in turn.
-    2026-09-18 jdthomas24
-        -Added optional webhook URL fields to the X2 branch of Add
-         Activity, alongside the existing Sofabaton Activity ID field.
-         Context: local MQTT command delivery on this platform currently
-         appears to be broken at the interfaces.mqtt level (confirmed via
-         a minimal isolated test driver -- connect and subscribe both
-         succeed, but zero incoming messages are ever delivered, for any
-         topic, from any publisher, on this platform version). Filed with
-         Hubitat. Reads (state sync from the physical remote) are
-         unaffected and still work over MQTT. Sofabaton's own app exposes
-         a cloud webhook ("Turn on API") for starting/stopping an
-         activity, and the Activity driver has always supported
-         webhookUrlOn/webhookUrlOff -- this page just never offered those
-         fields for X2 hubs before, since MQTT was assumed to be the whole
-         story. Now an X2 activity can optionally take a webhook URL too:
-         the Activity driver already checks webhookUrlOn/Off before
-         falling back to MQTT, so filling one in gives a real, working
-         command path today, and remains available afterward as a
-         cloud-dependent alternative to local MQTT for anyone who wants
-         it, once MQTT itself is working again. Sofabaton Activity ID
-         remains required for X2 either way, since it's still what drives
-         read-side state sync from the physical remote.
-        -Added Edit for Activities (name, webhook URLs, and for X2 the
-         Sofabaton Activity ID) -- previously only Remove existed, so
-         fixing a typo'd webhook URL or ID meant going to the Activity
-         device's own Preferences page directly. Same button+state pattern
-         as Hub Edit (state.editingActivityKey = "<hubDni>|<actDni>"),
-         same explicit-save-flag gating, same reasoning throughout.
-        -Added a "don't forget to hit Done" reminder paragraph on the main
-         page once at least one hub exists, since hitting Done (not just
-         "Add This Hub"/"Add This Activity") is what actually finalizes
-         the app install -- easy to miss on first use.
-        -Swapped the visual emphasis on hub/activity listing rows: the
-         model badge (X2/X1S) and the activity's Sofabaton Activity ID are
-         now the larger, bolder elements (what you actually scan for),
-         while the hub/activity's own name is smaller text beside them.
-    2026-09-21 jdthomas24
-        -Added an in-app Setup Guide (helpPage(), linked from the top of
-         the main page) covering the full walkthrough for both hub
-         models: static IP prerequisite, local HTTP setup (X1S) vs MQTT
-         broker + MAC lookup (X2), the separate cloud "Turn on API"
-         webhook step for both, an FAQ (what buttons 11-20 mean, how
-         name matching works for X1S, where the webhook URL goes, the
-         space-encoding behavior), and a Known Issues note about X2's
-         current MQTT write limitation. Ships with the app itself rather
-         than living only in an external README -- content mirrors
-         SETUP-GUIDE.md; keep both in sync if either is updated.
-
-    *OVERVIEW
-     Parent app for the Sofabaton Integration. Manages one or more physical
-     Sofabaton hubs (X1S/X2), each as its own "Sofabaton Remote" child device
-     nested under a single "Sofabaton Integration Bridge" grouping device, and
-     lets each hub have one or more "Sofabaton Activity" child devices nested
-     under IT for the activities you want to control/observe.
-
-     X1S hubs are identified by IP and use a local HTTP listener. X2 hubs are
-     identified by MAC address and share one MQTT connection (held by the
-     Bridge device) across however many X2 hubs you add -- confirmed against
-     real hardware. Adding an X2 hub here also wires up that shared MQTT
-     connection.
-
-     Adding an Activity asks for different things depending on the hub's
-     model: an X1S activity needs a Start (and optional Stop) webhook URL.
-     An X2 activity needs its numeric Sofabaton Activity ID (drives
-     read-side MQTT state sync from the physical remote), and can
-     optionally also take a webhook URL for command delivery -- see the
-     2026-09-18 note above for why that option exists alongside MQTT.
-
-     This app only handles setup (adding/removing hubs and activities).
-     Runtime behaviour -- local button routing, MQTT connect/subscribe/
-     publish, cloud webhook calls, and Activity state sync when the
-     physical remote is used -- lives entirely in the Bridge, Remote, and
-     Activity drivers; this app does not subscribe to or process any device
-     events itself.
+    Notes:
+     -Setup only. Runtime (HTTP listener, MQTT, webhooks, state sync) lives in
+      the Bridge, Remote, and Activity drivers.
+     -Device tree: Bridge -> one Remote per hub -> one Activity per activity.
+      X1S keyed by IP (ipToHex DNI), X2 keyed by bare uppercase MAC.
+     -X2 activities require a Sofabaton Activity ID. Webhook URLs are optional
+      and take priority over MQTT when set.
+     -Add/Edit pages save ONLY on an explicit Save click (state.*SaveRequested),
+      never because fields happen to be filled. Edit/Remove use buttons + state,
+      not hrefs with params (Hubitat drops params across same-page hrefs).
+     -No refreshInterval on Add Activity (bounced to mainPage). Listen result
+      persists in the Bridge until the page is reopened.
+     -Model, MAC, and X1S IP set the DNI, so they're not editable. Remove and re-add.
+     -UI follows HubitatAppUiTemplate (Reolink v1.6.1, UI design by gopher.ny).
 */
+
+import groovy.transform.Field
+
+@Field static final String APP_NAME = "Sofabaton Integration"
+@Field static final String APP_VERSION = "0.9.0"
+@Field static final String COMMUNITY_URL = "https://community.hubitat.com"   // TODO: release thread
+@Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
+@Field static final String DEFAULT_TIP_TOPIC = "start"
+@Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
+
+@Field static final String HUBITAT_PILL = "<span style='background:#1976d2;color:#fff;border-radius:8px;padding:1px 9px;font-size:0.75em;font-weight:bold'>HUBITAT</span>"
+@Field static final String SOFABATON_PILL = "<span style='background:#7c4dff;color:#fff;border-radius:8px;padding:1px 9px;font-size:0.75em;font-weight:bold'>SOFABATON APP</span>"
 
 definition(
     name: "Sofabaton Integration",
@@ -226,190 +51,220 @@ preferences {
     page(name: "mainPage")
     page(name: "addHubPage")
     page(name: "addActivityPage")
-    page(name: "helpPage")
+    page(name: "tipsPage")
 }
 
-def installed() {
-    initialize()
-}
+def installed() { initialize() }
 
-def updated() {
-    initialize()
-}
+def updated() { initialize() }
 
-// Without this, removing the app leaves the Bridge (and everything under
-// it) orphaned on the hub -- nothing would ever clean it up, and the next
-// install would immediately hit the same DNI-conflict mess this whole
-// project fought through tonight. Explicitly delete the Bridge child here;
-// deleting it triggers the Bridge driver's own uninstalled(), which is
-// responsible for tearing down MQTT and its own children in turn.
+// Deleting the Bridge triggers its own uninstalled(), which tears down MQTT and children.
 def uninstalled() {
-    def bridge = getBridge()
+    def bridge = getChildDevice(bridgeDni())
     if (bridge) {
         try {
             deleteChildDevice(bridge.deviceNetworkId)
         } catch (e) {
-            log.error "Sofabaton Integration: failed to remove Bridge device on uninstall: ${e.message}"
+            logErr "failed to remove Bridge device on uninstall: ${e.message}"
         }
     }
 }
 
 def initialize() {
-    if (!getBridge()) {
-        addChildDevice("jdthomas24", "Sofabaton Integration Bridge", bridgeDni(), [label: "Sofabaton Integration Bridge"])
-    }
+    getBridge()
 }
 
 private String bridgeDni() {
     return "sofabaton-bridge-${app.id}"
 }
 
+// Created lazily: a first-run user can open Add a Hub before ever tapping Done.
 def getBridge() {
     def bridge = getChildDevice(bridgeDni())
     if (!bridge) {
-        // Lazily create the Bridge if it doesn't exist yet. installed()/
-        // updated() only fire once the user hits "Done" on the main page,
-        // but a first-run user can navigate straight into Add a Hub before
-        // that happens -- without this, the hub-creation calls below would
-        // silently fail with no Bridge to attach the child device to.
-        log.debug "getBridge() -- Bridge not found, creating it now"
+        logDbg "Bridge not found, creating it"
         bridge = addChildDevice("jdthomas24", "Sofabaton Integration Bridge", bridgeDni(), [label: "Sofabaton Integration Bridge"])
     }
     return bridge
 }
 
-def mainPage() {
-    log.debug "mainPage() entered -- state.editingHubDni=${state.editingHubDni}, state.editingActivityKey=${state.editingActivityKey}"
-    // Edit mode is entered by a button (editHub_<dni> / editAct_<hubDni>_<actDni>)
-    // rather than an href with params -- Hubitat has a known bug where
-    // multiple hrefs on one page targeting the SAME page name with
-    // different params can mix up or drop those params. A button + state
-    // sidesteps it entirely.
-    if (state.editingHubDni) {
-        return addHubPage()
-    }
-    if (state.editingActivityKey) {
-        return addActivityPage()
-    }
+// ============================================================================
+// Logging
+// ============================================================================
 
-    // Wipe any half-entered Add Hub / Add Activity fields whenever we land
-    // back here normally, so a cancelled attempt doesn't leave stale
-    // values sitting in those forms the next time they're opened.
+private String currentLogLevel() {
+    return LOG_LEVELS.contains(logLevel) ? logLevel : "Errors Only"
+}
+
+private void logErr(String msg) { log.error "${APP_NAME}: ${msg}" }
+private void logWarn(String msg) { log.warn "${APP_NAME}: ${msg}" }
+private void logInfo(String msg) { if (currentLogLevel() != "Errors Only") log.info "${APP_NAME}: ${msg}" }
+private void logDbg(String msg) { if (currentLogLevel() == "Full") log.debug "${APP_NAME}: ${msg}" }
+
+// Full logging reverts to Errors Only after 30 minutes.
+private void armLogRevert() {
+    if (currentLogLevel() == "Full") {
+        if (!state.fullLogArmed) {
+            runIn(1800, "revertLogLevel")
+            state.fullLogArmed = true
+        }
+    } else {
+        state.remove("fullLogArmed")
+    }
+}
+
+void revertLogLevel() {
+    state.remove("fullLogArmed")
+    if (currentLogLevel() == "Full") {
+        app.updateSetting("logLevel", [value: "Errors Only", type: "enum"])
+        log.warn "${APP_NAME}: Full logging turned off after 30 minutes"
+    }
+}
+
+// ============================================================================
+// Main page
+// ============================================================================
+
+def mainPage() {
+    if (state.editingHubDni) return addHubPage()
+    if (state.editingActivityKey) return addActivityPage()
+
+    // Clear half-entered Add Hub / Add Activity fields from a cancelled attempt.
     clearHubSettings()
     clearActivitySettings()
     state.remove("learnStartedFor")
     state.remove("activitySaveRequested")
+    armLogRevert()
 
-    dynamicPage(name: "mainPage", title: "Manage your hubs and activities", install: true, uninstall: true) {
-        def bridge = getBridge()
-        def hubs = bridge?.getChildDevices() ?: []
+    def bridge = getBridge()
+    def hubs = bridge?.getChildDevices() ?: []
+    def x2Hubs = hubs.findAll { it.currentValue("hubModel") == "X2" }
+    int activityCount = (hubs.collect { (it.getChildDevices() ?: []).size() }.sum() ?: 0) as int
+    Map banner = bannerState(bridge, hubs, x2Hubs, activityCount)
 
+    dynamicPage(name: "mainPage", install: true, uninstall: true) {
         section {
-            href name: "toHelpPage", title: "📖 Setup Guide", description: "Full walkthrough: X1S vs X2, webhooks, button mapping, FAQ", page: "helpPage"
+            paragraph rawHtml: true, statusBannerHtml(banner.ok, banner.title, banner.summary)
         }
-
-        section {
-            paragraph "<span style='background:#1976d2;color:#fff;border-radius:14px;padding:4px 14px;font-size:1.1em;font-weight:bold'>Hubs</span>"
+        section(sectionClass: "app-main-content") {
+            paragraph rawHtml: true, columnHeader("Hubs")
             if (!hubs) {
-                paragraph "No hubs added yet."
-            } else {
-                hubs.each { hub ->
-                    def activities = hub.getChildDevices() ?: []
-                    String model = hub.currentValue("hubModel") ?: "unknown model"
-                    String idShown = model == "X2" ? (hub.currentValue("remoteMac") ?: "no MAC set") : (hub.currentValue("remoteIp") ?: "no IP set")
-                    // 2026-09-18: activities are now full pills of their
-                    // own (name + ID badge together, rounded, light fill)
-                    // instead of plain indented text with a vertical
-                    // border line -- the line felt like clutter once each
-                    // row had its own visual weight. Section headers
-                    // ("Hubs"/"Activities") are now blue pills too, same
-                    // family as the model badge, for a consistent look.
-                    StringBuilder card = new StringBuilder()
-                    card << "<div style='border:1px solid #ccc;border-radius:10px;padding:12px 14px;margin-bottom:4px;background:#fafafa'>"
-                    card << "<div><span style='background:#5f8b6f;color:#fff;border-radius:8px;padding:2px 9px;font-size:0.9em;font-weight:bold'>${model}</span> "
-                    card << "<span style='font-size:0.85em'>${hub.getLabel()}</span> "
-                    card << "<span style='color:#888;font-size:0.8em'>${idShown}</span></div>"
-                    if (!activities) {
-                        card << "<div style='margin-top:10px;color:#aaa;font-size:0.85em'>No activities yet.</div>"
-                    } else {
-                        card << "<div style='margin-top:10px;display:flex;flex-wrap:wrap;gap:8px'>"
-                        activities.each { act ->
-                            String idBadge = model == "X2" ? " <span style='background:#455a64;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.85em;font-weight:bold'>ID ${act.currentValue('sofabatonActivityId') ?: '?'}</span>" : ""
-                            // 2026-09-18: every activity now gets a
-                            // delivery tag, not just X2. X1S only ever
-                            // has one real path (Sofabaton's cloud
-                            // webhook), so it always tags "Webhook" --
-                            // consistent labeling beats a tag that only
-                            // sometimes shows up depending on hub model.
-                            // X2 checks which path is actually configured
-                            // since it genuinely has a choice. Amber for
-                            // webhook (cloud-dependent, a deliberate
-                            // "heads up, this one relies on the internet"
-                            // cue), teal for MQTT (local).
-                            String deliveryTag
-                            if (model == "X2") {
-                                boolean hasWebhook = (act.getSetting("webhookUrlOn") as boolean)
-                                deliveryTag = hasWebhook ?
-                                    " <span style='background:#e8a33d;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>Webhook</span>" :
-                                    " <span style='background:#26897a;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>MQTT</span>"
-                            } else {
-                                deliveryTag = " <span style='background:#e8a33d;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>Webhook</span>"
-                            }
-                            card << "<span style='display:inline-block;background:#e3eaf3;border-radius:20px;padding:6px 14px;font-size:0.9em'>${act.getLabel()}${idBadge}${deliveryTag}</span>"
-                        }
-                        card << "</div>"
-                    }
-                    card << "</div>"
-                    paragraph card.toString()
-                    // 2026-09-18: each pair is exactly width:3+3=6, so
-                    // two pairs together always sum to a full 12-wide row
-                    // -- no explicit row-break needed between the hub's
-                    // pair and the first activity's pair, they naturally
-                    // share one clean row (Edit Hub, Remove Hub, Edit
-                    // Activity, Remove Activity, each pair still visually
-                    // adjacent). This keeps working automatically as more
-                    // activities are added too: every 2 pairs (4 buttons)
-                    // fills a row exactly, so the next pair always starts
-                    // a fresh row on its own rather than splitting awkwardly
-                    // mid-pair.
-                    input name: "editHub_${hub.deviceNetworkId}", type: "button", title: "Edit Hub", width: 3
-                    input name: "removeHub_${hub.deviceNetworkId}", type: "button", title: "Remove Hub", width: 3
-                    activities.each { act ->
-                        input name: "editAct_${hub.deviceNetworkId}_${act.deviceNetworkId}", type: "button", title: "Edit Activity", width: 3
-                        input name: "removeAct_${hub.deviceNetworkId}_${act.deviceNetworkId}", type: "button", title: "Remove Activity", width: 3
-                    }
-                    paragraph "<div style='margin-bottom:10px'></div>"
+                paragraph "<span class='text-color-secondary'>No hubs added yet.</span>"
+            }
+            hubs.each { hub ->
+                def activities = hub.getChildDevices() ?: []
+                paragraph rawHtml: true, hubCardHtml(hub, activities)
+                // Pairs of width 3 fill a 12-wide row every two pairs.
+                input name: "editHub_${hub.deviceNetworkId}", type: "button", title: "Edit Hub", width: 3
+                input name: "removeHub_${hub.deviceNetworkId}", type: "button", title: "Remove Hub", width: 3
+                activities.each { act ->
+                    input name: "editAct_${hub.deviceNetworkId}_${act.deviceNetworkId}", type: "button", title: "Edit Activity", width: 3
+                    input name: "removeAct_${hub.deviceNetworkId}_${act.deviceNetworkId}", type: "button", title: "Remove Activity", width: 3
                 }
+                paragraph "<div style='margin-bottom:6px'></div>"
             }
-            href name: "toAddHub", title: "Add a Hub", page: "addHubPage"
-        }
-
-        if (hubs) {
-            section {
-                paragraph "<span style='background:#1976d2;color:#fff;border-radius:14px;padding:4px 14px;font-size:1.1em;font-weight:bold'>Activities</span>"
-                href name: "toAddActivity", title: "Add an Activity", page: "addActivityPage"
-            }
-            section {
-                paragraph "<span style='color:#888;font-size:0.85em'>Don't forget to tap <b>Done</b> below once you're finished adding hubs and activities -- it's what actually finalizes the app install.</span>"
+            href name: "toAddHub", title: "Add a Hub", description: "X1S or X2", page: "addHubPage", width: 12, style: "margin:8px;"
+            if (hubs) {
+                href name: "toAddActivity", title: "Add an Activity", description: "Attach an activity to one of your hubs", page: "addActivityPage", width: 12, style: "margin:8px;"
+                paragraph "<span class='text-color-secondary' style='font-size:14px;'>Tap <b>Done</b> when finished. That's what finalizes the install.</span>"
             }
         }
+        section(sectionClass: "app-main-settings") {
+            paragraph rawHtml: true, columnHeader("Quick Settings")
+            if (x2Hubs) {
+                paragraph rawHtml: true, mqttStatusHtml(bridge, x2Hubs)
+            }
+            input "logLevel", "enum", title: "Log level", options: LOG_LEVELS,
+                defaultValue: "Errors Only", submitOnChange: true, width: 12,
+                style: "margin-left: 0.5em; margin-right: 0.5em; margin-top: 0; padding-right:0;"
+            paragraph rawHtml: true, loggingDetailsPopupHtml()
+        }
+        helpAndSupportSection()
+        versionFooterSection()
     }
 }
 
+// Green only when everything is confirmed. X2 needs a real MQTT message, not just a connection.
+private Map bannerState(bridge, List hubs, List x2Hubs, int activityCount) {
+    String counts = "${countText(hubs.size(), 'hub')} &middot; ${countText(activityCount, 'activity', 'activities')}"
+    if (!hubs) {
+        return [ok: false, title: "Setup required", summary: "Add a hub to get started. Tips &amp; Troubleshooting has the full walkthrough."]
+    }
+    String mqtt = bridge?.currentValue("mqttStatus")
+    if (x2Hubs && mqtt in ["error", "connect failed"]) {
+        return [ok: false, title: "MQTT connection problem", summary: "${counts} &middot; Check the X2 broker details, then run Force Reconnect on the Bridge device."]
+    }
+    def waiting = x2Hubs.findAll { !it.currentValue("lastMqttMessage") }
+    if (waiting) {
+        String names = waiting.collect { it.getLabel() }.join(", ")
+        return [ok: false, title: "Waiting for first MQTT message", summary: "${counts} &middot; Nothing received yet from ${names}. See Known issue in Tips."]
+    }
+    return [ok: true, title: "Integration ready", summary: counts]
+}
+
+private String hubCardHtml(hub, List activities) {
+    String model = hub.currentValue("hubModel") ?: "unknown"
+    boolean x2 = model == "X2"
+    String idShown = x2 ? (hub.currentValue("remoteMac") ?: "no MAC set") : (hub.currentValue("remoteIp") ?: "no IP set")
+    StringBuilder card = new StringBuilder()
+    card << "<div style='border:1px solid #ccc;border-radius:10px;padding:12px 14px;margin:4px 0;background:#fafafa'>"
+    card << "<div><span style='background:#5f8b6f;color:#fff;border-radius:8px;padding:2px 9px;font-size:0.9em;font-weight:bold'>${model}</span> "
+    card << "<span style='font-size:0.85em'>${hub.getLabel()}</span> "
+    card << "<span style='color:#888;font-size:0.8em'>${idShown}</span></div>"
+    if (x2) {
+        String seen = hub.currentValue("lastMqttMessage")
+        card << "<div style='margin-top:6px;font-size:0.8em;color:${seen ? '#5f8b6f' : '#b26a00'}'>"
+        card << (seen ? "Last MQTT message: ${seen}" : "Waiting for first MQTT message") << "</div>"
+    }
+    if (!activities) {
+        card << "<div style='margin-top:10px;color:#aaa;font-size:0.85em'>No activities yet.</div>"
+    } else {
+        card << "<div style='margin-top:10px;display:flex;flex-wrap:wrap;gap:8px'>"
+        activities.each { act ->
+            String idBadge = x2 ? " <span style='background:#455a64;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.85em;font-weight:bold'>ID ${act.currentValue('sofabatonActivityId') ?: '?'}</span>" : ""
+            // X1S is always webhook. X2 shows whichever path is configured. Amber = cloud, teal = local.
+            boolean webhook = !x2 || (act.getSetting("webhookUrlOn") as boolean)
+            String tag = webhook ?
+                " <span style='background:#e8a33d;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>Webhook</span>" :
+                " <span style='background:#26897a;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>MQTT</span>"
+            card << "<span style='display:inline-block;background:#e3eaf3;border-radius:20px;padding:6px 14px;font-size:0.9em'>${act.getLabel()}${idBadge}${tag}</span>"
+        }
+        card << "</div>"
+    }
+    card << "</div>"
+    return card.toString()
+}
+
+private String mqttStatusHtml(bridge, List x2Hubs) {
+    String status = bridge?.currentValue("mqttStatus") ?: "not connected"
+    String tone = status == "connected" ? "bg-green-50 text-green-700" :
+        status in ["error", "connect failed"] ? "bg-red-50 text-red-700" : "bg-gray-100 text-gray-700"
+    String rows = x2Hubs.collect { h ->
+        "<div class='flex justify-content-between gap-3 py-1'><span>${h.getLabel()}</span>" +
+        "<span class='text-color-secondary' style='font-size:14px;'>${h.currentValue('lastMqttMessage') ?: 'No message yet'}</span></div>"
+    }.join("")
+    """
+<div class='border-1 border-gray-200 border-round px-3 py-2 mb-2'>
+  <div class='flex align-items-center justify-content-between gap-3 mb-1'>
+    <span class='font-semibold'>MQTT</span>
+    <span class='${tone} border-round-xl px-2 py-1 text-xs font-bold'>${status}</span>
+  </div>
+  ${rows}
+</div>
+"""
+}
+
+// ============================================================================
+// Add / Edit Hub
+// ============================================================================
+
 def addHubPage(params = [:]) {
-    log.debug "addHubPage() entered -- newHubName=${newHubName}, newHubModel=${newHubModel}, newHubIp=${newHubIp}, newHubMac=${newHubMac}, newHubMqttHost=${newHubMqttHost}, params=${params}, state.editingHubDni=${state.editingHubDni}, state.hubSaveRequested=${state.hubSaveRequested}"
+    logDbg "addHubPage() newHubName=${newHubName}, newHubModel=${newHubModel}, editing=${state.editingHubDni}, saveRequested=${state.hubSaveRequested}"
     if (state.hubPageCancelled) {
-        state.remove("hubPageCancelled")
-        state.remove("editingHubDni")
-        state.remove("editHubPrefilled")
-        state.remove("hubSaveRequested")
+        ["hubPageCancelled", "editingHubDni", "editHubPrefilled", "hubSaveRequested"].each { state.remove(it) }
         clearHubSettings()
         return mainPage()
     }
-    // Edit mode: entered via a href with params:[editDni: <hub dni>] from
-    // the main page's Edit link. Persisted in state so it survives the
-    // page's own submitOnChange postbacks (params are only present on the
-    // very first navigation in, not later reloads of the same page).
     if (params?.editDni) {
         state.editingHubDni = params.editDni
         state.remove("editHubPrefilled")
@@ -429,30 +284,21 @@ def addHubPage(params = [:]) {
         state.editHubPrefilled = true
     }
 
-    // ONLY an explicit click of "Add This Hub" / "Save Changes" -- which
-    // sets state.hubSaveRequested in appButtonHandler -- is ever treated
-    // as a real submission. Fields being non-null is not enough on its
-    // own: they can become non-null from Edit's prefill, or simply because
-    // the user filled them in earlier and the page reloaded for an
-    // unrelated reason (an auto-refresh, a stray postback). Gating on an
-    // explicit flag instead of "are the fields full" closes off that
-    // whole bug family at once rather than patching each trigger path
-    // individually.
     String saveError = null
     if (state.hubSaveRequested) {
         state.remove("hubSaveRequested")
         if (!editingHub && newHubName && newHubModel == "X1S" && newHubIp) {
-            log.debug "addHubPage() creating X1S hub '${newHubName}'"
+            logInfo "adding X1S hub '${newHubName}'"
             createHttpHub(newHubName, newHubIp)
             clearHubSettings()
             return mainPage()
         } else if (!editingHub && newHubName && newHubModel == "X2" && newHubMac && newHubMqttHost) {
-            log.debug "addHubPage() creating X2 hub '${newHubName}'"
+            logInfo "adding X2 hub '${newHubName}'"
             createMqttHub(newHubName, newHubMac, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass)
             clearHubSettings()
             return mainPage()
         } else if (editingHub && newHubName && (editingHub.currentValue("hubModel") == "X1S" || newHubMqttHost)) {
-            log.debug "addHubPage() updating existing hub '${editingDni}'"
+            logInfo "updating hub '${editingDni}'"
             updateExistingHub(editingHub, newHubName, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass)
             clearHubSettings()
             state.remove("editingHubDni")
@@ -463,54 +309,49 @@ def addHubPage(params = [:]) {
         }
     }
 
+    String editModel = editingHub?.currentValue("hubModel")
+    boolean showX2 = (!editingHub && newHubModel == "X2") || editModel == "X2"
+
     dynamicPage(name: "addHubPage", title: editingHub ? "Edit ${editingHub.getLabel()}" : "Add a Sofabaton Hub", install: false, uninstall: false) {
         section {
             input name: "cancelHubBtn", type: "button", title: "&larr; Cancel and go back"
         }
         if (saveError) {
-            section {
-                paragraph "<b style='color:#c00'>${saveError}</b>"
-            }
+            section { paragraph "<b style='color:#c00'>${saveError}</b>" }
         }
         section {
             input name: "newHubName", type: "text", title: "Hub Name (e.g. Living Room)"
             if (editingHub) {
-                paragraph "Model: <b>${editingHub.currentValue('hubModel')}</b> (can't be changed here -- remove and re-add if you need a different model)"
+                paragraph "Model: <b>${editModel}</b> <span class='text-color-secondary'>(remove and re-add to change)</span>"
             } else {
                 input name: "newHubModel", type: "enum", title: "Hub Model", options: ["X1S", "X2"], submitOnChange: true
             }
         }
         if (!editingHub && newHubModel == "X1S") {
             section {
-                input name: "newHubIp", type: "text", title: "Hub IP Address (set a static DHCP reservation first)"
+                input name: "newHubIp", type: "text", title: "Hub IP Address (set a DHCP reservation first)"
             }
         }
-        if (editingHub && editingHub.currentValue("hubModel") == "X1S") {
+        if (editModel == "X1S") {
             section {
-                paragraph "IP Address: <b>${editingHub.currentValue('remoteIp') ?: 'not set'}</b> (can't be changed here -- remove and re-add if it changed)"
+                paragraph "IP Address: <b>${editingHub.currentValue('remoteIp') ?: 'not set'}</b> <span class='text-color-secondary'>(remove and re-add to change)</span>"
             }
         }
-        if ((!editingHub && newHubModel == "X2") || (editingHub && editingHub.currentValue("hubModel") == "X2")) {
+        if (showX2) {
             section("MQTT Connection") {
-                paragraph "<b>Before adding an X2 hub, MQTT needs to be running on this Hubitat hub.</b><br>" +
-                    "Go to Integrations &rarr; Add Built-In App &rarr; MQTT Import Integration (or Export Integration), enable it, " +
-                    "and turn on 'Use built-in MQTT service' if you don't already have an external broker. " +
-                    "The app will show you a host, port, and login -- enter that same information below.<br>" +
-                    "Then, in the Sofabaton app, go to Devices &rarr; Add Device &rarr; Wi-Fi &rarr; Add Home Assistant Remote, " +
-                    "and enter the same broker details there so the hub connects to the same broker Hubitat does.<br><br>" +
-                    "<b>Sofabaton Hub MAC ID:</b> this is the X2's own MAC (12 hex characters, colons ok, they'll be stripped), " +
-                    "NOT your Hubitat hub's MAC. If you don't already have it, connect a tool like MQTT Explorer to the broker, " +
-                    "press an activity button on the remote, and read it out of the topic name: activity/&lt;MAC&gt;/activity_control_up"
+                paragraph rawHtml: true, warningMessageHtml("<b>Set up the broker first.</b> Enable Hubitat's MQTT broker, then in the Sofabaton app go to " +
+                    "<b>Me &rarr; Connect to Home Assistant (MQTT broker)</b> and enter the same details. " +
+                    "Full steps are in Tips &amp; Troubleshooting under X2 setup.")
                 if (editingHub) {
-                    paragraph "MAC ID: <b>${editingHub.deviceNetworkId}</b> (can't be changed here -- remove and re-add if it changed)"
+                    paragraph "MAC ID: <b>${editingHub.deviceNetworkId}</b> <span class='text-color-secondary'>(remove and re-add to change)</span>"
                 } else {
-                    input name: "newHubMac", type: "text", title: "Sofabaton Hub MAC ID (not your Hubitat hub's MAC -- see note above for how to find it)"
+                    input name: "newHubMac", type: "text", title: "Sofabaton Hub MAC ID (the X2's MAC, not your Hubitat hub's)"
                 }
-                input name: "newHubMqttHost", type: "text", title: "Hubitat Hub's LAN IP (running the broker -- not the Sofabaton hub's IP, not 127.0.0.1)"
+                input name: "newHubMqttHost", type: "text", title: "Broker Host (your Hubitat hub's LAN IP, not 127.0.0.1)"
                 input name: "newHubMqttPort", type: "text", title: "Broker Port", defaultValue: "1883", required: false
-                input name: "newHubMqttUser", type: "text", title: "Broker Username (leave blank if none)", required: false
-                input name: "newHubMqttPass", type: "password", title: "Broker Password (leave blank if none${editingHub ? ' -- leave blank to keep the current password' : ''})", required: false
-                paragraph "One shared MQTT connection is used for all X2 hubs you add -- entering broker details again for a second X2 hub reconnects to the same broker, it doesn't open a second connection."
+                input name: "newHubMqttUser", type: "text", title: "Broker Username (blank if none)", required: false
+                input name: "newHubMqttPass", type: "password", title: "Broker Password (blank if none${editingHub ? ', or to keep the current one' : ''})", required: false
+                paragraph "<span class='text-color-secondary' style='font-size:14px;'>All X2 hubs share one MQTT connection.</span>"
             }
         }
         section {
@@ -525,11 +366,7 @@ private void clearHubSettings() {
     }
 }
 
-// Applies edits to an already-existing hub in place (name always, plus the
-// X2 broker fields if this is an X2 hub -- model, MAC, and X1S IP are
-// intentionally not editable here, see addHubPage()'s notes on why).
-// Password is only overwritten if a new one was actually typed, so leaving
-// it blank on an edit keeps whatever was already saved.
+// Password only overwritten when a new one is typed.
 private void updateExistingHub(def hub, String name, String mqttHost, String mqttPort, String mqttUser, String mqttPass) {
     hub.setLabel(name)
     if (hub.currentValue("hubModel") == "X2") {
@@ -546,12 +383,12 @@ private void createHttpHub(String name, String ip) {
     if (!bridge) return
     String dni = ipToHexForApp(ip)
     if (!dni) {
-        log.error "Cannot add hub '$name': '$ip' is not a valid IPv4 address"
+        logErr "cannot add hub '$name': '$ip' is not a valid IPv4 address"
         return
     }
     def hub = bridge.createRemoteDevice(dni, name)
     if (!hub) {
-        log.error "Failed to create Remote device for hub '$name'"
+        logErr "failed to create Remote device for hub '$name'"
         return
     }
     hub.updateSetting("ip", [value: ip, type: "text"])
@@ -562,21 +399,19 @@ private void createHttpHub(String name, String ip) {
 private void createMqttHub(String name, String mac, String host, String port, String user, String pass) {
     def bridge = getBridge()
     if (!bridge) {
-        log.error "Cannot add hub '$name': Bridge device not found"
+        logErr "cannot add hub '$name': Bridge device not found"
         return
     }
     String dni = (mac ?: "").replaceAll(/[^A-Fa-f0-9]/, "").toUpperCase()
     if (dni.length() != 12) {
-        log.error "Cannot add hub '$name': '$mac' does not look like a valid 12-character MAC address"
+        logErr "cannot add hub '$name': '$mac' is not a valid 12-character MAC"
         return
     }
-    log.debug "createMqttHub() creating child device with DNI '${dni}' under bridge"
     def hub = bridge.createRemoteDevice(dni, name)
     if (!hub) {
-        log.error "Failed to create Remote device for hub '$name' (createRemoteDevice returned null -- check Bridge driver logs)"
+        logErr "failed to create Remote device for hub '$name' (check Bridge logs)"
         return
     }
-    log.debug "createMqttHub() child device created, setting hubModel/mac/mqtt* and calling updated()"
     hub.updateSetting("hubModel", [value: "X2", type: "enum"])
     hub.updateSetting("mac", [value: dni, type: "text"])
     hub.updateSetting("mqttHost", [value: host, type: "text"])
@@ -584,42 +419,31 @@ private void createMqttHub(String name, String mac, String host, String port, St
     if (user) hub.updateSetting("mqttUser", [value: user, type: "text"])
     if (pass) hub.updateSetting("mqttPass", [value: pass, type: "password"])
     hub.updated()
-    log.debug "createMqttHub() done"
+    logDbg "createMqttHub() done, DNI $dni"
 }
 
+// ============================================================================
+// Add / Edit Activity
+// ============================================================================
+
 def addActivityPage() {
-    log.debug "addActivityPage() entered -- newActivityHub=${newActivityHub}, newActivityName=${newActivityName}, newActivitySofabatonId=${newActivitySofabatonId}, newActivityUrlOn=${newActivityUrlOn}, state.learnStartedFor=${state.learnStartedFor}, state.activitySaveRequested=${state.activitySaveRequested}, state.editingActivityKey=${state.editingActivityKey}"
-    // FIXED A REAL BUG: cancelActivityBtn was clearing state directly in
-    // appButtonHandler but never telling this page to actually navigate
-    // anywhere -- a button click just triggers Hubitat to re-render this
-    // same page, so Cancel silently did nothing visible. Same fix pattern
-    // as addHubPage()'s cancelHubBtn: the button only sets a flag, and
-    // THIS page checks it first thing and returns mainPage() itself.
+    logDbg "addActivityPage() hub=${newActivityHub}, name=${newActivityName}, id=${newActivitySofabatonId}, learn=${state.learnStartedFor}, saveRequested=${state.activitySaveRequested}, editing=${state.editingActivityKey}"
     if (state.activityPageCancelled) {
-        state.remove("activityPageCancelled")
-        state.remove("editingActivityKey")
-        state.remove("editActivityPrefilled")
-        state.remove("learnStartedFor")
+        ["activityPageCancelled", "editingActivityKey", "editActivityPrefilled", "learnStartedFor"].each { state.remove(it) }
         clearActivitySettings()
         return mainPage()
     }
     def bridge = getBridge()
     def hubs = bridge?.getChildDevices() ?: []
 
-    // Edit mode: state.editingActivityKey is "<hubDni>|<actDni>", set by
-    // the Edit button in mainPage()'s activity listing. Same button+state
-    // pattern as hub Edit, for the same reason (avoids Hubitat's href/
-    // params bug across multiple hrefs to one page name).
+    // state.editingActivityKey = "<hubDni>|<actDni>", set by the Edit Activity button.
     String editingHubDni = null
-    String editingActDni = null
     def editingActivity = null
     if (state.editingActivityKey) {
         def keyParts = state.editingActivityKey.split(/\|/, 2)
         if (keyParts.length == 2) {
             editingHubDni = keyParts[0]
-            editingActDni = keyParts[1]
-            def editingHubDevice = bridge?.getChildDevice(editingHubDni)
-            editingActivity = editingHubDevice?.getChildDevice(editingActDni)
+            editingActivity = bridge?.getChildDevice(editingHubDni)?.getChildDevice(keyParts[1])
         }
     }
 
@@ -629,18 +453,9 @@ def addActivityPage() {
         if (editingActivity.currentValue("sofabatonActivityId") != null) {
             app.updateSetting("newActivitySofabatonId", [value: editingActivity.currentValue("sofabatonActivityId").toString(), type: "number"])
         }
-        // Webhook URLs are settings on the Activity device, not published
-        // attributes (unlike sofabatonActivityId) -- read them via the
-        // device's own settings map so Edit can prefill what's already
-        // configured, same as Edit Hub does for the X2 broker fields.
+        // Webhook URLs are device settings, not attributes. Worst case they prefill blank.
         app.updateSetting("newActivityUrlOn", [value: editingActivity.getSetting("webhookUrlOn") ?: "", type: "text"])
         app.updateSetting("newActivityUrlOff", [value: editingActivity.getSetting("webhookUrlOff") ?: "", type: "text"])
-        // NOTE: getSetting() on a child device from the parent app mirrors
-        // the already-proven updateSetting() calls used elsewhere in this
-        // file (see createMqttHub/updateExistingHub) -- if this doesn't
-        // read back correctly on a future platform version, worst case is
-        // the webhook fields prefill blank on Edit and need retyping, not
-        // a hard failure.
         state.editActivityPrefilled = true
     }
 
@@ -648,10 +463,7 @@ def addActivityPage() {
     boolean isX2 = selectedHub?.currentValue("hubModel") == "X2"
     boolean listening = isX2 && state.learnStartedFor == newActivityHub
 
-    // If we're listening, check whether the Bridge has captured a result yet.
-    // Learn-mode methods (startActivityLearn, getActivityLearnResult, etc.)
-    // live on the BRIDGE device, not on the individual hub -- call bridge
-    // here, not selectedHub.
+    // Learn-mode methods live on the Bridge, not the hub.
     if (listening) {
         def result = bridge.getActivityLearnResult()
         if (result != null) {
@@ -662,22 +474,6 @@ def addActivityPage() {
         }
     }
 
-    // ONLY an explicit click of "Add This Activity" / "Save Changes" --
-    // which sets state.activitySaveRequested in appButtonHandler -- is
-    // ever treated as a real submission. A captured Listen result or
-    // Edit's own prefill filling in fields is not enough on its own to
-    // trigger a save. This closes off the same bug family as
-    // addHubPage()'s explicit-save gate, for the same reason: fields
-    // becoming non-null by themselves must never be treated as
-    // equivalent to a real user submission.
-    //
-    // 2026-09-18: X2 now accepts newActivityUrlOn/Off as well as
-    // newActivitySofabatonId -- the ID is still required (it's what
-    // drives read-side MQTT state sync from the physical remote), but the
-    // webhook fields are optional on top of it, giving a real command
-    // path independent of MQTT. See the file header note on why. Also
-    // added Edit support: when editingActivity is set, Save updates the
-    // existing device in place instead of creating a new one.
     String saveError = null
     if (state.activitySaveRequested) {
         state.remove("activitySaveRequested")
@@ -688,9 +484,8 @@ def addActivityPage() {
                 state.remove("editingActivityKey")
                 state.remove("editActivityPrefilled")
                 return mainPage()
-            } else {
-                saveError = "Please fill in all required fields before saving."
             }
+            saveError = "Please fill in all required fields before saving."
         } else if (!isX2 && newActivityHub && newActivityName && newActivityUrlOn) {
             createActivity(newActivityHub, newActivityName, newActivityUrlOn, newActivityUrlOff, null)
             clearActivitySettings()
@@ -709,29 +504,29 @@ def addActivityPage() {
             input name: "cancelActivityBtn", type: "button", title: "&larr; Cancel and go back"
         }
         if (saveError) {
-            section {
-                paragraph "<b style='color:#c00'>${saveError}</b>"
-            }
+            section { paragraph "<b style='color:#c00'>${saveError}</b>" }
         }
         section {
             if (editingActivity) {
-                paragraph "Hub: <b>${selectedHub?.getLabel() ?: editingHubDni}</b> (can't be changed here -- remove and re-add if it needs to move to a different hub)"
+                paragraph "Hub: <b>${selectedHub?.getLabel() ?: editingHubDni}</b> <span class='text-color-secondary'>(remove and re-add to move it)</span>"
             } else {
                 input name: "newActivityHub", type: "enum", title: "Which Hub?", options: hubs.collectEntries { [(it.deviceNetworkId): it.getLabel()] }, submitOnChange: true
             }
-            input name: "newActivityName", type: "text", title: "Activity Name (e.g. Watch TV)" + (isX2 ? "" : " -- must match the remote's configured user-definable button label exactly, this is how state sync matches it up")
+            input name: "newActivityName", type: "text", title: "Activity Name (e.g. Watch TV)" + (isX2 || !selectedHub ? "" : ". Must exactly match the button's Description, see Tips.")
         }
         if (selectedHub && !isX2) {
             section {
                 input name: "newActivityUrlOn", type: "text", title: "Start Activity Webhook URL"
-                input name: "newActivityUrlOff", type: "text", title: "Stop Activity Webhook URL (optional, unconfirmed feature -- leave blank if unsure)", required: false
+                input name: "newActivityUrlOff", type: "text", title: "Stop Activity Webhook URL (optional, unconfirmed feature)", required: false
             }
         }
         if (selectedHub && isX2) {
-            section {
-                paragraph "Sofabaton Activity ID (required) drives state sync -- keeps this device in sync when the activity is changed from the physical remote. Press Listen below, press the activity's button on the physical remote, then come back to this page (see note below) to see the ID auto-filled -- or enter it manually if you already know it (e.g. from MQTT Explorer)."
+            section("Sofabaton Activity ID") {
+                paragraph "<span class='text-color-secondary' style='font-size:14px;'>Required. Keeps this device in sync when the activity changes from the remote. " +
+                    "Press Listen, press the activity's button on the remote, then leave this page and reopen it. The ID will be filled in.</span>"
+                paragraph rawHtml: true, warningMessageHtml("Listen needs incoming MQTT, which isn't working yet (see Known issue in Tips). Enter the ID manually for now.")
                 if (listening) {
-                    paragraph "<b>Listening...</b> press the activity's button on the physical remote now. This page does NOT auto-refresh (Hubitat's own auto-refresh was unreliable here) -- once you've pressed the button, leave this page and come back (tap Add an Activity again, or Cancel and reopen it) and the captured ID will already be filled in below."
+                    paragraph "<b>Listening...</b> press the activity's button on the remote, then leave and reopen this page."
                     input name: "cancelLearnBtn", type: "button", title: "Cancel"
                 } else {
                     input name: "learnBtn", type: "button", title: "Listen for Next Activity"
@@ -739,9 +534,10 @@ def addActivityPage() {
                 input name: "newActivitySofabatonId", type: "number", title: "Sofabaton Activity ID", submitOnChange: true
             }
             section("Command Delivery (optional)") {
-                paragraph "By default, turning this Activity on/off from Hubitat sends the command over local MQTT. If you'd rather use Sofabaton's cloud webhook instead (or MQTT isn't working right now), fill in a webhook URL below -- generate it in the Sofabaton app under the activity's 'Turn on API' option. If both are set, the webhook is used first and MQTT is the fallback."
-                input name: "newActivityUrlOn", type: "text", title: "Start Activity Webhook URL (optional, cloud-dependent)", required: false
-                input name: "newActivityUrlOff", type: "text", title: "Stop Activity Webhook URL (optional, cloud-dependent)", required: false
+                paragraph "<span class='text-color-secondary' style='font-size:14px;'>On/off goes over local MQTT by default. To use Sofabaton's cloud webhook instead, " +
+                    "turn on <b>Turn on API</b> for the activity in the Sofabaton app and paste the URL here. When set, the webhook is used first.</span>"
+                input name: "newActivityUrlOn", type: "text", title: "Start Activity Webhook URL (optional)", required: false
+                input name: "newActivityUrlOff", type: "text", title: "Stop Activity Webhook URL (optional)", required: false
             }
         }
         section {
@@ -749,82 +545,46 @@ def addActivityPage() {
         }
     }
 }
-// 2026-09-21: in-app Setup Guide, so the full walkthrough (X1S vs X2, cloud
-// webhook steps, button 11-20 explanation, name-matching, known issues)
-// ships WITH the app itself rather than living only in an external
-// README/repo link. No separate hosting to keep in sync, no stale link,
-// one click away from the main page. Content mirrors SETUP-GUIDE.md --
-// if that file is updated, update this too so they don't drift apart.
-def helpPage() {
-    // Small reusable platform pills so each step is instantly scannable --
-    // setup bounces between the Sofabaton app and Hubitat constantly, and
-    // that was genuinely confusing before this was added. Blue matches the
-    // app's existing "Hubitat-side" section headers; purple is deliberately
-    // a different color family from the green/amber MODEL pills (X1S/X2)
-    // used elsewhere, so model and platform are never visually confused
-    // with each other.
-    String hubitatPill = "<span style='background:#1976d2;color:#fff;border-radius:8px;padding:1px 9px;font-size:0.75em;font-weight:bold'>HUBITAT</span>"
-    String sofabatonPill = "<span style='background:#7c4dff;color:#fff;border-radius:8px;padding:1px 9px;font-size:0.75em;font-weight:bold'>SOFABATON APP</span>"
-    dynamicPage(name: "helpPage", title: "Sofabaton Integration -- Setup Guide", install: false, uninstall: false) {
-        section {
-            href name: "backFromHelp", title: "&larr; Back", page: "mainPage"
-        }
-        section {
-            paragraph "<b>Two hub models, two different setups.</b> Find yours below. Both need a static IP/DHCP reservation on your router first, that's true for either model."
-            paragraph "Every step below is tagged so it's clear which app you're in, setup bounces back and forth between the two. The pill sits on its own line right above the step it applies to:<br>$hubitatPill<br>means the step under it happens in this Hubitat app or a device page.<br>$sofabatonPill<br>means the step under it happens in the Sofabaton mobile app, not Hubitat at all."
-        }
-        section {
-            paragraph "<span style='background:#5f8b6f;color:#fff;border-radius:10px;padding:2px 10px;font-size:0.95em;font-weight:bold'>X1S</span> <b>Setup</b>"
-            paragraph "$hubitatPill<br><b>1.</b> Add a Hub &rarr; Model: X1S &rarr; enter the hub's static IP."
-            paragraph "$sofabatonPill<br><b>2.</b> Devices &rarr; Add Device &rarr; Wi-Fi &rarr; 'Create a virtual device for IP control'. URL: <code>http://[Hubitat IP]:39501/</code>, method PUT. One per activity. See 'What do buttons 11-20 mean?' below before picking a body value."
-            paragraph "$sofabatonPill<br><b>3.</b> On that activity, turn on <b>'Turn on API'</b> and copy the webhook URL(s) it gives you. Separate step from #2, this one only covers commands, not reads."
-            paragraph "$hubitatPill<br><b>4.</b> Add an Activity here &rarr; Activity Name must exactly match the button's Description you set in step 2 (see 'How does name matching work?' below) &rarr; paste the webhook URL(s) from step 3."
-            paragraph "$hubitatPill<br><b>5.</b> Click Done on the main page when finished."
-            paragraph "<div style='background:#f5f5f5;border-left:4px solid #5f8b6f;padding:10px 14px;margin-top:6px'><b>Worked example, an Apple TV activity:</b><br>" +
-                "&bull; Step 2, body value you send: <code>appleTV</code> (a string, since it's going into one of the 11-20 slots, not a plain number)<br>" +
-                "&bull; On the Remote device's Preferences tab, User 1 (11) field: <code>appleTV|Apple TV</code> &mdash; <code>appleTV</code> is the matchString (must exactly equal what you typed in step 2), <code>Apple TV</code> after the pipe is the Description<br>" +
-                "&bull; Step 4, Activity Name in Hubitat: <code>Apple TV</code> &mdash; must exactly match the Description half above, capitalization and spacing included<br>" +
-                "If any of those three don't line up exactly, the remote will still control your gear, Hubitat just won't know the activity changed.</div>"
-        }
-        section {
-            paragraph "<span style='background:#5f8b6f;color:#fff;border-radius:10px;padding:2px 10px;font-size:0.95em;font-weight:bold'>X2</span> <b>Setup</b>"
-            paragraph "$hubitatPill<br><b>1.</b> Integrations &rarr; Add Built-In App &rarr; MQTT Import Integration &rarr; enable, turn on 'Use built-in MQTT service'. Note the host/port/login shown."
-            paragraph "$sofabatonPill<br><b>2.</b> Tap <b>Me</b> (bottom of the app) &rarr; <b>Connect to Home Assistant (MQTT broker)</b> &rarr; tap <b>Confirmed MQTT Installed</b> &rarr; enter IP (your Hubitat hub's own IP), Port, Username, Password (last three from step 1)."
-            paragraph "<div style='background:#fff8e1;border-left:4px solid #e8a33d;padding:8px 12px;font-size:0.9em'>&#9888;&#65039; Easy to skip, but skipping it means the hub never talks to the broker at all. Two things that trip people up: there's a <i>different</i> feature called 'Home Assistant Remote' under Devices &rarr; Wi-Fi, that's not this, skip it here. And the screen talks about 'Home Assistant', you don't have that, confirm anyway, you're pointing it at Hubitat's broker instead.</div>"
-            paragraph "$sofabatonPill<br><b>3.</b> Download <b>MQTT Explorer</b> (free, mqtt-explorer.com) on your computer &rarr; connect it with the same host/port/username/password from step 1 &rarr; on the physical remote, switch to a different activity &rarr; look in the sidebar for something like <code>activity &rarr; 14639332AA40 &rarr; activity_control_up</code> &rarr; that 12-character code is your X2's MAC, write it down."
-            paragraph "<div style='background:#fff8e1;border-left:4px solid #e8a33d;padding:8px 12px;font-size:0.9em'>&#9888;&#65039; Has to be an actual activity change, not just any button, plain commands like volume never touch the network, so nothing shows up until you switch activities. Also: this is the <b>Sofabaton hub's</b> MAC, not Hubitat's own, easy to mix up.</div>"
-            paragraph "$hubitatPill<br><b>4.</b> Add a Hub here &rarr; Model: X2 &rarr; enter that MAC, plus the broker host/port/login from step 1."
-            paragraph "$hubitatPill<br><b>5.</b> Add an Activity here &rarr; Sofabaton Activity ID is required (use Listen for Next Activity, or read it from the MQTT payload). That's it, MQTT handles both reads and writes for this activity from here."
-            paragraph "$hubitatPill<br><b>6.</b> Click Done on the main page when finished."
-            paragraph "<div style='background:#f5f5f5;border-left:4px solid #5f8b6f;padding:10px 14px;margin-top:6px'><b>Worked example, the same Apple TV activity:</b><br>" +
-                "&bull; Step 3/5, Sofabaton Activity ID: <code>101</code> &mdash; a plain number, read off the MQTT payload (e.g. <code>{\"activity_id\":101,\"state\":\"on\"}</code>) or auto-filled by Listen for Next Activity<br>" +
-                "&bull; Step 5, Activity Name in Hubitat: <code>Apple TV</code> &mdash; this one's just a label for you, it does not need to match anything in the Sofabaton app, unlike X1S<br>" +
-                "The ID is the only thing that has to be correct here, the name is purely cosmetic.</div>"
-            paragraph "<div style='background:#fff8e1;border-left:4px solid #e8a33d;padding:10px 14px;margin-top:10px'><b>Temporary workaround, not part of the setup above:</b> X2 is designed to be fully MQTT, both directions, that's the whole point. Until the platform bug below is fixed, MQTT writes don't work yet, so if you want working on/off control today rather than waiting, you can optionally add a webhook URL to an X2 Activity (Turn on API in the Sofabaton app, then paste into the Activity's Edit page). Not the intended long-term design, just a bridge until MQTT writes are fixed.</div>"
-        }
-        section {
-            paragraph "<b style='color:#c00'>Known issue right now:</b> X2 command delivery over MQTT doesn't currently work. MQTT is fully two-way by design, publish and subscribe both work in either direction, that's the whole point of it, and why this integration was built around MQTT for X2 in the first place. Reads (remote &rarr; Hubitat) work fine over MQTT right now. Writes (Hubitat &rarr; hub) don't, specifically because Hubitat's own MQTT client isn't delivering incoming messages properly on this platform, a reported platform-level bug, not a limitation of MQTT itself or of the X2 hub. Until it's fixed, fill in the webhook URL fields on X2 Activities, that gives you working on/off control today over the cloud. No changes needed on your end once the underlying bug is fixed, both directions will work over MQTT as originally intended."
-        }
-        section {
-            paragraph "<b>FAQ</b>"
-            paragraph "<b>What do buttons 11-20 mean? (X1S)</b><br>Buttons 1-10 fire when the remote sends a plain number. Buttons 11-20 are ten user-definable slots (set on the Remote device's Preferences tab) as matchString|Description pairs, matchString is whatever text you choose to send in step 2 above, Description is the friendly label (and what name-matching uses, see next). Most setups should just use 11-20, it's more flexible than remembering numbers."
-            paragraph "<b>How does name matching work? (X1S)</b><br>Hubitat learns an activity changed by matching the button slot's Description (above) against this Activity's Name here, exactly, capitalization and spacing included. If they don't match, the remote still controls your gear, Hubitat just won't know the state changed."
-            paragraph "<b>Where does the webhook URL go?</b><br>Into the Activity's Start/Stop Webhook URL fields, when adding it or later via its Edit button."
-            paragraph "<b>My activity name has a space, will the webhook break?</b><br>No, spaces are encoded automatically before the call goes out."
-            paragraph "<b>Does X1S need MQTT?</b><br>No, X1S never touches MQTT, local HTTP for reads, cloud webhook for writes."
-            paragraph "<b>What actually generates MQTT traffic? (X2)</b><br>Only activity-level changes, starting or switching an activity, or the hub-wide power-off, produce any traffic. Plain remote commands within an activity (volume, channel, play/pause, anything IR or Bluetooth) never touch the network at all, that's a Sofabaton design choice. This integration can only ever react to whole activities changing, not individual button presses."
-        }
+
+private void clearActivitySettings() {
+    ["newActivityHub", "newActivityName", "newActivityUrlOn", "newActivityUrlOff", "newActivitySofabatonId"].each {
+        app.removeSetting(it)
     }
 }
 
-def appButtonHandler(String btn) {
-    log.debug "appButtonHandler() received btn=${btn}"
-    def bridge = getBridge()
-
-    if (btn == "saveHubBtn") {
-        state.hubSaveRequested = true
+private void createActivity(String hubDni, String name, String urlOn, String urlOff, Integer sofabatonActivityId) {
+    def hub = getBridge()?.getChildDevice(hubDni)
+    if (!hub) {
+        logErr "cannot add activity '$name': hub not found"
         return
     }
+    if (!hub.createActivityDevice(name, urlOn, urlOff, sofabatonActivityId)) {
+        logErr "failed to create Activity device '$name'"
+    } else {
+        logInfo "added activity '$name'"
+    }
+}
+
+// sofabatonActivityId is null for X1S and left untouched.
+private void updateExistingActivity(def activity, String name, String urlOn, String urlOff, Integer sofabatonActivityId) {
+    activity.setLabel(name)
+    activity.updateSetting("webhookUrlOn", [value: urlOn ?: "", type: "text"])
+    activity.updateSetting("webhookUrlOff", [value: urlOff ?: "", type: "text"])
+    if (sofabatonActivityId != null) {
+        activity.updateSetting("sofabatonActivityId", [value: sofabatonActivityId, type: "number"])
+    }
+    activity.updated()
+}
+
+// ============================================================================
+// Buttons
+// ============================================================================
+
+def appButtonHandler(String btn) {
+    logDbg "button: ${btn}"
+    def bridge = getBridge()
+
+    if (btn == "saveHubBtn") { state.hubSaveRequested = true; return }
     if (btn == "cancelHubBtn") {
         state.remove("editingHubDni")
         state.remove("editHubPrefilled")
@@ -832,23 +592,17 @@ def appButtonHandler(String btn) {
         return
     }
     if (btn.startsWith("editHub_")) {
-        String dni = btn - "editHub_"
-        state.editingHubDni = dni
+        state.editingHubDni = btn - "editHub_"
         state.remove("editHubPrefilled")
         return
     }
     if (btn.startsWith("removeHub_")) {
-        String dni = btn - "removeHub_"
-        bridge?.removeRemoteDevice(dni)
+        bridge?.removeRemoteDevice(btn - "removeHub_")
         return
     }
-    if (btn == "cancelActivityBtn") {
-        state.activityPageCancelled = true
-        return
-    }
+    if (btn == "cancelActivityBtn") { state.activityPageCancelled = true; return }
     if (btn.startsWith("editAct_")) {
-        String rest = btn - "editAct_"
-        def parts = rest.split("_", 2)
+        def parts = (btn - "editAct_").split("_", 2)
         if (parts.length == 2) {
             state.editingActivityKey = "${parts[0]}|${parts[1]}"
             state.remove("editActivityPrefilled")
@@ -856,20 +610,13 @@ def appButtonHandler(String btn) {
         return
     }
     if (btn.startsWith("removeAct_")) {
-        String rest = btn - "removeAct_"
-        def parts = rest.split("_", 2)
-        if (parts.length == 2) {
-            def hub = bridge?.getChildDevice(parts[0])
-            hub?.removeActivityDeviceByDni(parts[1])
-        }
+        def parts = (btn - "removeAct_").split("_", 2)
+        if (parts.length == 2) bridge?.getChildDevice(parts[0])?.removeActivityDeviceByDni(parts[1])
         return
     }
+    if (btn == "saveActivityBtn") { state.activitySaveRequested = true; return }
 
     def hub = newActivityHub ? bridge?.getChildDevice(newActivityHub) : null
-    if (btn == "saveActivityBtn") {
-        state.activitySaveRequested = true
-        return
-    }
     if (!hub) return
     if (btn == "learnBtn") {
         bridge.startActivityLearn(hub.deviceNetworkId)
@@ -881,42 +628,7 @@ def appButtonHandler(String btn) {
     }
 }
 
-private void clearActivitySettings() {
-    ["newActivityHub", "newActivityName", "newActivityUrlOn", "newActivityUrlOff", "newActivitySofabatonId"].each {
-        app.removeSetting(it)
-    }
-}
-
-private void createActivity(String hubDni, String name, String urlOn, String urlOff, Integer sofabatonActivityId) {
-    def bridge = getBridge()
-    def hub = bridge?.getChildDevice(hubDni)
-    if (!hub) {
-        log.error "Cannot add activity '$name': hub not found"
-        return
-    }
-    def activity = hub.createActivityDevice(name, urlOn, urlOff, sofabatonActivityId)
-    if (!activity) {
-        log.error "Failed to create Activity device '$name'"
-    }
-}
-
-// Applies edits to an already-existing Activity device in place: name,
-// webhook URLs (either may be blank to clear), and for X2 the Sofabaton
-// Activity ID. sofabatonActivityId is null when editing an X1S activity
-// (that field doesn't apply there and is left untouched).
-private void updateExistingActivity(def activity, String name, String urlOn, String urlOff, Integer sofabatonActivityId) {
-    activity.setLabel(name)
-    activity.updateSetting("webhookUrlOn", [value: urlOn ?: "", type: "text"])
-    activity.updateSetting("webhookUrlOff", [value: urlOff ?: "", type: "text"])
-    if (sofabatonActivityId != null) {
-        activity.updateSetting("sofabatonActivityId", [value: sofabatonActivityId, type: "number"])
-    }
-    activity.updated()
-}
-
-// Mirrors RemoteDriver.groovy's ipToHex() so the app can compute a matching
-// DNI at hub-creation time. Kept in sync manually -- if the driver's logic
-// ever changes, this needs to change with it.
+// Mirrors RemoteDriver's ipToHex(). Keep in sync.
 private String ipToHexForApp(String ipAddress) {
     List<String> quad = (ipAddress ?: "").trim().split(/\./)
     boolean valid = quad.size() == 4 && quad.every {
@@ -924,4 +636,332 @@ private String ipToHexForApp(String ipAddress) {
     }
     if (!valid) return null
     return quad.collect { Integer.toHexString(it.toInteger()).padLeft(2, "0").toUpperCase() }.join()
+}
+
+// ============================================================================
+// Tips & Troubleshooting content. Keep SETUP-GUIDE.md in sync.
+// ============================================================================
+
+private String exampleBoxHtml(String content) {
+    "<div style='background:#f5f5f5;border-left:4px solid #5f8b6f;padding:10px 14px;margin-top:6px'>${content}</div>"
+}
+
+private List tipsTopics() {
+    [
+        [id: "start", label: "Before you begin", title: "Before you begin", group: "Getting started", icon: "pi-sitemap",
+            body: "<p>This integration supports two Sofabaton hubs, the <b>X1S</b> and the <b>X2</b>. They set up differently, so find yours in the sidebar.</p>" +
+                "<p>Setup moves back and forth between two apps, so each step is tagged:</p>" +
+                "<p>${HUBITAT_PILL}<br>This Hubitat app or a device page.</p>" +
+                "<p>${SOFABATON_PILL}<br>The Sofabaton mobile app.</p>",
+            checklist: [[title: "A static IP for your Sofabaton hub", detail: "Set a DHCP reservation on your router before adding either model."],
+                        [title: "Know your model", detail: "X1S uses local HTTP plus a cloud webhook. X2 uses MQTT. The original X1 isn't supported."],
+                        [title: "X2 only: Hubitat's MQTT broker", detail: "Enabled through MQTT Import Integration. See X2 setup, step 1."]]],
+
+        [id: "x2broker", label: "1. Enable the MQTT broker", title: "Enable Hubitat's MQTT broker", group: "X2 setup", icon: "pi-server",
+            body: "<p>${HUBITAT_PILL}<br>Go to <b>Integrations &rarr; Add Built-In App &rarr; MQTT Import Integration</b>. Enable it and turn on <b>Use built-in MQTT service</b>.</p>" +
+                "<p>Write down the host, port, username, and password it shows. You'll enter them twice: in the Sofabaton app, and on the Add a Hub page here.</p>"],
+        [id: "x2connect", label: "2. Connect the X2", title: "Point the X2 at the broker", group: "X2 setup", icon: "pi-wifi",
+            body: "<p>${SOFABATON_PILL}<br>Tap <b>Me</b> &rarr; <b>Connect to Home Assistant (MQTT broker)</b> &rarr; <b>Confirmed MQTT Installed</b>. " +
+                "Enter your Hubitat hub's IP, then the port, username, and password from step 1.</p>",
+            warning: "<b>Easy to skip, and nothing works without it.</b><br>Ignore the Home Assistant wording, you're pointing it at Hubitat's broker. " +
+                "<b>Devices &rarr; Add Device &rarr; Wi-Fi &rarr; Home Assistant Remote</b> is a different feature. Don't use it here."],
+        [id: "x2mac", label: "3. Find the MAC ID", title: "Find the X2's MAC ID", group: "X2 setup", icon: "pi-search",
+            body: "<p>On your computer, install <b>MQTT Explorer</b> (free, mqtt-explorer.com) and connect it with the broker details from step 1. " +
+                "On the physical remote, switch to a different activity. In the sidebar, look for <code>activity &rarr; 14639332AA40 &rarr; activity_control_up</code>. " +
+                "That 12-character code is your X2's MAC ID.</p>",
+            warning: "<b>It has to be an activity change.</b><br>Volume, channel, and other button presses never touch the network, so nothing will show up. " +
+                "Also, this is the Sofabaton hub's MAC, not your Hubitat hub's."],
+        [id: "x2add", label: "4. Add hub and activities", title: "Add the X2 hub and its activities", group: "X2 setup", icon: "pi-plus-circle",
+            body: "<p>${HUBITAT_PILL}<br><b>Add a Hub</b> &rarr; Model X2 &rarr; enter the MAC ID and the broker details from step 1.</p>" +
+                "<p>${HUBITAT_PILL}<br><b>Add an Activity</b> &rarr; pick the hub, give it a name, and enter its Sofabaton Activity ID.</p>" +
+                "<p>${HUBITAT_PILL}<br>Tap <b>Done</b> on the main page when finished.</p>" +
+                exampleBoxHtml("<b>Example, an Apple TV activity:</b><br>" +
+                    "&bull; Sofabaton Activity ID: <code>101</code>, read from a payload like <code>{&quot;activity_id&quot;:101,&quot;state&quot;:&quot;on&quot;}</code><br>" +
+                    "&bull; Activity Name: <code>Apple TV</code>. Just a label for you, it doesn't need to match anything in the Sofabaton app.<br>" +
+                    "Only the ID has to be correct."),
+            append: "knownissue"],
+
+        [id: "x1slocal", label: "1. Local IP control", title: "Set up local IP control", group: "X1S setup", icon: "pi-mobile",
+            body: "<p>${HUBITAT_PILL}<br><b>Add a Hub</b> &rarr; Model X1S &rarr; enter the hub's static IP.</p>" +
+                "<p>${SOFABATON_PILL}<br><b>Devices &rarr; Add Device &rarr; Wi-Fi &rarr; Create a virtual device for IP control</b>. " +
+                "URL <code>http://[Hubitat IP]:39501/</code>, method PUT. Create one per activity. Read <b>Buttons and name matching</b> before choosing a body value.</p>"],
+        [id: "x1swebhook", label: "2. Webhook commands", title: "Add webhook commands", group: "X1S setup", icon: "pi-link",
+            body: "<p>${SOFABATON_PILL}<br>On the activity, turn on <b>Turn on API</b> and copy the webhook URL(s). " +
+                "This is separate from step 1. IP control only reports to Hubitat, the webhook sends commands.</p>" +
+                "<p>${HUBITAT_PILL}<br><b>Add an Activity</b> &rarr; name it to exactly match the button's Description &rarr; paste the webhook URL(s).</p>" +
+                "<p>${HUBITAT_PILL}<br>Tap <b>Done</b> on the main page when finished.</p>"],
+        [id: "x1smatch", label: "3. Buttons and name matching", title: "Buttons and name matching", group: "X1S setup", icon: "pi-th-large",
+            body: "<p><b>Buttons 1-10</b> fire when the remote sends a plain number. <b>Buttons 11-20</b> are user-definable slots on the Remote device's Preferences tab, " +
+                "entered as <code>matchString|Description</code>. Most setups should use 11-20.</p>" +
+                "<p>Hubitat knows an activity changed by matching the slot's Description against the Activity Name here, exactly, including capitalization and spacing.</p>" +
+                exampleBoxHtml("<b>Example, an Apple TV activity:</b><br>" +
+                    "&bull; Body value in the Sofabaton app: <code>appleTV</code><br>" +
+                    "&bull; User 1 (11) on the Remote device: <code>appleTV|Apple TV</code><br>" +
+                    "&bull; Activity Name here: <code>Apple TV</code>"),
+            warning: "If these don't line up exactly, the remote still controls your gear. Hubitat just won't know the activity changed."],
+
+        [id: "knownissue", label: "X2 known issue", title: "Known issue: X2 and MQTT", group: "Troubleshooting", icon: "pi-exclamation-triangle",
+            body: "<p>Hubitat's MQTT client currently connects and subscribes, but isn't delivering incoming messages. " +
+                "This is a reported Hubitat platform bug, not a limit of MQTT or the X2.</p>" +
+                "<p>Until it's fixed, Hubitat won't see activity changes from the remote, the main page will show <b>Waiting for first MQTT message</b>, " +
+                "and <b>Listen for Next Activity</b> won't capture an ID. Enter IDs manually for now. Commands sent from Hubitat over MQTT haven't been confirmed yet either.</p>",
+            warning: "<b>Workaround for on/off control today:</b><br>In the Sofabaton app, turn on <b>Turn on API</b> for the activity, then paste the webhook URL into " +
+                "Edit Activity here. Once the fix lands, clear the webhook URL to go back to local MQTT."],
+        [id: "traffic", label: "What creates MQTT traffic", title: "What creates MQTT traffic", group: "Troubleshooting", icon: "pi-info-circle",
+            body: "<p>Only activity-level changes: starting or switching an activity, or the hub-wide Power Off. Button presses within an activity " +
+                "(volume, channel, play/pause) never touch the network. This integration reacts to activities, not individual button presses.</p>" +
+                "<p>X1S never uses MQTT. It reports over local HTTP and takes commands through the cloud webhook.</p>"],
+        [id: "faq", label: "Common questions", title: "Common questions", group: "Troubleshooting", icon: "pi-question-circle",
+            body: "<p><b>Where does the webhook URL go?</b><br>The Activity's Start or Stop Webhook URL fields, when adding it or later through Edit Activity.</p>" +
+                "<p><b>My activity name has a space. Will the webhook break?</b><br>No, spaces are encoded automatically.</p>" +
+                "<p><b>Can I change a hub's model, MAC, or IP?</b><br>No, those set the device ID. Remove the hub and add it again.</p>"],
+
+        [id: "removal", label: "Removing hubs", title: "Remove hubs and activities safely", group: "Devices", icon: "pi-trash",
+            body: "<p>Use <b>Remove Hub</b> and <b>Remove Activity</b> on the main page, not Hubitat's Devices page. Removing a hub also removes its activities.</p>"],
+
+        [id: "logging", label: "Log levels", title: "Log levels", group: "Logging", icon: "pi-file",
+            body: "<p>" + logLevelPill("Errors Only") + " Default. Warnings and errors only.</p>" +
+                "<p>" + logLevelPill("Normal") + " Errors plus hubs and activities added or changed.</p>" +
+                "<p>" + logLevelPill("Full") + " Everything. Use while troubleshooting. Turns itself off after 30 minutes.</p>" +
+                "<p>Each device also has its own debug logging toggle on its Preferences tab.</p>"]
+    ]
+}
+
+// ============================================================================
+// UI template (HubitatAppUiTemplate, from Reolink v1.6.1)
+// ============================================================================
+
+private void helpAndSupportSection() {
+    section(title: "<b>Help & Support</b>", sectionClass: "app-main-support") {
+        href name: "tips", title: "<i class='pi pi-info-circle' aria-hidden='true'></i>Tips & Troubleshooting",
+            page: "tipsPage", description: "Setup guide for X1S and X2", width: 4, style: "margin:8px;"
+        paragraph rawHtml: true, supportLinkHtml(COMMUNITY_URL, "pi pi-comments",
+            "Hubitat Community Thread", "Questions, feedback, and release notes"), width: 4
+        paragraph rawHtml: true, supportLinkHtml(COFFEE_URL, "fa-solid fa-mug-hot",
+            "Buy Me a Coffee", "Support development"), width: 4
+    }
+}
+
+private void versionFooterSection() {
+    section {
+        paragraph "<div class='text-center text-color-secondary text-xs mt-2'>${APP_NAME} v${APP_VERSION}</div>"
+    }
+}
+
+private String supportLinkHtml(String url, String iconClass, String title, String subtitle) {
+    """
+<a href='${url}' target='_blank' rel='noopener noreferrer'
+   class='flex align-items-center gap-3 border-1 border-gray-200 border-round px-3 py-2 text-color no-underline'>
+  <i class='${iconClass} text-blue-700 text-xl flex-shrink-0'></i>
+  <span class='min-w-0'>
+    <span class='block text-blue-700 font-semibold'>${title}</span>
+    <span class='block text-color-secondary mt-1' style='font-size:14px;'>${subtitle}</span>
+  </span>
+</a>
+"""
+}
+
+private String statusBannerHtml(boolean ok, String title, String summary) {
+    String tone = ok ? "bg-green-50 border-green-200" : "p-message p-message-warn app-message"
+    String icon = ok ? "pi pi-check-circle text-green-700" : "fa-solid fa-exclamation-triangle text-yellow-700"
+    """
+<style>
+  ${appPageSpacingCss()}
+  ${tipsCardCss()}
+  .app-main-content { float: left; width: calc(62% - 8px); }
+  .app-main-settings { float: right; width: 38%; border-left: 1px solid #e0e0e0; padding-left: 8px; box-sizing: border-box; }
+  .app-main-content > .mdl-grid, .app-main-settings > .mdl-grid { padding: 4px 0 !important; }
+  .app-main-support { clear: both; }
+  .app-main-support button.hrefElem[name^='_action_href_tips'] { height: 61.5px; padding-bottom: 13.5px; box-sizing: border-box; }
+  @media (max-width: 1000px) {
+    .app-main-content, .app-main-settings { float: none; width: 100%; border-left: 0; padding-left: 0; }
+  }
+</style>
+<div class='flex align-items-center justify-content-between gap-3 ${tone} border-1 border-round p-3'>
+  <div class='flex align-items-center gap-3 min-w-0'>
+    <div class='flex-shrink-0'><i class='${icon} text-2xl' aria-hidden='true'></i></div>
+    <div class='min-w-0'>
+      <div class='app-heading font-semibold'>${title}</div>
+      <div class='text-color-secondary mt-1' style='font-size:14px;'>${summary}</div>
+    </div>
+  </div>
+  <a href='/logs?tab=past&amp;appId=${app.id}' target='_blank' class='text-blue-700 font-semibold white-space-nowrap no-underline'>
+    View logs <i class='fa-regular fa-external-link'></i>
+  </a>
+</div>
+"""
+}
+
+private String columnHeader(String title) {
+    "<div class='app-heading font-semibold'>${title}</div>"
+}
+
+private String countText(int count, String singular, String plural = null) {
+    "${count} ${count == 1 ? singular : (plural ?: singular + 's')}"
+}
+
+private String loggingDetailsPopupHtml() {
+    String current = currentLogLevel()
+    String details = """
+<div class='text-left text-color' style='max-width:520px;line-height:1.45;'>
+  <div class='text-xl font-bold mb-1'>Logging levels</div>
+  <div class='text-color-secondary text-base mb-3'>Choose how much activity appears in the app logs.</div>
+  ${logLevelDetailHtml("Errors Only", "Warnings and errors only.", current)}
+  ${logLevelDetailHtml("Normal", "Errors, plus hubs and activities added or changed.", current)}
+  ${logLevelDetailHtml("Full", "Everything. Use while troubleshooting. Turns off after 30 minutes.", current)}
+</div>
+"""
+    String js = groovy.json.JsonOutput.toJson(details)
+        .replace("&", "&amp;").replace("'", "&#39;").replace("<", "&lt;").replace(">", "&gt;")
+    """
+<a href='#' onclick='window.alertHubitat(${js}); return false;'
+   class='flex align-items-center justify-content-between gap-3 bg-gray-50 border-1 border-gray-200 border-round px-3 py-2 h-full text-color no-underline'>
+  <span>
+    <span class='block font-semibold'>Logging details</span>
+    <span class='block text-color-secondary mt-1' style='font-size:14px;'>What each level records</span>
+  </span>
+  <i class='pi pi-chevron-right text-blue-700'></i>
+</a>
+"""
+}
+
+private String logLevelDetailHtml(String name, String description, String current) {
+    String badge = name == current ? "<span class='text-green-700 text-xs font-bold'>Current</span>" : ""
+    String tone = name == "Errors Only" ? "bg-red-50 text-red-700" :
+        name == "Full" ? "bg-indigo-50 text-indigo-700" : "bg-blue-50 text-blue-700"
+    """
+<div class='border-1 border-gray-200 border-round px-3 py-2 mb-2'>
+  <div class='flex align-items-center justify-content-between gap-3 mb-1'>
+    <span class='${tone} border-round-xl px-2 py-1 text-xs font-bold'>${name}${name == "Errors Only" ? " (default)" : ""}</span>
+    ${badge}
+  </div>
+  <div class='text-base text-color-secondary'>${description}</div>
+</div>
+"""
+}
+
+def tipsPage(params = null) {
+    def topics = tipsTopics()
+    def topic = topics.find { it.id == params?.topic } ?: topics.find { it.id == DEFAULT_TIP_TOPIC } ?: topics[0]
+    int i = topics.indexOf(topic)
+    def next = i + 1 < topics.size() ? topics[i + 1] : null
+    dynamicPage(name: "tipsPage", title: "Tips & Troubleshooting") {
+        section(sectionClass: "app-tips-index") {
+            paragraph rawHtml: true, tipsStylesHtml()
+            topics.groupBy { it.group }.each { group, entries ->
+                paragraph rawHtml: true, "<div class='app-heading font-semibold mt-2'>${group}</div>"
+                entries.each { entry ->
+                    String selected = entry.id == topic.id ? "app-topic-current" : ""
+                    href name: "tip_${entry.id}",
+                        title: "<span class='${selected}'><i class='pi ${entry.icon} mr-3' aria-hidden='true'></i>${entry.label}</span>",
+                        description: "", page: "tipsPage", params: [topic: entry.id], width: 12, style: "margin:0 8px;"
+                }
+            }
+        }
+        section(sectionClass: "app-tips-article") {
+            paragraph rawHtml: true, tipsArticleHtml(topic)
+            if (topic.append) {
+                def extra = topics.find { it.id == topic.append }
+                if (extra) paragraph rawHtml: true, tipsArticleHtml(extra)
+            }
+            if (next) {
+                href name: "nextTip", title: "<span class='text-blue-700'>${next.label}</span>",
+                    description: "Next topic", page: "tipsPage", params: [topic: next.id], width: 12, style: "margin:8px;"
+            }
+        }
+    }
+}
+
+private String tipsArticleHtml(Map topic) {
+    String extra = ""
+    if (topic.checklist) {
+        extra += "<div class='border-1 border-gray-200 border-round p-3 mb-3'>" + topic.checklist.collect { item ->
+            "<div class='flex align-items-center gap-3 py-2'><i class='pi pi-check-circle text-blue-700 text-xl' aria-hidden='true'></i>" +
+            "<div><div class='font-semibold'>${item.title}</div><div class='text-sm text-color-secondary'>${item.detail}</div></div></div>"
+        }.join("") + "</div>"
+    }
+    if (topic.warning) extra += warningMessageHtml(topic.warning)
+    """
+<article class='app-tip-card'>
+  <div class='app-tip-card-header flex align-items-center gap-3'>
+    <i class='pi ${topic.icon} text-blue-700 text-xl' aria-hidden='true'></i>
+    <h4 class='app-heading font-semibold m-0'>${topic.title}</h4>
+  </div>
+  <div class='app-tip-copy'>${topic.body}${extra}</div>
+</article>
+"""
+}
+
+private String tipsStylesHtml() {
+    """
+<style>
+  ${appPageSpacingCss()}
+  .app-tips-index { float: left; width: calc(27% - 8px); box-sizing: border-box; }
+  .app-tips-article { float: right; width: 73%; border-left: 1px solid #e0e0e0; padding-left: 8px; box-sizing: border-box; }
+  .app-tips-index > .mdl-grid, .app-tips-article > .mdl-grid { padding: 4px 0 !important; }
+  .app-tips-index .mdl-cell:has(> style) { display: none; }
+  .app-tips-index button.hrefElem {
+    background: transparent; box-shadow: none; border: 0; border-left: 3px solid transparent;
+    border-radius: 0; padding: 9px 10px; font-family: inherit; font-size: 16px; color: #1565c0;
+  }
+  .app-tips-index button.hrefElem::before { display: none; }
+  .app-tips-index button.hrefElem:has(.app-topic-current) { background: #eaf2fc; border-left-color: #1565c0; font-weight: 600; }
+  .app-tips-index button.hrefElem:hover { background: #f3f6fa; }
+  .app-tips-index button.hrefElem:focus-visible { outline: 2px solid #1565c0; outline-offset: 2px; }
+  .app-tip-card { border: 1px solid #dfe3e8; border-radius: 4px; overflow: hidden; margin-bottom: 12px; }
+  .app-tip-card-header { padding: 16px; background: #f5f7fa; border-bottom: 1px solid #e4e7ec; }
+  .app-tip-copy { padding: 16px; line-height: 1.55; overflow-wrap: anywhere; }
+  .app-tip-copy p { margin: 0 0 16px; }
+  .app-tip-copy p:last-child { margin-bottom: 0; }
+  .app-tip-copy .app-message { margin-top: 12px; }
+  .app-tips-article button.hrefElem { background: #fff; box-shadow: none; border: 1px solid #dfe3e8; border-radius: 4px; font-family: inherit; }
+  .app-tips-article button.hrefElem::before { color: #1565c0; }
+  #formApp:has(.app-tips-index) #fieldsetAppButtons { clear: both; }
+  @media (max-width: 1000px) {
+    .app-tips-index, .app-tips-article { float: none; width: 100%; padding: 0; border-left: 0; }
+  }
+</style>
+"""
+}
+
+private String logLevelPill(String level) {
+    def tones = ["Errors Only": "bg-red-50 text-red-700", "Normal": "bg-gray-100 text-gray-700", "Full": "bg-indigo-50 text-indigo-700"]
+    "<span class='inline-block ${tones[level] ?: tones['Normal']} font-bold text-xs px-2 py-1 border-round-xl'>${level}</span>"
+}
+
+private String warningMessageHtml(String content, String extraClasses = "") {
+    "<div class='p-message p-message-warn app-message flex align-items-center gap-2 ${extraClasses}'>" +
+        "<div class='flex-shrink-0'><i class='fa-solid fa-exclamation-triangle text-xl' aria-hidden='true'></i></div>" +
+        "<div class='min-w-0 flex-1'>${content}</div></div>"
+}
+
+private String appPageSpacingCss() {
+    """
+  ${tileSecondaryTextCss()}
+  .app-heading { font-size: 16px; }
+  .p-message.app-message { padding: 0.75rem !important; margin: 0; border: 0 !important; }
+  .app-message .text-color-secondary, .app-message .text-blue-700, .app-message .text-yellow-700 { color: inherit !important; }
+  div.panel-body { padding: 0 !important; margin-left: -0.5em; margin-right: -0.5em; }
+  fieldset#fieldsetAppButtons { margin-left: 0.5em; margin-right: 0.5em; }
+"""
+}
+
+private String tileSecondaryTextCss() {
+    "#formApp .hrefElem > .state-incomplete-text, #formApp .hrefElem > .state-complete-text { font-size: 14px !important; }"
+}
+
+private String tipsCardCss() {
+    """
+  button.hrefElem[name^='_action_href_tips'] {
+    position: relative; background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; box-shadow: none;
+    color: #333; height: 56px; font-family: inherit; font-size: 16px; font-weight: 500; line-height: 1.4;
+    padding: 8px 28px 8px 46px;
+  }
+  button.hrefElem[name^='_action_href_tips'] > span:first-child { color: #1565c0; font-weight: 600; font-size: 16px !important; }
+  button.hrefElem[name^='_action_href_tips'] > span.state-incomplete-text { color: #777; font-size: 14px; font-weight: 500; line-height: 1.4; }
+  button.hrefElem[name^='_action_href_tips'] i.pi {
+    position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: #1565c0; font-size: 20px;
+  }
+  button.hrefElem[name^='_action_href_tips']::before { color: #1565c0; }
+"""
 }
