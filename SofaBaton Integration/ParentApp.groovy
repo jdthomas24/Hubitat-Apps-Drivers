@@ -25,6 +25,10 @@
      -uninstalled() must delete the Bridge, or everything under it is orphaned.
      -Model, MAC, and X1S IP set the DNI, so they're not editable. Remove and re-add.
      -UI follows HubitatAppUiTemplate (Reolink v1.6.1, UI design by gopher.ny).
+     -FEATURE REQUEST (pending, gopher.ny): no API lets one app read another app's
+      settings, so X2 users retype the broker login from MQTT Import Integration.
+      Asked for something like MQTTHelper.getBuiltInBrokerSettings() (port, user,
+      pass). If added, prefill those fields in addHubPage like newHubMqttHost.
 */
 
 import groovy.transform.Field
