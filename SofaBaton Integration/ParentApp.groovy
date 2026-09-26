@@ -247,7 +247,11 @@ private String mqttStatusHtml(bridge, List x2Hubs) {
         status in ["error", "connect failed"] ? "bg-red-50 text-red-700" : "bg-gray-100 text-gray-700"
     Boolean broker = null
     try { broker = bridge?.checkBuiltInBroker() } catch (e) { }
-    String brokerText = broker == null ? "Unknown" : (broker ? "Running" : "Not running (fine if you use an external broker)")
+    // Fallback: older Bridge versions set the attribute but return nothing.
+    String attr = bridge?.currentValue("brokerRunning")
+    if (broker == null && attr in ["true", "false"]) broker = (attr == "true")
+    String brokerText = broker == null ? (attr == "error" ? "Check failed, see logs" : "Unknown") :
+        (broker ? "Running" : "Not running (fine if you use an external broker)")
     String brokerRow = "<div class='flex justify-content-between gap-3 py-1'><span>Built-in broker</span>" +
         "<span class='text-color-secondary' style='font-size:14px;'>${brokerText}</span></div>"
     String rows = brokerRow + x2Hubs.collect { h ->
@@ -358,7 +362,7 @@ def addHubPage(params = [:]) {
                 } else {
                     input name: "newHubMac", type: "text", title: "Sofabaton Hub MAC ID (the X2's MAC, not your Hubitat hub's)"
                 }
-                input name: "newHubMqttHost", type: "text", title: "Broker Host (your Hubitat hub's LAN IP, not 127.0.0.1)"
+                input name: "newHubMqttHost", type: "text", title: "Broker Host (this hub's LAN IP, filled in for you)", defaultValue: location.hub.localIP
                 input name: "newHubMqttPort", type: "text", title: "Broker Port", defaultValue: "1883", required: false
                 input name: "newHubMqttUser", type: "text", title: "Broker Username (blank if none)", required: false
                 input name: "newHubMqttPass", type: "password", title: "Broker Password (blank if none${editingHub ? ', or to keep the current one' : ''})", required: false
