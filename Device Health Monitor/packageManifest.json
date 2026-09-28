@@ -4,7 +4,7 @@
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Device%20Health%20Monitor",
     "communityLink": "https://community.hubitat.com/t/release-device-health-monitor/163229",
     "author": "jdthomas24",
-    "version": "1.6.0",
+    "version": "1.7.0",
     "minimumHEVersion": "2.3.0",
     "dateReleased": "2026-09-25",
     "category": "Convenience",
