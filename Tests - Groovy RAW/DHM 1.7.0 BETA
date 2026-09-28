@@ -17,6 +17,9 @@
  * flooded. Deep verification covers every mains Z-Wave device not yet confirmed by the hub radio,
  * warns against back-to-back runs, lists devices that didn't answer, and reports counts after the
  * hub radio check finishes. One summary log line per check; per-device lines are debug only.
+ * Beta 4: new General settings page (scan interval, offline threshold, hub login, app name), with hub
+ * login status on the main page. Deep verification moved to the Verification page. New "Check with hub
+ * radio" button in Device actions for on-demand checks of a single mains Z-Wave device.
  * v1.6.0 -- Major UI refresh (Reolink/Battery Monitor pattern): status banner, Reports
  * cards, settings list with live values, Summary with Needs attention, Issues only,
  * search and built-in sort (no DataTables CDN), phone layouts, remote-friendly device
@@ -85,7 +88,6 @@ preferences {
     page(name: "deepScanPage")
     page(name: "locationsPage")
     page(name: "portalPage")
-    page(name: "appNamePage")
     page(name: "summaryPage")
     page(name: "verificationPage")
     page(name: "deviceManagePage")
@@ -2695,6 +2697,7 @@ void appButtonHandler(String btn) {
         case "daSnooze":     state.daPending = [action: "snooze",   deviceId: state.daDeviceId]; break
         case "daUnsnooze":   state.daPending = [action: "unsnooze", deviceId: state.daDeviceId]; break
         case "daReset":      state.daPending = [action: "reset",    deviceId: state.daDeviceId]; break
+        case "daRadioCheck": runRadioCheck(); break
         case "daCancel":     state.remove("daPending"); break
         case "daConfirm":    runDeviceAction(); break
         case "bulkSelOffline": bulkQuickSelect("offline"); break
@@ -2789,19 +2792,11 @@ def mainPage() {
                      "${stOn()}, ${freq}${settings?.summaryTime ? '' : ', ' + stWarn('no time set')}${modeOn ? ' · selected modes only' : ''}" :
                      stOff(),
                  width: 12, style: "margin:0;")
-            href(name: "toScanSettings", page: "scanSettingsPage",
-                 title: "<i class='fa-solid fa-clock' aria-hidden='true'></i>Scan and thresholds",
-                 description: "${scanLabel.capitalize()} · offline after ${threshold}h${state.zwDataIssue ? ' · ' + stWarn('Z-Wave data unavailable') : ''}",
-                 width: 12, style: "margin:0;")
             href(name: "toSnoozeSettings", page: "snoozeSettingsPage",
                  title: "<i class='fa-solid fa-bell-slash' aria-hidden='true'></i>Snooze",
                  description: snoozeEnabled() ?
                      "${stOn()}, ${settings?.snoozeDurationHours ?: 24}h${snoozedN ? ' · ' + stWarn("${snoozedN} snoozed") : ''}" :
                      stOff(),
-                 width: 12, style: "margin:0;")
-            href(name: "toDeepScan", page: "deepScanPage",
-                 title: "<i class='fa-solid fa-magnifying-glass' aria-hidden='true'></i>Deep verification",
-                 description: deepOn ? stWarn("Scheduled") : (deepLast ? "Last run ${deepLast}" : "Never run"),
                  width: 12, style: "margin:0;")
             href(name: "toLocations", page: "locationsPage",
                  title: "<i class='fa-solid fa-tags' aria-hidden='true'></i>Locations",
@@ -2811,9 +2806,10 @@ def mainPage() {
                  title: "<i class='fa-solid fa-globe' aria-hidden='true'></i>Web portal",
                  description: portalOn ? stOn() : "${stOff()} · needs OAuth",
                  width: 12, style: "margin:0;")
-            href(name: "toAppName", page: "appNamePage",
-                 title: "<i class='fa-solid fa-pen' aria-hidden='true'></i>App name",
-                 description: bmEsc(app.label ?: "Device Health Monitor"),
+            href(name: "toScanSettings", page: "scanSettingsPage",
+                 title: "<i class='fa-solid fa-gear' aria-hidden='true'></i>General",
+                 description: "${scanLabel.capitalize()} · offline after ${threshold}h · " +
+                     (state.zwDataIssue ? stWarn("Z-Wave data unavailable") : settings?.hubSecurity ? "hub login on" : "hub login off"),
                  width: 12, style: "margin:0;")
         }
 
@@ -2914,20 +2910,20 @@ def notificationsPage() {
 }
 
 def scanSettingsPage() {
-    dynamicPage(name: "scanSettingsPage", title: "Scan and Thresholds", install: false) {
-        section {
+    dynamicPage(name: "scanSettingsPage", title: "General", install: false) {
+        section("<b>Scanning</b>") {
             paragraph rawHtml: true, bmPageCss()
             input "scanInterval", "enum", title: "Scan interval",
                   description: "How often device activity is checked and health is updated.",
                   options: ["0.5": "Every 30 Minutes", "1": "Hourly", "3": "Every 3 Hours", "6": "Every 6 Hours"],
-                  defaultValue: "3", submitOnChange: true
+                  defaultValue: "3", submitOnChange: true, width: 6
             input "offlineThresholdHours", "number", title: "Offline after (hours without activity)",
                   description: "Default 168 (7 days). Also sets how long a verification is trusted.",
-                  defaultValue: 168, required: true, submitOnChange: true
+                  defaultValue: 168, required: true, submitOnChange: true, width: 6
             paragraph rawHtml: true, "<div class='bm-hint'>Changes take effect when you tap <b>Done</b> on the main page.</div>"
         }
         section("<b>Hub login</b>") {
-            paragraph rawHtml: true, "<div class='bm-hint'>Only needed if Hub Login Security is on. Used to read Z-Wave radio data for the controller check.</div>"
+            paragraph rawHtml: true, "<div class='bm-hint'>Only needed if Hub Login Security is on. Used to read the hub's Z-Wave radio data for the Z-Wave controller check.</div>"
             input "hubSecurity", "bool", title: "Hub Login Security is on", defaultValue: false, submitOnChange: true
             if (settings?.hubSecurity) {
                 input "hubUser", "text", title: "Hub username", required: true, width: 6
@@ -2937,6 +2933,10 @@ def scanSettingsPage() {
                 paragraph rawHtml: true, "<div class='bm-msg bm-msg-warn'>Z-Wave radio data couldn't be read. " +
                     "If Hub Login Security is on, check the username and password above.</div>"
             }
+        }
+        section("<b>App name</b>") {
+            paragraph rawHtml: true, "<div class='bm-hint'>How this app appears in your Hubitat Apps list. Updates when you return to the main page.</div>"
+            input "customAppName", "text", title: "App name", required: false
         }
     }
 }
@@ -3069,16 +3069,6 @@ def portalPage() {
                     "3. Click <b>OAuth</b> at the top right, then <b>Enable OAuth in App</b>, then <b>Update</b><br>" +
                     "4. Come back and tap <b>Done</b>. The links appear here.</div>" + hubLinkScript()
             }
-        }
-    }
-}
-
-def appNamePage() {
-    dynamicPage(name: "appNamePage", title: "App Name", install: false) {
-        section {
-            paragraph rawHtml: true, bmPageCss() +
-                "<div class='bm-hint'>Rename how this app appears in your Hubitat Apps list. It updates when you return to the main page.</div>"
-            input "customAppName", "text", title: "App name", required: false
         }
     }
 }
@@ -3345,7 +3335,7 @@ def verificationPage() {
         if (state.zwDataIssue) {
             section {
                 paragraph rawHtml: true, bmPageCss() + "<div class='bm-msg bm-msg-warn'>Z-Wave radio data couldn't be read, so Z-Wave devices use basic verification. " +
-                    "If Hub Login Security is on, add your login under <b>Settings, Scan and thresholds</b>.</div>"
+                    "If Hub Login Security is on, add your login under <b>Settings, General</b>.</div>"
             }
         }
         section {
@@ -3566,6 +3556,7 @@ ${hi.note ? "<div class='bm-hint' style='margin:-6px 0 8px;'>${bmEsc(hi.note)}</
   <div class='bm-stat'><div class='bm-stat-label'>Usual check-in</div><div class='bm-stat-num'>${usual == "Learning" ? usual : "every " + usual}</div></div>
   <div class='bm-stat'><div class='bm-stat-label'>Verification</div><div class='bm-stat-num'>${verificationPill(device.id) ?: "<span class='bm-muted'>—</span>"}</div></div>
 </div>
+${zwRadioStatusHtml(device)}
 ${bmMsgHtml(msg)}
 ${hubLinkScript()}
 """
@@ -3634,9 +3625,43 @@ ${hubLinkScript()}
                 }
                 input "daReset", "button", title: "<i class='fa-solid fa-rotate-left' style='margin-right:6px;'></i>Reset history",
                       width: 4, styleClass: "bm-btn"
+                if (zwCanProbe(device)) {
+                    input "daRadioCheck", "button", title: "<i class='fa-solid fa-tower-broadcast' style='margin-right:6px;'></i>Check with hub radio",
+                          width: 4, styleClass: "bm-btn"
+                }
             }
         }
     }
+}
+
+/** On-demand hub radio check for the device open in Device actions. */
+private void runRadioCheck() {
+    def device = getAllMonitoredDevices().find { (it.id as String) == (state.daDeviceId as String) }
+    if (!device || !zwCanProbe(device)) return
+    def key = device.id as String
+    if ((atomicState.zwQueue ?: []).contains(key) || (atomicState.zwPending ?: [:]).containsKey(key)) {
+        state.daMessage = [tone: "warn", text: "<b>${bmEsc(device.displayName)}</b> is already being checked. Refresh in about a minute.".toString()]
+        return
+    }
+    zwEnqueue(device)
+    state.daMessage = [tone: "ok", text: "Checking <b>${bmEsc(device.displayName)}</b> with the hub radio. Refresh this page in about a minute for the result.".toString()]
+}
+
+private String zwRadioStatusHtml(device) {
+    if (!zwProbeable(device)) return ""
+    def key = device.id as String
+    def cap = state.deviceCapabilities?.get(key) ?: [:]
+    def txt
+    if ((atomicState.zwQueue ?: []).contains(key) || (atomicState.zwPending ?: [:]).containsKey(key)) {
+        txt = "🔄 Checking now. Refresh in about a minute."
+    } else if ((cap.zwMisses ?: 0) > 0) {
+        txt = "<span class='bm-c-red'>No answer on the last check (${Math.min(cap.zwMisses as int, ZW_MISS_LIMIT)} of ${ZW_MISS_LIMIT} in a row)</span>"
+    } else if (cap.zwConfirmedAt) {
+        txt = "<span class='bm-c-green'>Answered</span> ${formatTimeAgo(cap.zwConfirmedAt as Long)}"
+    } else {
+        txt = "Not checked yet"
+    }
+    return "<div class='bm-hint' style='margin:-2px 0 8px;'><b>Hub radio:</b> ${txt}</div>"
 }
 
 private void runDeviceAction() {
@@ -3885,7 +3910,7 @@ private List tipsTopics() {
                 [title: "Missed 3 checks in a row", detail: "Offline. The app asked three times with no answer."]
             ],
             warning: "<b>Using Hub Login Security?</b><br>The app needs your hub username and password to read Z-Wave data. " +
-                "Enter them under <b>Settings, Scan and thresholds</b>. Without them, Z-Wave devices are still monitored but can't be confirmed through the hub radio."],
+                "Enter them under <b>Settings, General</b>. Without them, Z-Wave devices are still monitored but can't be confirmed through the hub radio."],
         [id: "bridges", label: "Hue and Konnected", title: "Hue and Konnected devices", group: "Verification", icon: "pi-sitemap",
             body: "<p>Add your <b>Hue Bridge</b> (or CoCoHue Bridge) and <b>Konnected Alarm Panel</b> to monitored devices. " +
                 "When a bulb or sensor goes Poor or Offline, the app refreshes the bridge or panel. That's a real network round-trip, so success confirms the device immediately, even if it has sat untouched for weeks.</p>"],
@@ -4256,4 +4281,3 @@ private String daStylesHtml() {
 </style>
 """
 }
-
