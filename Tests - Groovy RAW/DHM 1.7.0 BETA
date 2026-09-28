@@ -20,6 +20,9 @@
  * Beta 4: new General settings page (scan interval, offline threshold, hub login, app name), with hub
  * login status on the main page. Deep verification moved to the Verification page. New "Check with hub
  * radio" button in Device actions for on-demand checks of a single mains Z-Wave device.
+ * Beta 5: 3 unanswered hub radio checks in a row now means Offline regardless of timing, including
+ * Pending devices; Offline devices keep being checked so recovery is caught. Verification pill shows
+ * "No answer" after a missed check instead of Verified.
  * v1.6.0 -- Major UI refresh (Reolink/Battery Monitor pattern): status banner, Reports
  * cards, settings list with live values, Summary with Needs attention, Issues only,
  * search and built-in sort (no DataTables CDN), phone layouts, remote-friendly device
@@ -636,9 +639,7 @@ def zwProbeReadback() {
             missed << [id: idStr, name: device.displayName, misses: cap.zwMisses]
             if (state.verifying == null) state.verifying = [:]
             state.verifying[device.id] = "zw_miss"
-            if (cap.zwMisses >= ZW_MISS_LIMIT && state.health?.get(device.id) in ["Poor", "Offline"]) {
-                state.health[device.id] = "Offline"
-            }
+            if (cap.zwMisses >= ZW_MISS_LIMIT) state.health[device.id] = "Offline"
         }
         capMap[idStr] = cap
     }
@@ -1696,6 +1697,27 @@ def updateHealth(device, boolean allowProbe = true) {
     if (!data) return
     def zwOk = zwProbeable(device)
 
+    // v1.7.0: 3 unanswered hub radio checks in a row is Offline, whatever timing or learning state says
+    def zwMissNow = zwOk ? ((state.deviceCapabilities?.get(id as String)?.zwMisses ?: 0) as int) : 0
+    if (zwMissNow >= ZW_MISS_LIMIT) {
+        def prevZ = state.prevHealth?.get(id as String)
+        if (!(prevZ in ["Poor", "Offline"])) {
+            def dropMap = state.dropHistory ?: [:]
+            def drops   = (dropMap[id as String] ?: []).findAll { now() - it < 86400000 }
+            drops << now()
+            dropMap[id as String] = drops
+            state.dropHistory = dropMap
+        }
+        state.health[id] = "Offline"
+        def pm = state.prevHealth ?: [:]
+        pm[id as String] = "Offline"
+        state.prevHealth = pm
+        if (state.verifying == null) state.verifying = [:]
+        state.verifying[id] = "zw_miss"
+        if (allowProbe && zwHasProbeCmd(device)) zwEnqueue(device)   // keep asking so recovery is caught
+        return
+    }
+
     def samples = data.samples?.size() ?: 0
     if (samples < 3) {
         state.health[id] = "Pending"
@@ -2071,6 +2093,7 @@ private boolean isActiveIssue(device) {
 
 private String verificationPill(deviceId) {
     def cap = state.deviceCapabilities?.get(deviceId as String) ?: [:]
+    if ((cap.zwMisses ?: 0) > 0) return bmPill("No answer", "red")
     switch (getPingStatus(deviceId)) {
         case "verified":     return cap.pingTrustSource == "weak" ? bmPill("Verified (auto)", "blue") : bmPill("Verified", "green")
         case "unverifiable": return bmPill("Can't verify", "gray")
