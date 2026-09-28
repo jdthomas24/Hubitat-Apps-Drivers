@@ -13,6 +13,10 @@
  * Optional hub login for Hub Login Security. New tip: Z-Wave controller check.
  * Beta 2: hub radio check now runs before the state-event check, so a "State verified" device
  * that stays Poor still gets confirmed and restored.
+ * Beta 3: Z-Wave checks go through one paced queue (about one per second) so large hubs aren't
+ * flooded. Deep verification covers every mains Z-Wave device not yet confirmed by the hub radio,
+ * warns against back-to-back runs, lists devices that didn't answer, and reports counts after the
+ * hub radio check finishes. One summary log line per check; per-device lines are debug only.
  * v1.6.0 -- Major UI refresh (Reolink/Battery Monitor pattern): status banner, Reports
  * cards, settings list with live values, Summary with Needs attention, Issues only,
  * search and built-in sort (no DataTables CDN), phone layouts, remote-friendly device
@@ -56,6 +60,8 @@ definition(
 @Field static final String COFFEE_URL = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "best"
 @Field static final int ZW_MISS_LIMIT = 3
+@Field static final int ZW_PACE_MS = 1000
+@Field static final long DEEP_RECENT_MS = 30L * 60 * 1000
 
 // ============================================================
 // ===================== OAUTH MAPPINGS ======================
@@ -133,7 +139,11 @@ def initialize() {
     state.scanStartTime = null
     state.scanQueue     = []
     state.tempResults   = []
-    state.zwPending     = [:]
+    state.remove("zwPending")
+    atomicState.zwQueue    = []
+    atomicState.zwPending  = [:]
+    atomicState.zwDraining = false
+    if (state.deepScanRunning) state.deepScanRunning = false
     if (state.deviceCapabilities  == null) state.deviceCapabilities  = [:]
     if (state.deepScanResult      == null) state.deepScanResult      = [:]
     if (state.dropHistory         == null) state.dropHistory         = [:]
@@ -531,50 +541,122 @@ private Long zwLastHeard(device) {
     return state.zwNodes?.get(device.id as String)?.h as Long
 }
 
-private void zwQueueReadback(device) {
-    def p = state.zwPending ?: [:]
-    p[device.id as String] = now()
-    state.zwPending = p
-    runIn(60, "zwProbeReadback", [overwrite: true])
+private boolean zwHasProbeCmd(device) {
+    try { return device.hasCommand("refresh") || device.hasCommand("forceRefresh") || device.hasCommand("ping") }
+    catch (e) { return false }
+}
+
+private boolean zwCanProbe(device) { zwProbeable(device) && zwHasProbeCmd(device) }
+
+/** Mains Z-Wave device the hub radio hasn't confirmed within the offline threshold. */
+private boolean zwNeedsRadioCheck(device) {
+    if (!zwCanProbe(device)) return false
+    def at = state.deviceCapabilities?.get(device.id as String)?.zwConfirmedAt
+    return !at || (now() - (at as Long)) > ((settings?.offlineThresholdHours ?: 168) * 3600000L)
+}
+
+// All Z-Wave probes share one queue, sent about one per second so real commands aren't crowded out
+private void zwEnqueue(device) {
+    def key = device.id as String
+    def q   = atomicState.zwQueue ?: []
+    if (q.contains(key) || (atomicState.zwPending ?: [:]).containsKey(key)) return
+    q << key
+    atomicState.zwQueue = q
+    def stalled = atomicState.zwDraining && (now() - ((atomicState.zwDrainTick ?: 0) as Long)) > 15000
+    if (!atomicState.zwDraining || stalled) {
+        atomicState.zwDraining  = true
+        atomicState.zwDrainTick = now()
+        runInMillis(200, "zwDrainQueue")
+    }
+}
+
+def zwDrainQueue() {
+    atomicState.zwDrainTick = now()
+    def q = atomicState.zwQueue ?: []
+    if (!q) {
+        atomicState.zwDraining = false
+        runIn(60, "zwProbeReadback", [overwrite: true])
+        return
+    }
+    def key = q.remove(0)
+    atomicState.zwQueue = q
+    def device = getAllMonitoredDevices().find { (it.id as String) == key }
+    if (device) {
+        try {
+            if (device.hasCommand("refresh"))           device.refresh()
+            else if (device.hasCommand("forceRefresh")) device.forceRefresh()
+            else                                        device.ping()
+            def p = atomicState.zwPending ?: [:]
+            p[key] = now()
+            atomicState.zwPending = p
+        } catch (e) {
+            if (debugEnabled()) log.debug "${device.displayName}: hub radio probe failed to send (${e.message})"
+        }
+    }
+    runInMillis(ZW_PACE_MS, "zwDrainQueue")
 }
 
 def zwProbeReadback() {
-    def pending = state.zwPending ?: [:]
-    state.zwPending = [:]
+    def pending = atomicState.zwPending ?: [:]
     if (!pending) return
+    long cutoff = now() - 45000
+    def ready   = pending.findAll { k, v -> (v as Long) <= cutoff }
+    def waiting = pending.findAll { k, v -> (v as Long) > cutoff }
+    if (!ready) { runIn(30, "zwProbeReadback", [overwrite: true]); return }
+    atomicState.zwPending = waiting
+    if (waiting) runIn(30, "zwProbeReadback", [overwrite: true])
+
     zwRefreshNodeCache()
     if (state.zwDataIssue) return   // no data is not a miss
-    def devs = getAllMonitoredDevices()
-    pending.each { idStr, sentAt ->
+
+    def devs     = getAllMonitoredDevices()
+    def capMap   = state.deviceCapabilities ?: [:]
+    def answered = []
+    def missed   = []
+    ready.each { idStr, sentAt ->
         def device = devs.find { (it.id as String) == idStr }
         if (!device) return
-        def heard  = zwLastHeard(device)
-        def capMap = state.deviceCapabilities ?: [:]
-        def cap    = capMap[idStr] ?: [:]
+        def heard = zwLastHeard(device)
+        def cap   = capMap[idStr] ?: [:]
         if (heard && heard >= (sentAt as Long) - 1000) {
-            cap.zwMisses = 0
+            cap.zwMisses = 0; cap.zwConfirmedAt = heard
             cap.pingWorks = true; cap.pingFailed = 0; cap.pingAttempted = false
             cap.pingTrustSource = "confirmed"; cap.weakTrustFirstGranted = null; cap.weakTrustCooldownUntil = null
-            capMap[idStr] = cap
-            state.deviceCapabilities = capMap
             def data = state.history?.get(device.id)
             if (data && heard > ((data.lastSeen ?: 0) as Long)) {
                 data.lastSeen = heard
                 state.history[device.id] = data
             }
-            updateHealth(device, false)
-            log.info "Device Health Monitor: ${device.displayName} answered the hub radio check"
+            answered << device
+            if (debugEnabled()) log.debug "${device.displayName}: answered the hub radio check"
         } else {
             cap.zwMisses = (cap.zwMisses ?: 0) + 1
-            capMap[idStr] = cap
-            state.deviceCapabilities = capMap
+            missed << [id: idStr, name: device.displayName, misses: cap.zwMisses]
             if (state.verifying == null) state.verifying = [:]
             state.verifying[device.id] = "zw_miss"
             if (cap.zwMisses >= ZW_MISS_LIMIT && state.health?.get(device.id) in ["Poor", "Offline"]) {
                 state.health[device.id] = "Offline"
             }
-            log.info "Device Health Monitor: ${device.displayName} did not answer the hub radio check (${cap.zwMisses} of ${ZW_MISS_LIMIT})"
         }
+        capMap[idStr] = cap
+    }
+    state.deviceCapabilities = capMap
+
+    // Re-score only answered devices that were flagged; healthy ones need no recalculation
+    answered.findAll { state.health?.get(it.id) in ["Poor", "Offline"] }.each { updateHealth(it, false) }
+
+    def src  = state.deepScanRunning ? "Deep verification" : "scan"
+    def prev = state.zwLastCheck
+    def merge = src == "Deep verification" && prev?.source == src && (prev.at as Long) >= ((state.deepScanStartedAt ?: 0) as Long)
+    def missedAll = (merge ? (prev.missed ?: []).findAll { m -> !ready.containsKey(m.id) } : []) + missed
+    state.zwLastCheck = [at: now(), source: src, answered: (merge ? (prev.answered ?: 0) : 0) + answered.size(), missed: missedAll]
+
+    def msg = "Device Health Monitor: hub radio check, ${answered.size()} answered".toString()
+    if (missed) {
+        def names = missed.collect { m -> m.name + " " + Math.min(m.misses as int, ZW_MISS_LIMIT) + "/" + ZW_MISS_LIMIT }.join(", ")
+        log.warn(msg + ", ${missed.size()} no answer (${names})")
+    } else {
+        log.info(msg)
     }
 }
 
@@ -1228,7 +1310,7 @@ def runDeepVerificationScan() {
     def devList = getAllMonitoredDevices().findAll { getProtocol(it) != "Unknown" }
     if (!devList) return
 
-    def targets = devList.findAll { getPingStatus(it.id) in ["declared", "unknown"] }
+    def targets = devList.findAll { getPingStatus(it.id) in ["declared", "unknown"] || zwNeedsRadioCheck(it) }
 
     log.info "Device Health Monitor: deep verification scan starting — ${targets.size()} device(s) to verify"
     if (targets.size() == 0) {
@@ -1242,9 +1324,11 @@ def runDeepVerificationScan() {
     def totalGroups  = groups.size()
     log.info "Device Health Monitor: deep scan — ${totalGroups} batch(es) of ${batchSize}"
 
-    state.deepScanQueue   = groups.collect { group -> group.collect { it.id } }
-    state.deepScanTotal   = totalGroups
-    state.deepScanCurrent = 0
+    state.deepScanQueue     = groups.collect { group -> group.collect { it.id } }
+    state.deepScanTotal     = totalGroups
+    state.deepScanCurrent   = 0
+    state.deepScanRunning   = true
+    state.deepScanStartedAt = now()
 
     processDeepScanGroup()
     def actualDelay = ((totalGroups - 1) * 2) + 10
@@ -1277,7 +1361,11 @@ def processDeepScanGroup(data = null) {
         def protocol  = getProtocol(device)
         def isVirtual = protocol in ["Virtual", "Hub Variable"]
 
-        if (isVirtual) {
+        if (zwCanProbe(device)) {
+            capDataD.pingAttempted   = true
+            capDataD.lastPingAttempt = now()
+            zwEnqueue(device)
+        } else if (isVirtual) {
             capDataD.pingWorks  = false
             capDataD.pingFailed = (capDataD.pingFailed ?: 0) + 1
         } else if (isHueDevice(device)) {
@@ -1297,10 +1385,7 @@ def processDeepScanGroup(data = null) {
             try { hasCustomRefresh = device.hasCommand("forceRefresh") || device.hasCommand("refresh") } catch (e) {}
 
             if (hasRefresh) {
-                try {
-                    device.refresh(); capDataD.pingAttempted = true; capDataD.lastPingAttempt = now()
-                    if (zwProbeable(device)) zwQueueReadback(device)
-                }
+                try { device.refresh(); capDataD.pingAttempted = true; capDataD.lastPingAttempt = now() }
                 catch (e) { capDataD.pingWorks = false; capDataD.pingFailed = (capDataD.pingFailed ?: 0) + 1 }
             } else if (hasPing) {
                 try { device.ping(); capDataD.pingAttempted = true; capDataD.lastPingAttempt = now() }
@@ -1321,19 +1406,30 @@ def processDeepScanGroup(data = null) {
     }
 }
 
-def finalizeDeepScan() {
+def finalizeDeepScan(data = null) {
+    int waits = (data?.waits ?: 0) as int
+    def zwBusy = (atomicState.zwQueue ?: []).size() || (atomicState.zwPending ?: [:]).size()
+    if (zwBusy && waits < 40) {
+        runIn(30, "finalizeDeepScan", [data: [waits: waits + 1], overwrite: true])
+        return
+    }
     def devList = getAllMonitoredDevices().findAll { getProtocol(it) != "Unknown" }
 
     def verified     = devList.count { getPingStatus(it.id) == "verified"     }
     def unverifiable = devList.count { getPingStatus(it.id) == "unverifiable" }
     def declared     = devList.count { getPingStatus(it.id) == "declared"     }
 
+    def zc = state.zwLastCheck
+    def zwFromRun = zc && zc.source == "Deep verification" && (zc.at as Long) >= ((state.deepScanStartedAt ?: 0) as Long)
     state.deepScanResult = [
         ranAt:        now(),
         verified:     verified,
         unverifiable: unverifiable,
-        declared:     declared
+        declared:     declared,
+        zwAnswered:   zwFromRun ? zc.answered : null,
+        zwMissed:     zwFromRun ? (zc.missed ?: []).size() : null
     ]
+    state.deepScanRunning = false
 
     app.updateSetting("enableDeepScan", [value: false, type: "bool"])
     unschedule("runDeepVerificationScan")
@@ -1767,23 +1863,18 @@ def updateHealth(device, boolean allowProbe = true) {
 
     // v1.7.0: confirm through the hub radio instead of trusting that refresh didn't throw.
     // Runs before the state-event check, which can mark a device verified yet leave it Poor.
-    if (zwOk && device.hasCommand("refresh")) {
+    if (zwOk && zwHasProbeCmd(device)) {
         if (!allowProbe) return
         def capMapZ  = state.deviceCapabilities ?: [:]
         def capDataZ = capMapZ[id as String] ?: [:]
-        try {
-            device.refresh()
-            capDataZ.pingAttempted          = true
-            capDataZ.lastPingAttempt        = now()
-            capDataZ.pingTrustSource        = null
-            capDataZ.weakTrustFirstGranted  = null
-            capDataZ.weakTrustCooldownUntil = null
-            state.verifying[id] = (capDataZ.zwMisses ?: 0) > 0 ? "zw_miss" : "zw_probe"
-            zwQueueReadback(device)
-            if (debugEnabled()) log.debug "${device.displayName}: refresh sent, checking hub radio in 60s"
-        } catch (e) {
-            state.verifying[id] = "failed"
-        }
+        capDataZ.pingAttempted          = true
+        capDataZ.lastPingAttempt        = now()
+        capDataZ.pingTrustSource        = null
+        capDataZ.weakTrustFirstGranted  = null
+        capDataZ.weakTrustCooldownUntil = null
+        state.verifying[id] = (capDataZ.zwMisses ?: 0) > 0 ? "zw_miss" : "zw_probe"
+        zwEnqueue(device)
+        if (debugEnabled()) log.debug "${device.displayName}: queued for the hub radio check"
         capMapZ[id as String] = capDataZ
         state.deviceCapabilities = capMapZ
         return
@@ -2613,8 +2704,12 @@ void appButtonHandler(String btn) {
         case "bulkApply":    runBulkAction(); break
         case "sendNow":      sendNotificationNow(); break
         case "btnRunDeepScan":
-            runDeepVerificationScan()
-            state.deepMsg = [tone: "ok", text: "Deep verification started. Results appear here in a minute or two."]
+            if (deepScanBusy()) {
+                state.deepMsg = [tone: "warn", text: "Deep verification is already running. Results appear here when it finishes."]
+            } else {
+                runDeepVerificationScan()
+                state.deepMsg = [tone: "ok", text: "Deep verification started. Z-Wave devices are checked about one per second, so large hubs take a few minutes."]
+            }
             break
         case "snoozeClearAll":
             state.snoozed = [:]
@@ -2875,18 +2970,42 @@ def snoozeSettingsPage() {
     }
 }
 
+private boolean deepScanBusy() {
+    return state.deepScanRunning && (now() - ((state.deepScanStartedAt ?: 0) as Long)) < 30L * 60 * 1000
+}
+
 def deepScanPage() {
-    def r = state.deepScanResult
-    def last = r?.ranAt ? new Date(r.ranAt as Long).format("MMM d, h:mm a", location.timeZone) +
-        " · ${r.verified} verified, ${r.unverifiable} can't verify, ${r.declared} still pending" : "Never run"
+    def r     = state.deepScanResult
+    def busy  = deepScanBusy()
+    def last  = "Never run"
+    if (r?.ranAt) {
+        last = new Date(r.ranAt as Long).format("MMM d, h:mm a", location.timeZone) +
+            " · ${r.verified} verified, ${r.unverifiable} can't verify, ${r.declared} still pending"
+        if (r.zwAnswered != null) last += " · hub radio: ${r.zwAnswered} answered, ${r.zwMissed ?: 0} no answer"
+    }
+    def recentMin = r?.ranAt ? ((now() - (r.ranAt as Long)) / 60000).toInteger() : null
+    def zc = state.zwLastCheck
     dynamicPage(name: "deepScanPage", title: "Deep Verification", install: false) {
         section {
             paragraph rawHtml: true, bmPageCss() +
-                "<div class='bm-hint'>Pings every device that hasn't been verified yet, sorting them into Verified or Can't verify. It runs once, then turns itself off.</div>" +
+                "<div class='bm-hint'>Pings every device that hasn't been verified yet, sorting them into Verified or Can't verify. " +
+                "Mains Z-Wave devices are confirmed through the hub radio, about one per second. It runs once, then turns itself off.</div>" +
                 "<div style='margin-top:8px;'><b>Last run:</b> ${last}</div>"
             def dmsg = state.remove("deepMsg")
             if (dmsg) paragraph rawHtml: true, bmMsgHtml(dmsg)
-            input "btnRunDeepScan", "button", title: "▶ Run now", width: 3, styleClass: "bm-btn"
+            if (busy) {
+                int q = (atomicState.zwQueue ?: []).size()
+                int w = (atomicState.zwPending ?: [:]).size()
+                paragraph rawHtml: true, "<div class='bm-msg bm-msg-info'>🔄 Running. " +
+                    (q ? "${q} Z-Wave device${q == 1 ? '' : 's'} waiting to be checked. " : "") +
+                    (w ? "Waiting on the hub radio for ${w}. " : "") + "Refresh this page to update.</div>"
+            } else {
+                if (recentMin != null && (now() - (r.ranAt as Long)) < DEEP_RECENT_MS) {
+                    paragraph rawHtml: true, "<div class='bm-msg bm-msg-warn'>Last run was ${recentMin} minute${recentMin == 1 ? '' : 's'} ago. " +
+                        "Running again this soon adds Z-Wave traffic without telling you anything new.</div>"
+                }
+                input "btnRunDeepScan", "button", title: "▶ Run now", width: 3, styleClass: "bm-btn"
+            }
             input "enableDeepScan", "bool", title: "Schedule a run (once, then turns off)", defaultValue: false, submitOnChange: true
             if (settings?.enableDeepScan) {
                 input "deepScanTime", "time", title: "Run at", required: true, width: 6
@@ -2894,6 +3013,23 @@ def deepScanPage() {
             href name: "tipsVerify", page: "tipsPage", params: [topic: "verify"],
                  title: "<i class='pi pi-info-circle' aria-hidden='true'></i>How verification works",
                  description: "State events, refresh/ping, Hue and Konnected", width: 6, style: "margin:8px;"
+        }
+        if (zc?.at) {
+            def when   = new Date(zc.at as Long).format("MMM d, h:mm a", location.timeZone)
+            def missed = zc.missed ?: []
+            section("<b>Last hub radio check</b> ${missed ? bmPill("${missed.size()} no answer", "red") : bmPill("All answered", "green")}") {
+                def body = "<div class='bm-hint' style='margin-bottom:6px;'>${when}, from ${zc.source}. ${zc.answered ?: 0} answered. Replaced by the next check.</div>"
+                if (missed) {
+                    body += "<table class='bm-table'><thead><tr><th>Didn't answer</th><th style='text-align:right;'>Missed in a row</th></tr></thead><tbody>" +
+                        missed.collect { m ->
+                            "<tr><td>${hubLink("/device/edit/${m.id}", bmEsc(m.name))}</td>" +
+                            "<td style='text-align:right;'>${Math.min((m.misses ?: 1) as int, ZW_MISS_LIMIT)} of ${ZW_MISS_LIMIT}</td></tr>"
+                        }.join("") + "</tbody></table>" +
+                        "<div class='bm-hint' style='margin-top:6px;'>A single miss can be a mesh hiccup. Three in a row shows the device as Offline.</div>" +
+                        hubLinkScript()
+                }
+                paragraph rawHtml: true, body
+            }
         }
     }
 }
@@ -3740,6 +3876,8 @@ private List tipsTopics() {
             body: "<p>Mains-powered Z-Wave devices often answer a refresh without creating an event, because their state didn't change. " +
                 "To confirm they're reachable, the app sends a refresh, then reads the hub's own Z-Wave radio data (the same data behind <b>Z-Wave Details</b>). " +
                 "If the hub heard the device answer, it's confirmed reachable, whatever driver it uses.</p>" +
+                "<p>Checks are sent about one per second so they never crowd out your normal commands. " +
+                "On a large hub, Deep verification can take a few minutes, and its page lists any device that didn't answer.</p>" +
                 "<p>Battery devices sleep between check-ins and can't be checked this way, so they keep the normal check-in rules.</p>",
             checklist: [
                 [title: "Answered", detail: "Confirmed reachable and back to healthy."],
@@ -4118,3 +4256,4 @@ private String daStylesHtml() {
 </style>
 """
 }
+
