@@ -180,6 +180,11 @@ def mainPage() {
         }
         section(sectionClass: "app-main-settings") {
             paragraph rawHtml: true, columnHeader("Quick Settings")
+            // Opens in a new tab so the app page isn't lost. Diagnostics live on the Bridge.
+            if (bridge) {
+                paragraph rawHtml: true, supportLinkHtml("/device/edit/${bridge.id}", "pi pi-sitemap",
+                    "Bridge Device", "Connection status and MQTT diagnostics")
+            }
             if (x2Hubs) {
                 paragraph rawHtml: true, mqttStatusHtml(bridge, x2Hubs)
             }
