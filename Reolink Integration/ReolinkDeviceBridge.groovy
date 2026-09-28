@@ -1,6 +1,6 @@
 /**
  * Reolink Device Bridge (Internal Parent Driver)
- * Version: 1.6.3
+ * Version: 1.6.4
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- ONE instance per SOURCE (Hub/NVR or standalone).
@@ -58,6 +58,15 @@
  *    restore; separate virtual child devices for the switch/buttons) were
  *    built, tested, and fully replaced by the above during development --
  *    neither exists in the code anymore.
+ *
+ * v1.6.4 -- No more silent dead ends. A failed socket open, a socket drop
+ * mid-handshake, and a handshake reply without a nonce each reported
+ * "disconnected" (or nothing) and stopped, with no retry; the app kept a stale
+ * "reconnecting" and never restarted them (found in production: five
+ * standalone cameras polling for a day). All three now go through the normal
+ * reconnect ladder. retryEventSubscription() lets the app retry a given-up
+ * source. Offline warning and give-up error now log once per outage, not once
+ * per retry cycle.
  *
  * v1.6.3 -- Connection watchdog and logging rework:
  *  - Fixes a 1.6.2 regression: the atomicState timestamp was overwritten by
@@ -515,9 +524,12 @@ def startEventSubscription(boolean isReconnect = false) {
     try {
         interfaces.rawSocket.connect(state.host, state.port as int, byteInterface: true)
     } catch (e) {
-        log.warn "Reolink Device Bridge (source ${state.sourceId}): FAILED to open socket -- ${e.message}"
+        // v1.6.4: was a silent dead end (no retry, app never told). Now uses the reconnect ladder.
+        logF "Reolink Device Bridge (source ${state.sourceId}): could not open socket -- ${e.message}"
         state.stage = null
-        sendEvent(name: "connectionStatus", value: "disconnected")
+        sendEvent(name: "connectionStatus", value: "reconnecting")
+        parent?.componentEventConnectionStatus(this, state.sourceId, "reconnecting")
+        scheduleReconnect()
         return
     }
     runIn(1, "sendNonceRequest")
@@ -565,9 +577,13 @@ def socketStatus(String status) {
             parent?.componentEventConnectionStatus(this, state.sourceId, "reconnecting")
             scheduleReconnect()
         } else if (state.stage && state.stage != "DONE") {
-            logF "Reolink Device Bridge (source ${state.sourceId}): socket closed/errored mid-handshake (stage was ${state.stage})"
-            sendEvent(name: "connectionStatus", value: "disconnected")
-            parent?.componentEventConnectionStatus(this, state.sourceId, "disconnected")
+            // v1.6.4: was a dead end; now retries like any other failure.
+            logF "Reolink Device Bridge (source ${state.sourceId}): socket closed/errored mid-handshake (stage was ${state.stage}), scheduling reconnect"
+            unschedule("flowTimeoutCheck")
+            state.stage = null
+            sendEvent(name: "connectionStatus", value: "reconnecting")
+            parent?.componentEventConnectionStatus(this, state.sourceId, "reconnecting")
+            scheduleReconnect()
         }
         state.stage = null
     }
@@ -576,27 +592,39 @@ def socketStatus(String status) {
 @Field static final int MAX_RECONNECT_ATTEMPTS = 10
 
 /**
- * v1.6.3: attempts are silent; the 3rd consecutive attempt warns once that the
- * source is offline (polling meanwhile), giving up is an error, and the next
- * successful subscribe logs "back online".
+ * Attempts are silent; the 3rd consecutive attempt warns that the source is
+ * offline, giving up is an error, and the next successful subscribe logs "back
+ * online". v1.6.4: warning and error fire once per outage, not per retry cycle.
  */
 private void scheduleReconnect() {
     int attempt = (state.reconnectAttempts ?: 0) + 1
     state.reconnectAttempts = attempt
     if (attempt > MAX_RECONNECT_ATTEMPTS) {
-        log.error "Reolink Device Bridge (source ${state.sourceId}): event connection offline, giving up after ${MAX_RECONNECT_ATTEMPTS} attempts -- falling back to polling"
+        if (!state.giveUpLogged) {
+            state.giveUpLogged = true
+            log.error "Reolink Device Bridge (source ${state.sourceId}): event connection offline, giving up after ${MAX_RECONNECT_ATTEMPTS} attempts -- polling until it can reconnect (retried automatically)"
+        } else {
+            logF "Reolink Device Bridge (source ${state.sourceId}): still offline after another ${MAX_RECONNECT_ATTEMPTS} attempts, polling"
+        }
         sendEvent(name: "connectionStatus", value: "disconnected")
         parent?.componentEventConnectionStatus(this, state.sourceId, "disconnected")
         return
     }
     int delaySec = Math.min(300, 5 * (int) Math.pow(2, attempt - 1))
-    if (attempt == OFFLINE_WARN_ATTEMPT) {
+    if (attempt == OFFLINE_WARN_ATTEMPT && !state.offlineWarned) {
         state.offlineWarned = true
         log.warn "Reolink Device Bridge (source ${state.sourceId}): event connection offline after ${attempt - 1} " +
             "failed reconnects, still retrying (polling meanwhile)"
     }
     logF "Reolink Device Bridge (source ${state.sourceId}): reconnect attempt ${attempt}/${MAX_RECONNECT_ATTEMPTS} in ${delaySec}s"
     runIn(delaySec, "reconnectEventSubscription")
+}
+
+/** v1.6.4: app-driven retry of a given-up or stuck source. Fresh attempt ladder; warn-once flags kept. */
+def retryEventSubscription() {
+    unschedule("reconnectEventSubscription")
+    state.reconnectAttempts = 0
+    startEventSubscription(true)
 }
 
 /** Retries only while event subscription remains requested. */
@@ -946,10 +974,13 @@ private void handleMessage(int cmdId, String bodyText) {
         case "AWAITING_NONCE":
             def nonce = findXmlValue(bodyText, "nonce")
             if (!nonce) {
-                log.warn "Reolink Device Bridge (source ${state.sourceId}): no nonce in response, cannot continue"
+                // v1.6.4: was a dead end; now retries (the ladder warns if it persists).
+                logF "Reolink Device Bridge (source ${state.sourceId}): no nonce in handshake response, scheduling reconnect"
+                unschedule("flowTimeoutCheck")
                 state.stage = null
-                sendEvent(name: "connectionStatus", value: "disconnected")
-                parent?.componentEventConnectionStatus(this, state.sourceId, "disconnected")
+                sendEvent(name: "connectionStatus", value: "reconnecting")
+                parent?.componentEventConnectionStatus(this, state.sourceId, "reconnecting")
+                scheduleReconnect()
                 return
             }
             state.nonce = nonce
@@ -965,6 +996,7 @@ private void handleMessage(int cmdId, String bodyText) {
             state.stage = "SUBSCRIBED"
             state.reconnectAttempts = 0
             state.remove("offlineWarned")
+            state.remove("giveUpLogged")
             unschedule("flowTimeoutCheck")
             runIn(25, "sendKeepalive")
             if (wasOffline) {
