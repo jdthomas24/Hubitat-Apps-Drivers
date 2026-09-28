@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.6.3
+ * Version: 1.6.4
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -19,6 +19,14 @@
  * in-app Tips page, not duplicated here. TODO markers mark spots needing
  * exact command/param names verified against firmware (field names can
  * drift by version). Full history prior to 1.3.6 is in GitHub commit history.
+ *
+ * v1.6.4 -- Stuck and given-up event connections now recover on their own:
+ *  - The saved connection status is only a hint. Done/reboot now restarts any
+ *    source whose bridge can't prove live traffic, not just ones saved as
+ *    "connected" (a stale "reconnecting" left five cameras polling for a day).
+ *  - A given-up source retries as soon as its camera answers again
+ *    (unreachable -> reachable), otherwise at most once an hour via the audit.
+ *  - Add source IP field labeled "IP address or hostname".
  *
  * v1.6.3 -- Connection and logging fixes (watchdog regression fix is in
  * ReolinkDeviceBridge.groovy):
@@ -229,7 +237,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.6.3"
+@Field static final String APP_VERSION = "1.6.4"
 
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 
@@ -257,6 +265,9 @@ definition(
 
 // v1.6.2: scheduler tick rate while every source is event-connected (nothing to poll).
 @Field static final int IDLE_TICK_SEC = 30
+
+// v1.6.4: minimum gap between app-driven retries of a source that isn't connected.
+@Field static final long EVENT_RETRY_INTERVAL_MS = 3600000L
 
 // Pause between per-channel recording-schedule writes in
 // componentLoadPreset()'s loop -- see the top-of-file v1.5.0 note for why.
@@ -814,8 +825,8 @@ private List tipsTopics() {
             body: [
                 "<p>" + ("On by default, and for almost every source there's nothing to do here -- a source " +
                 "that supports it gets real-time updates, and if the connection ever drops, it retries " +
-                "automatically (backing off over 10 attempts) before settling into plain polling on its own. " +
-                "No toggle needed for that case; it self-recovers.") + "</p>",
+                "automatically (backing off over 10 attempts) before falling back to polling, then tries event " +
+                "mode again as soon as the camera answers, or at least once an hour. No toggle needed; it self-recovers.") + "</p>",
                 "<p>" + ("This toggle matters for ONE specific case: a source that structurally can't do event " +
                 "mode at all -- port 9000 blocked by a firewall, or older firmware that doesn't speak the " +
                 "event protocol. That source will still go through all 10 reconnect attempts (and their " +
@@ -1073,7 +1084,7 @@ def addSourcePage(params) {
             paragraph rawHtml: true, "<div class='reolink-status-heading font-semibold'>Source details</div>" +
                 "<div class='text-sm text-color-secondary mt-1'>Enter connection details for your Reolink camera, NVR, or Home Hub.</div>"
             input "newLabel", "text", title: "Label (e.g. 'Front Door Hub', 'Garage Cam')"
-            input "newHost", "text", title: "IP address", width: 8
+            input "newHost", "text", title: "IP address or hostname", width: 8
             input "newPort", "number", title: "HTTPS port", defaultValue: 443, width: 4
             input "newUser", "text", title: "Username"
             input "newPass", "password", title: "Password"
@@ -2407,6 +2418,7 @@ def removeSource(id) {
     state.sources.removeAll { it.id == (id as Integer) }
     state.sourceUnreachable?.remove(id.toString())
     state.sourceConnMode?.remove(id.toString())
+    state.lastEventRetry?.remove(id.toString())
     // Clean up any presets defined for this source too, so state doesn't
     // accumulate dead entries forever.
     state.recPresets?.remove(id.toString())
@@ -2555,6 +2567,8 @@ private void markSourceReachable(sourceId) {
         log.info "Reolink source ${sourceId}: connection restored"
         map[key] = false
         state.sourceUnreachable = map
+        // v1.6.4: camera is back; resume event mode if it isn't connected.
+        runIn(5, "retryStuckEventConnection", [overwrite: false, data: [sourceId: sourceId as Integer]])
     }
 }
 
@@ -2911,13 +2925,14 @@ def ensureSourceBridge(sourceId) {
     def wantEvent = settings["useEventSubscription_${sourceId}"] != false  // default true
     def currentStatus = state.sourceConnMode?.get(sourceId.toString())
     def currentlyRunning = currentStatus in ["connected", "connecting", "reconnecting"]
-    // v1.6.3: a saved "connected" can outlive its socket (reboot, driver reload).
-    if (currentStatus == "connected") {
-        try { currentlyRunning = bridge.isEventConnectionAlive() } catch (e) { /* older bridge driver */ }
-    }
-    if (wantEvent && !currentlyRunning) {
+    // v1.6.4: the saved status is only a hint; confirm against the bridge's live traffic.
+    def alive = currentlyRunning
+    try { alive = bridge.isEventConnectionAlive() } catch (e) { /* older bridge driver: trust saved status */ }
+    if (wantEvent && !alive) {
         bridge.startEventSubscription()
-        logNormal "Reolink source ${sourceId}: event subscription starting"
+        logNormal(currentlyRunning ?
+            "Reolink source ${sourceId}: event connection wasn't running (saved status '${currentStatus}'), starting it" :
+            "Reolink source ${sourceId}: event subscription starting")
     } else if (!wantEvent && currentlyRunning) {
         try { bridge.stopEventSubscription() } catch (e) { /* best effort */ }
         state.sourceConnMode?.remove(sourceId.toString())
@@ -3382,6 +3397,39 @@ def auditEventConnections() {
             staleFlags[key] = false
             state.sourceAuditStale = staleFlags
         }
+        // v1.6.4: not subscribed at all (gave up, or stuck) -> retry, at most hourly.
+        if (!stale) {
+            def alive = true
+            try { alive = bridge.isEventConnectionAlive() } catch (e) { /* older bridge driver */ }
+            def last = ((state.lastEventRetry ?: [:])[key] ?: 0) as Long
+            if (!alive && now() - last >= EVENT_RETRY_INTERVAL_MS) retryEventConnection(src.id, "not connected")
+        }
+    }
+}
+
+/** v1.6.4: reachability-triggered retry (scheduled from markSourceReachable()). */
+def retryStuckEventConnection(data) {
+    def sourceId = data?.sourceId as Integer
+    if (sourceId == null || settings["useEventSubscription_${sourceId}"] == false) return
+    def bridge = getSourceBridge(sourceId)
+    if (!bridge) return
+    def alive = true
+    try { alive = bridge.isEventConnectionAlive() } catch (e) { return }
+    if (!alive) retryEventConnection(sourceId, "camera reachable again")
+}
+
+/** v1.6.4: one app-driven retry; the bridge logs offline/back-online itself. */
+private void retryEventConnection(sourceId, String reason) {
+    def bridge = getSourceBridge(sourceId)
+    if (!bridge) return
+    def retries = state.lastEventRetry ?: [:]
+    retries[sourceId.toString()] = now()
+    state.lastEventRetry = retries
+    logFull "Reolink source ${sourceId}: retrying event connection (${reason})"
+    try {
+        bridge.retryEventSubscription()
+    } catch (e) {
+        try { bridge.startEventSubscription() } catch (e2) { /* best effort */ }
     }
 }
 
