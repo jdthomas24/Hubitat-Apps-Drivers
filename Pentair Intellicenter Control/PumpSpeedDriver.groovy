@@ -1,6 +1,6 @@
 // ============================================================
 // Pentair IntelliCenter Pump Driver
-// Version: 1.6.2
+// Version: 1.6.4
 // All files in this integration share this version number.
 // ============================================================
 

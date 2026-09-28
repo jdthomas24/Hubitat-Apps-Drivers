@@ -1,13 +1,13 @@
 {
   "packageName": "Pentair IntelliCenter Controller",
   "author": "jdthomas24",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "category": "Utility",
   "description": "Pentair IntelliCenter local integration for Hubitat",
   "dateReleased": "4-10-26",
   "minimumHEVersion": "2.3.0",
   "communityLink": "https://community.hubitat.com/t/release-pentair-intellicenter-controller-beta/162876/31",
-  "releaseNotes": "v1.6.3 - App now appears under Integrations instead of Apps in the hub sidebar. No functional changes.",
+  "releaseNotes": "v1.6.4: Main page UI refresh (status card, equipment tiles, Help & Support). No functional changes.",
   "apps": [
     {
       "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",

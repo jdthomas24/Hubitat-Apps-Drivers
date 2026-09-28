@@ -1,6 +1,6 @@
 /**
  * Reolink Device Bridge (Internal Parent Driver)
- * Version: 1.6.1
+ * Version: 1.6.2
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- ONE instance per SOURCE (Hub/NVR or standalone).
@@ -58,6 +58,12 @@
  *    restore; separate virtual child devices for the switch/buttons) were
  *    built, tested, and fully replaced by the above during development --
  *    neither exists in the code anymore.
+ *
+ * v1.6.2 -- lastRealMessageAt moved from state to atomicState. Hubitat saves
+ * state when each execution finishes, so a sendKeepalive() execution that
+ * overlapped a parse() could save its stale copy over the fresh timestamp,
+ * tripping the 90s watchdog on a healthy connection (worse under hub load).
+ * atomicState writes immediately.
  *
  * v1.5.3 -- HOTFIX: restored the stale-connection watchdog (documented in
  * the 1.4.4 history below but found genuinely absent from sendKeepalive()
@@ -406,7 +412,7 @@ def startEventSubscription(boolean isReconnect = false) {
     state.last145 = [:]
     // v1.5.3: reset on every (re)connect so a fresh connection never starts
     // out already looking stale to sendKeepalive()'s watchdog below.
-    state.lastRealMessageAt = now()
+    atomicState.lastRealMessageAt = now()
     try {
         interfaces.rawSocket.connect(state.host, state.port as int, byteInterface: true)
     } catch (e) {
@@ -563,7 +569,7 @@ def sendKeepalive() {
         // an outbound send even though nothing real has come back in a
         // long time, so "the send succeeded" is not evidence the
         // connection is alive.
-        def lastReal = (state.lastRealMessageAt ?: 0) as Long
+        def lastReal = (atomicState.lastRealMessageAt ?: 0) as Long
         if (now() - lastReal > (STALE_CONNECTION_THRESHOLD_SEC * 1000L)) {
             // v1.5.3 refinement: this is the TRIGGER for a reconnect, not
             // yet evidence of a real problem -- silent by default
@@ -608,7 +614,7 @@ def sendKeepalive() {
  */
 def isEventConnectionStale(Integer thresholdSec) {
     if (state.stage != "SUBSCRIBED") return false
-    def lastReal = (state.lastRealMessageAt ?: 0) as Long
+    def lastReal = (atomicState.lastRealMessageAt ?: 0) as Long
     return (now() - lastReal) > (thresholdSec * 1000L)
 }
 
@@ -782,7 +788,7 @@ private void processBuffer() {
     // a successfully-parsed message is genuine traffic, regardless of
     // cmd_id, so this is stamped here rather than only on cmd_id 33/145
     // pushes.
-    state.lastRealMessageAt = now()
+    atomicState.lastRealMessageAt = now()
 
     if (state.rxBufferHex?.length() >= 40) {
         processBuffer()

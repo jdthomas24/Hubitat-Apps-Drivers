@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.6.1
+ * Version: 1.6.2
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -19,6 +19,14 @@
  * in-app Tips page, not duplicated here. TODO markers mark spots needing
  * exact command/param names verified against firmware (field names can
  * drift by version). Full history prior to 1.3.6 is in GitHub commit history.
+ *
+ * v1.6.2 -- Scheduler ticks every 1s only while a source needs polling,
+ * otherwise every IDLE_TICK_SEC (30s), and skips unchanged state writes.
+ * A 1s tick with nothing to do (every source event-connected) still made a
+ * cross-device bridge lookup per source per tick; on an 8-standalone-source
+ * install that was ~34% of total hub time and triggered Hubitat's
+ * LimitExceededException throttling. A connection drop kicks an immediate
+ * tick so polling fallback still starts within ~1s.
  *
  * v1.6.1 -- Pass RTSP port and output width defaults when configuring newly
  * created children so the doorbell driver saves all stream settings at creation.
@@ -208,7 +216,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.6.1"
+@Field static final String APP_VERSION = "1.6.2"
 
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 
@@ -233,6 +241,9 @@ definition(
 // catch the case where that first-layer watchdog itself silently stops
 // running, not to compete with it on timing.
 @Field static final int SOURCE_STALE_AUDIT_THRESHOLD_SEC = 300
+
+// v1.6.2: scheduler tick rate while every source is event-connected (nothing to poll).
+@Field static final int IDLE_TICK_SEC = 30
 
 // Pause between per-channel recording-schedule writes in
 // componentLoadPreset()'s loop -- see the top-of-file v1.5.0 note for why.
@@ -2907,6 +2918,8 @@ def componentEventConnectionStatus(child, sourceId, String status) {
         // immediately instead of waiting out whatever interval they were on,
         // so there's no extra gap on top of the drop itself.
         childrenForSource(sourceId as Integer).each { markPollDueNow(it.deviceNetworkId) }
+        // v1.6.2: the scheduler may be idling at IDLE_TICK_SEC; resume 1s ticks now.
+        runIn(1, "schedulerTick", [overwrite: true])
     }
 }
 
@@ -3348,50 +3361,38 @@ def auditEventConnections() {
 
 /**
  * Single central scheduler -- exactly ONE recurring timer exists for the
- * whole app (this method, ticking every second), and each device's own
- * due-time is tracked independently in state (nextPollDue / nextSnapshotDue,
- * keyed by DNI). Nothing here can ever cancel another device's schedule,
- * because there is only one schedule.
+ * whole app, and each device's own due-time is tracked independently in
+ * state (nextPollDue / nextSnapshotDue / nextBatteryCheckDue, keyed by DNI).
  *
- * Two robustness measures, since this single tick is the ONE thing every
- * device's polling depends on:
- *  1. Each device is processed in its own try/catch. One device throwing
- *     logs a warning and moves on instead of aborting the whole tick.
- *  2. The next tick is re-armed in a finally block, so even an unexpected
- *     failure outside the per-device loop still can't prevent the scheduler
- *     from continuing to run.
+ * Robustness: each device runs in its own try/catch, and the next tick is
+ * re-armed in a finally block, so no single failure can stop the scheduler.
+ *
+ * v1.6.2: ticks every 1s only while at least one source needs polling
+ * (event connection not healthy, or event mode turned off); otherwise every
+ * IDLE_TICK_SEC. The state maps are only written back when something
+ * actually changed. See the v1.6.2 header note for the load this fixes.
  */
 def schedulerTick() {
+    boolean anyPolling = false
     try {
         def nowMs = now()
         def pollDue = state.nextPollDue ?: [:]
         def snapDue = state.nextSnapshotDue ?: [:]
         def battDue = state.nextBatteryCheckDue ?: [:]
+        boolean dirty = false
 
         (state.sources ?: []).each { src ->
             def bridge = getSourceBridge(src.id)
             if (!bridge) return
             def sourceConnected = isSourceEventConnected(src.id)
+            if (!sourceConnected) anyPolling = true
             (bridge.getChildDevices() ?: []).each { child ->
                 def dni = child.deviceNetworkId
                 try {
-                    // Battery level is NEVER delivered via the event push
-                    // path (only motion/AI is), so this check deliberately
-                    // runs regardless of sourceConnected -- placed before
-                    // that early-return below, unlike poll/snapshot which
-                    // correctly skip while event mode is healthy.
-                    // hasCapability("Battery") scopes this to whichever
-                    // devices actually declare it -- both Camera and
-                    // Doorbell drivers do.
+                    // Battery level never arrives via push, so this runs
+                    // regardless of sourceConnected (before the early return).
                     if (child.hasCapability("Battery") && nowMs >= ((battDue[dni] ?: 0) as Long)) {
-                        // A device stuck with batteryMode never set would
-                        // otherwise silently and permanently skip this gate
-                        // (due-time still advanced, nothing logged, battery
-                        // never updated short of a manual check). Missing
-                        // batteryMode is treated as "unknown, go find out"
-                        // rather than "not battery, skip forever" --
-                        // backfilled via a live probe, once. Self-heals on
-                        // the next tick.
+                        // Missing batteryMode = unknown, backfill via a live probe once.
                         def batteryMode = child.currentValue("batteryMode")
                         if (batteryMode == null) {
                             log.warn "Reolink Integration: ${child.displayName} (${dni}) has no batteryMode set -- " +
@@ -3406,45 +3407,44 @@ def schedulerTick() {
                         if (checkEnabled && hours > 0 && batteryMode == "battery") {
                             componentCheckBattery(child)
                         }
-                        // Re-evaluated even when skipped (disabled, or wired
-                        // device) so a later settings change or batteryMode
-                        // correction is picked up within an hour rather than
-                        // never re-checked again.
+                        // Re-armed even when skipped so a settings change is picked up.
                         battDue[dni] = nowMs + (Math.max(hours, 1) * 3600L * 1000L)
+                        dirty = true
                     }
-                    // While this source has a confirmed-healthy event
-                    // connection, skip active polling for it -- the push path
-                    // is already delivering its state via
-                    // componentEventChannelUpdate(). nextPollDue is
-                    // deliberately left untouched here so if the connection
-                    // drops, componentEventConnectionStatus() marking it
-                    // due-now takes effect immediately.
+                    // Healthy event connection: skip polling. nextPollDue is left
+                    // alone so a drop (componentEventConnectionStatus) takes effect now.
                     if (sourceConnected) return
                     if (nowMs >= ((pollDue[dni] ?: 0) as Long)) {
                         pollChildNow(child)
                         def interval = (child.getSetting("pollIntervalSec") ?: 30) as Integer
                         pollDue[dni] = nowMs + (interval * 1000L)
+                        dirty = true
                     }
                     if (nowMs >= ((snapDue[dni] ?: 0) as Long)) {
                         pollChildSnapshotNow(child)
                         def sInterval = (child.getSetting("snapshotIntervalSec") ?: 30) as Integer
                         snapDue[dni] = nowMs + (sInterval * 1000L)
+                        dirty = true
                     }
                 } catch (e) {
                     log.warn "Reolink Integration: schedulerTick() failed for device ${dni} -- ${e.message}. Skipping this device this tick, will retry next tick."
                     def interval = (child.getSetting("pollIntervalSec") ?: 30) as Integer
                     pollDue[dni] = nowMs + (interval * 1000L)
+                    dirty = true
                 }
             }
         }
 
-        state.nextPollDue = pollDue
-        state.nextSnapshotDue = snapDue
-        state.nextBatteryCheckDue = battDue
+        if (dirty) {
+            state.nextPollDue = pollDue
+            state.nextSnapshotDue = snapDue
+            state.nextBatteryCheckDue = battDue
+        }
     } catch (e) {
         log.warn "Reolink Integration: schedulerTick() failed outside the per-device loop -- ${e.message}"
+        anyPolling = true
     } finally {
-        runIn(1, "schedulerTick", [overwrite: true])
+        runIn(anyPolling ? 1 : IDLE_TICK_SEC, "schedulerTick", [overwrite: true])
     }
 }
 

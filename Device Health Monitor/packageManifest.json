@@ -1,19 +1,23 @@
 {
-  "packageName": "Device Health Monitor",
-  "author": "Jdthomas24",
-  "version": "1.5.11",
-  "category": "Monitoring",
-  "description": "Monitor device check-in health across Zigbee, Z-Wave, Matter, Hub Mesh, LAN, Virtual and Hub Variable — learns each device's normal pattern and alerts you when something goes quiet.",
-  "dateReleased": "4/28/26",
-  "minimumHEVersion": "2.3.0",
-  "releaseNotes": "v1.5.11 — Bug fix: Scan failed for X: No signature of method... BigDecimal.round() errors in debug logs, silently skipping state tracking for affected devices.",
-  "apps": [
-    {
-      "id": "a045ac2b-5fe0-4159-830b-8550899d9553",
-      "name": "Device Health Monitor App",
-      "namespace": "Jdthomas24",
-      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Device%20Health%20Monitor/Raw%20Code/DeviceHealthMonitor.groovy",
-      "required": true
-    }
-  ]
+    "packageName": "Device Health Monitor",
+    "releaseNotes": "v1.6.0 is a major UI refresh with phone-friendly pages, a Needs attention list, and one-stop Device and Bulk actions. Fixes device snoozes that never stuck, notification devices ignoring the notifications switch, Send Now reporting sent when nothing went out, and the portal's last scan time. If summaries stop arriving, check that Notifications is On.",
+    "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Device%20Health%20Monitor",
+    "communityLink": "https://community.hubitat.com/t/release-device-health-monitor/163229",
+    "author": "jdthomas24",
+    "version": "1.6.0",
+    "minimumHEVersion": "2.3.0",
+    "dateReleased": "2026-09-25",
+    "category": "Convenience",
+    "tags": "Monitoring",
+    "apps": [
+        {
+            "name": "Device Health Monitor",
+            "namespace": "jdthomas24",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Device%20Health%20Monitor/Raw%20Code/DeviceHealthMonitor.groovy",
+            "required": true,
+            "primary": true,
+            "oauth": true,
+            "description": "Learns each device's normal check-in pattern and flags devices that go quiet, with verification, locations, snooze, and a live web portal."
+        }
+    ]
 }

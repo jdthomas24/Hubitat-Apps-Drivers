@@ -1,6 +1,6 @@
 /**
  * Reolink Standalone Devices (Internal Group Driver)
- * Version: 1.6.1
+ * Version: 1.6.2
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- exactly ONE instance total, shared across every

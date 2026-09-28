@@ -1,3 +1,45 @@
+/**
+ * Battery Monitor 2.0
+ * Version: 2.6.0
+ *
+ * Tracks battery levels, drain, health, and replacements for selected devices.
+ * Scans on a recurring schedule plus each device's own battery events. Health is
+ * a confidence-weighted, EWMA-smoothed drain average; trend reacts faster to
+ * recent readings. Replacements are auto-detected from a confirmed upward jump.
+ * Optional OAuth web portal serves a live dashboard.
+ *
+ * v2.6.0 -- Li-ion cliff-drop detection (graduated from beta): urgent alert when a
+ * cliff-enabled device drops by the configured threshold (default 40%) between two
+ * consecutive readings. Auto-enabled for LIR types; opt-in for 18650/RCR123A/RCR2.
+ * Bypasses snooze by default. Cliff alerts now respect the notifications master switch.
+ * Summary page redesigned: filter counts, needs-attention list with a to-replace total,
+ * five-column table with type pills, built-in sort/search (no DataTables CDN), phone
+ * layout. Drain under 0.01%/day now shows as <0.01 instead of 0.00 (display only).
+ * Device Actions (two-pane, real buttons with confirm), Bulk Actions (one action,
+ * quick select, fixes silently skipped combined actions), Device Management,
+ * Auto-Detection, Battery Types, and History pages redesigned. Report links are cards.
+ * Removed orphaned Ignored Devices and Bulk Result pages; one shared battery type list.
+ * Main page: Reports cards (tinted) under the banner; settings moved from collapsible
+ * sections into a settings list with live values. Phone layouts added across all pages.
+ * Web portal rebuilt on the Summary layout (dark theme): filter counts, needs attention,
+ * to-replace total, issues-only, search, phone layout.
+ * Fixed: replacing a dead or near-empty battery (5% or below) was never auto-detected,
+ * since samples are cleared at ~0% and detection required 3. Pending day counter capped.
+ * Fixed: replacement history sorted by month instead of date across a year boundary.
+ * Cliff detection now re-defaults when a device's battery type changes (LIR on, others off).
+ * v2.5.34 -- UI refresh (pattern from Reolink Integration v1.6.1): status banner
+ * on the main page, Help & Support cards, version footer, and a new Tips &
+ * Troubleshooting page replacing the App Guide. Added tips for fixed Poor/Fair
+ * thresholds, readings that look wrong, and scan logging. Corrected the guide's
+ * confidence note (full confidence at 5 samples, not 10). No logic changes.
+ * v2.5.32 -- enablePush is now the master switch for all notification targets.
+ * v2.5.30 -- Simplified replacement detection to a confirmed minimum jump;
+ * Battery Types page split into unassigned/assigned sections.
+ *
+ * Full history in GitHub commit history.
+ */
+import groovy.transform.Field
+
 definition(
     name: "Battery Monitor 2.0",
     namespace: "jdthomas24",
@@ -7,10 +49,15 @@ definition(
     importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Battery%20Monitor%202.0/Raw%20Code/BatteryMonitor2.0.groovy",
     iconUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Tests%20-%20Groovy%20RAW/Battery%20Monitor%202.0%20BETA%20Tests",
     iconX2Url: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Battery%20Monitor%202.0/Raw%20Code/BatteryMonitor2.0.groovy",
-    version: "2.5.33",
+    version: "2.6.0",
     doNotFocus: true,
     oauth: true
 )
+
+@Field static final String APP_VERSION = "2.6.0"
+@Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/release-battery-monitor-2-0/162329"
+@Field static final String COFFEE_URL = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
+@Field static final String DEFAULT_TIP_TOPIC = "best"
 
 // ============================================================
 // ===================== OAUTH MAPPINGS ======================
@@ -39,11 +86,20 @@ def updated() {
 
     runIn(1800, disableDebugLogging)
 
+    // Retired confirm-toggle settings from pre-2.6.0 action pages
+    ["ddReplaceConfirm", "ddResetConfirm", "ddIgnoreConfirm", "ddLastDeviceId",
+     "bulkReplaceConfirm", "bulkResetConfirm", "bulkIgnoreConfirm", "bulkUnignoreConfirm",
+     "snoozeConfirm", "snoozeConfirmClear"].each {
+        if (settings.containsKey(it)) app.removeSetting(it)
+    }
+
     def devList    = autoDevices ?: []
     def currentIds = devList.collect { it.id as String }
     state.history?.keySet()?.findAll { !currentIds.contains(it) }?.each { removedId ->
         state.history.remove(removedId)
         state.trend?.remove(removedId)
+        state.cliffLastAlert?.remove(removedId)
+        state.cliffTypeSeen?.remove(removedId)
         if (debugMode) log.debug "Cleaned up removed device: ${removedId}"
     }
 
@@ -110,7 +166,9 @@ def updated() {
             app.removeSetting("battInfo_${device.id}")
             if (debugMode) log.debug "Migrated battery catalog entry for ${device.displayName}: ${legacyInfo}"
         }
+
     }
+    syncCliffDefaults()
 }
 
 def disableDebugLogging() {
@@ -163,22 +221,129 @@ def isIgnored(device) {
 }
 
 // ============================================================
+// ===================== CLIFF-DROP DETECTION ================
+// ============================================================
+// LIR types are always Li-ion, so cliff detection auto-enables. 18650/RCR123A/RCR2 are
+// form-factor labels (LiFePO4 variants exist), so they default off until confirmed.
+def autoCliffTypes()   { return ["LIR2016", "LIR2032", "LIR2430", "LIR2450"] }
+def manualCliffTypes() { return ["18650", "RCR123A", "RCR2"] }
+
+def isAutoCliffType(battType) {
+    return battType && autoCliffTypes().contains(battType)
+}
+
+def isCliffCandidateType(battType) {
+    return battType && (autoCliffTypes().contains(battType) || manualCliffTypes().contains(battType))
+}
+
+def isCliffEnabled(device) {
+    def val = settings["cliffEnabled_${device.id}"]
+    if (val != null) return (val == true || val == "true")
+    return isAutoCliffType(settings["battType_${device.id}"])
+}
+
+/**
+ * Re-defaults the cliff switch when a device's battery type changes (LIR on, anything else off).
+ * A manual choice made without changing the type is kept.
+ */
+def syncCliffDefaults(List devices = null) {
+    // First run (upgrade): record current types and only fill in unset switches, so existing choices survive
+    if (state.cliffTypeSeen == null) {
+        def initial = [:]
+        (autoDevices ?: []).each { d ->
+            def t = settings["battType_${d.id}"]
+            if (!t || t.startsWith("_sep")) return
+            initial[d.id as String] = t
+            if (settings["cliffEnabled_${d.id}"] == null) {
+                app.updateSetting("cliffEnabled_${d.id}", [value: isAutoCliffType(t), type: "bool"])
+            }
+        }
+        state.cliffTypeSeen = initial
+        return
+    }
+    def seen = state.cliffTypeSeen ?: [:]
+    boolean changed = false
+    (devices ?: autoDevices ?: []).each { device ->
+        def key = device.id as String
+        def bt  = settings["battType_${device.id}"]
+        if (!bt || bt.startsWith("_sep")) return
+        if (seen[key] != bt) {
+            app.updateSetting("cliffEnabled_${device.id}", [value: isAutoCliffType(bt), type: "bool"])
+            seen[key] = bt
+            changed = true
+        }
+    }
+    if (changed) state.cliffTypeSeen = seen
+}
+
+// Raw delta between two consecutive readings, independent of EWMA smoothing and elapsed
+// time, so infrequent reporters are still caught.
+def checkCliffDrop(device, oldLevel, newLevel) {
+    if (device == null || oldLevel == null || newLevel == null) return
+    if (isIgnored(device)) return
+    if (!isCliffEnabled(device)) return
+
+    def drop = (oldLevel as Integer) - (newLevel as Integer)
+    if (drop <= 0) return
+
+    def threshold = (settings?.cliffDropThreshold ?: 40).toInteger()
+    if (drop < threshold) return
+
+    def lastAlert = state.cliffLastAlert?.get(device.id)
+    if (lastAlert && (now() - (lastAlert as Long)) < (60 * 60 * 1000)) {
+        if (debugMode) log.debug "${device.displayName}: cliff drop detected but alert sent within the last hour, skipping duplicate"
+        return
+    }
+
+    if (!state.cliffLastAlert) state.cliffLastAlert = [:]
+    state.cliffLastAlert[device.id] = now()
+    state.cliffLastAlert = state.cliffLastAlert
+
+    log.warn "Battery Monitor: CLIFF DROP detected — ${device.displayName} ${oldLevel}% -> ${newLevel}% (threshold ${threshold}%)"
+    sendCliffAlert(device, oldLevel as Integer, newLevel as Integer)
+}
+
+def sendCliffAlert(device, oldLevel, newLevel) {
+    // Notifications master switch is authoritative (same rule as scheduledSummary)
+    if (settings?.enablePush == false) {
+        if (debugMode) log.debug "${device.displayName}: cliff alert suppressed — notifications are off"
+        return
+    }
+
+    def ts  = new Date().format("MM/dd h:mm a", location.timeZone)
+    def msg = "⚡ URGENT: ${device.displayName} battery dropped ${oldLevel}% → ${newLevel}% (${ts}). This pattern is typical of a Li-ion cell nearing end of life — replace as soon as possible."
+
+    def bypassSnooze = settings?.cliffBypassSnooze != false
+    def snoozed      = state.notifSnoozedUntil && state.notifSnoozedUntil >= now()
+    if (snoozed && !bypassSnooze) {
+        if (debugMode) log.debug "${device.displayName}: cliff alert suppressed — notifications snoozed and cliffBypassSnooze is off"
+        return
+    }
+
+    if (settings?.enablePush)      sendPush(msg)
+    if (settings?.pushoverDevices) settings.pushoverDevices.each { it.deviceNotification(msg) }
+    if (settings?.notifyDevices)   notifyDevices.each { it.deviceNotification(msg) }
+}
+
+// ============================================================
 // ===================== PREFERENCES =========================
 // ============================================================
 preferences {
     page(name: "mainPage")
+    page(name: "devicesPage")
+    page(name: "notificationsPage")
+    page(name: "portalPage")
+    page(name: "generalPage")
+    page(name: "appNamePage")
     page(name: "summaryPage")
     page(name: "historyPage")
     page(name: "deleteHistoryPage")
     page(name: "deleteHistoryConfirmPage")
-    page(name: "infoPage")
+    page(name: "tipsPage")
     page(name: "forceScanPage")
-    page(name: "sendNotificationPage")
     page(name: "deviceManagePage")
     page(name: "deviceActionsPage")
     page(name: "bulkActionsPage")
-    page(name: "bulkActionsResultPage")
-    page(name: "ignoredDevicesPage")
     page(name: "detectionSettingsPage")
     page(name: "batteryTypesPage")
 }
@@ -186,200 +351,221 @@ preferences {
 // ============================================================
 // ===================== MAIN PAGE ===========================
 // ============================================================
+private String stOn(String t = "On")   { "<span style='color:#1e7b34;font-weight:600;'>${t}</span>" }
+private String stOff(String t = "Off") { "<span style='color:#b42318;font-weight:600;'>${t}</span>" }
+private String stWarn(String t)        { "<span style='color:#9a5b00;'>${t}</span>" }
+
 def mainPage() {
     applyCustomLabel()
 
-    dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
-
-        def currentLabel = app.label ?: "Battery Monitor 2.0"
-        def appNameTitle = "<b>App Display Name</b> — <span style='color:blue;'>${currentLabel}</span>"
-        section(appNameTitle, hideable: true, hidden: true) {
-            paragraph "Enter a name to rename this app in your Hubitat app list."
-            input "customAppName", "text",
-                  title: "Custom App Name",
-                  description: "Rename how this app appears in your Hubitat app list",
-                  required: false
-        }
-
-        def portalEnabled    = state.accessToken != null
-        def portalStatus     = portalEnabled ? "<span style='color:blue;'>Enabled</span>" : "<span style='color:red;'>Not Enabled</span>"
-        def portalSectionTitle = "<b>🌐 Battery Web Portal</b> — ${portalStatus}"
-
-        section(portalSectionTitle, hideable: true, hidden: portalEnabled) {
-            if (portalEnabled) {
-                def cloudUrl = getFullApiServerUrl()
-                def localUrl = getFullLocalApiServerUrl()
-                paragraph "<div style='padding:10px; background-color:#d1ecf1; border:1px solid #bee5eb; color:#0c5460; border-radius:4px;'>" +
-                          "<b>Cloud URL (use anywhere):</b><br>" +
-                          "<a href='${cloudUrl}/dashboard?access_token=${state.accessToken}' target='_blank' style='color:#0c5460; word-wrap:break-word;'>${cloudUrl}/dashboard?access_token=${state.accessToken}</a><br><br>" +
-                          "<b>Local URL (use at home):</b><br>" +
-                          "<a href='${localUrl}/dashboard?access_token=${state.accessToken}' target='_blank' style='color:#0c5460; word-wrap:break-word;'>${localUrl}/dashboard?access_token=${state.accessToken}</a><br><br>" +
-                          "</div>"
-            } else {
-                def hubIp = location?.hub?.localIP ?: ""
-                paragraph "<div style='padding:10px; background-color:#f8d7da; border:1px solid #f5c6cb; color:#721c24; border-radius:4px;'>" +
-                          "<b>OAuth is not yet enabled.</b> To activate the web portal:<br><br>" +
-                          "1. Go to <b>Apps Code</b> in the Hubitat menu" + (hubIp ? " — <a href='http://${hubIp}/app/list' target='_blank' style='color:#721c24;'>tap here to open Apps Code</a>" : "") + "<br>" +
-                          "2. Find <b>Battery Monitor 2.0</b> in the list and open it<br>" +
-                          "3. Click <b>OAuth</b> in the top-right of the code editor<br>" +
-                          "4. Click <b>Enable OAuth in App</b> → <b>Update</b><br>" +
-                          "5. Return here and tap <b>Done</b> to save — the portal URLs will appear above." +
-                          "</div>"
+    def devCount = autoDevices?.size() ?: 0
+    if (devCount) {
+        if (!state.history) state.history = [:]
+        if (!state.trend)   state.trend   = [:]
+        (autoDevices ?: []).each { device ->
+            app.updateSetting("deviceName_${device.id}", [value: device.displayName, type: "string"])
+            if (!state.history[device.id]) {
+                def lvl = device.currentValue("battery")
+                state.history[device.id] = [
+                    lastLevel:     lvl != null ? lvl.toInteger() : 100,
+                    lastDate:      now(),
+                    lastScanDate:  now(),
+                    firstSeenDate: now(),
+                    drain:         0.3,
+                    samples:       [],
+                    justReplaced:  false
+                ]
+                state.trend[device.id] = "Stable"
             }
         }
+    }
 
-        def devicesSelected = (autoDevices?.size() ?: 0) > 0
-        def devSectionTitle = devicesSelected
-            ? "<b>Selected Monitored Devices</b> — <span style='color:blue;'>${autoDevices.size()} selected</span>"
-            : "<b>Selected Monitored Devices</b>"
+    def snoozed   = state.notifSnoozedUntil && state.notifSnoozedUntil >= now()
+    def hoursLeft = snoozed ? Math.ceil((state.notifSnoozedUntil - now()) / 3600000).toInteger() : 0
+    def notifOn   = settings?.enablePush != false
+    def freq      = [daily: "daily", every2: "every 2 days", every3: "every 3 days", weekly: "weekly"][settings?.reportFrequency ?: "daily"]
+    def scanLabel = ["1": "hourly", "3": "every 3 hours", "6": "every 6 hours"][settings?.scanInterval ?: "3"]
+    def portalOn  = state.accessToken != null
 
-        section(devSectionTitle, hideable: true, hidden: devicesSelected) {
-            paragraph "<b>⚠ Important: The app automatically detects all devices reporting battery levels. " +
-                      "Select the devices you want to monitor from the list below. Only selected devices will be tracked for trends, battery health, and notifications.</b>"
-            paragraph "<span style='color:red; font-weight:bold;'>Note for mobile users:</span> If your device names are long, they may extend past the screen in the selection list. This is a UI limitation on smaller screens. You can still select devices as usual."
-            paragraph "<span style='color:red; font-weight:bold;'>IMPORTANT: After selecting devices, you MUST click 'Done' to exit the app BEFORE viewing the battery report. Skipping this step may cause an error.</span>"
+    dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
+        section {
+            paragraph rawHtml: true, bmStatusBannerHtml()
+        }
+
+        section(title: "<b>Reports</b>", sectionClass: "bm-cards bm-cards-primary") {
+            href(name: "toSummary", page: "summaryPage",
+                 title: "<i class='fa-solid fa-chart-simple' aria-hidden='true'></i>Summary and trends",
+                 description: "Levels, health, drain, and what needs attention", width: 4, style: "margin:8px;")
+            href(name: "toHistory", page: "historyPage",
+                 title: "<i class='fa-solid fa-clock-rotate-left' aria-hidden='true'></i>Replacement history",
+                 description: "Auto and manual replacement log", width: 4, style: "margin:8px;")
+            href(name: "toDevManage", page: "deviceManagePage",
+                 title: "<i class='fa-solid fa-screwdriver-wrench' aria-hidden='true'></i>Device management",
+                 description: "Types, replacements, bulk actions, detection", width: 4, style: "margin:8px;")
+        }
+
+        section(title: "<b>Settings</b>", sectionClass: "bm-settings") {
+            href(name: "toDevices", page: "devicesPage",
+                 title: "<i class='fa-solid fa-list-check' aria-hidden='true'></i>Monitored devices",
+                 description: devCount ? "${devCount} selected" : stOff("None selected"),
+                 width: 12, style: "margin:0;")
+            href(name: "toNotifications", page: "notificationsPage",
+                 title: "<i class='fa-solid fa-bell' aria-hidden='true'></i>Notifications",
+                 description: notifOn ?
+                     "${stOn()}, ${freq}${settings?.summaryTime ? '' : ', ' + stWarn('no time set')}${snoozed ? ' · ' + stWarn("snoozed ${hoursLeft}h") : ''}" :
+                     stOff(),
+                 width: 12, style: "margin:0;")
+            href(name: "toPortal", page: "portalPage",
+                 title: "<i class='fa-solid fa-globe' aria-hidden='true'></i>Web portal",
+                 description: portalOn ? stOn() : "${stOff()} · needs OAuth",
+                 width: 12, style: "margin:0;")
+            href(name: "toGeneral", page: "generalPage",
+                 title: "<i class='fa-solid fa-clock' aria-hidden='true'></i>Scan interval",
+                 description: "${scanLabel.capitalize()} · stale after ${settings?.staleThresholdHours ?: 24}h",
+                 width: 12, style: "margin:0;")
+            href(name: "toAppName", page: "appNamePage",
+                 title: "<i class='fa-solid fa-pen' aria-hidden='true'></i>App name",
+                 description: bmEsc(app.label ?: "Battery Monitor 2.0"),
+                 width: 12, style: "margin:0;")
+        }
+
+        helpAndSupportSection()
+        section {
+            input "debugMode", "bool", title: "Debug logging <span style='font-size:13px;color:#6b7280;'>· turns off after 30 minutes</span>",
+                  defaultValue: false, submitOnChange: true
+        }
+        versionFooterSection()
+    }
+}
+
+// ============================================================
+// ===================== SETTINGS SUBPAGES ===================
+// ============================================================
+def devicesPage() {
+    dynamicPage(name: "devicesPage", title: "Monitored Devices", install: false) {
+        section {
+            paragraph rawHtml: true, bmPageCss() +
+                "<div class='bm-hint'>Choose the battery devices to track for trends, health, and notifications.</div>"
             input "autoDevices", "capability.battery",
-                  title: "Select battery devices to monitor",
+                  title: "Battery devices to monitor",
                   multiple: true,
                   required: false
+            paragraph rawHtml: true, "<div class='bm-msg bm-msg-warn'>After changing devices, tap <b>Done</b> on the main page to save before opening reports.</div>"
         }
+    }
+}
 
-        if (devicesSelected) {
-            def devList = autoDevices ?: []
-            if (devList) {
-                if (!state.history) state.history = [:]
-                if (!state.trend)   state.trend   = [:]
-                devList.each { device ->
-                    app.updateSetting("deviceName_${device.id}", [value: device.displayName, type: "string"])
-                    if (!state.history[device.id]) {
-                        def currentLevel = device.currentValue("battery")
-                        state.history[device.id] = [
-                            lastLevel:     currentLevel != null ? currentLevel.toInteger() : 100,
-                            lastDate:      now(),
-                            lastScanDate:  now(),
-                            firstSeenDate: now(),
-                            drain:         0.3,
-                            samples:       [],
-                            justReplaced:  false
-                        ]
-                        state.trend[device.id] = "Stable"
-                    }
-                }
-            }
-        }
+def notificationsPage() {
+    def snoozed   = state.notifSnoozedUntil && state.notifSnoozedUntil >= now()
+    def hoursLeft = snoozed ? Math.ceil((state.notifSnoozedUntil - now()) / 3600000).toInteger() : 0
+    def notifOn   = settings?.enablePush != false
 
-        section("") {
-            input "scanInterval", "enum",
-                  title: "<b>Battery Scan Interval</b>",
-                  description: "How often battery levels are read. More frequent = faster health ratings. Devices also update on their own battery events.",
-                  options: ["1": "Hourly", "3": "Every 3 Hours", "6": "Every 6 Hours"],
-                  defaultValue: "3",
-                  submitOnChange: true
-        }
-
-        def snoozed         = state.notifSnoozedUntil && state.notifSnoozedUntil >= now()
-        def snoozeHoursLeft = snoozed ? Math.ceil((state.notifSnoozedUntil - now()) / 3600000).toInteger() : 0
-        def snoozeSectionTitle = snoozed
-            ? "<b>Notification Snooze</b> — <span style='color:orange;'>😴 ${snoozeHoursLeft}h remaining</span>"
-            : "<b>Notification Snooze</b> — <span style='color:red;'>Off</span>"
-        section(snoozeSectionTitle, hideable: true, hidden: !snoozed) {
-            paragraph "Silence all Battery Monitor notifications for a set duration. Useful when traveling or away from home."
-            if (snoozed) {
-                paragraph "<b><span style='color:orange;'>😴 Notifications snoozed — ${snoozeHoursLeft}h remaining</span></b>"
-                input "snoozeConfirmClear", "bool",
-                      title: "✅ Clear snooze — resume notifications now",
-                      defaultValue: false,
-                      submitOnChange: true
-                if (settings?.snoozeConfirmClear == true) {
-                    state.notifSnoozedUntil = 0
-                    app.updateSetting("snoozeConfirmClear", [value: false, type: "bool"])
-                    paragraph "✅ Snooze cleared — notifications resumed."
-                }
-            } else {
-                input "snoozeDurationDays", "number",
-                      title: "Snooze duration (days):",
-                      defaultValue: 7,
-                      required: true
-                input "snoozeConfirm", "bool",
-                      title: "😴 Confirm — snooze notifications",
-                      defaultValue: false,
-                      submitOnChange: true
-                if (settings?.snoozeConfirm == true) {
-                    def days = (settings?.snoozeDurationDays ?: 7).toInteger()
-                    state.notifSnoozedUntil = now() + (days * 86400000)
-                    app.updateSetting("snoozeConfirm", [value: false, type: "bool"])
-                    paragraph "😴 Notifications snoozed for ${days} day(s)."
-                }
-            }
-        }
-
-        def notifOn              = settings?.enablePush != false
-        def notifSectionTitle    = "<b>Notifications</b> — <span style='color:${notifOn ? "blue" : "red"};'>${notifOn ? "On" : "Off"}</span>"
-        section(notifSectionTitle, hideable: true, hidden: true) {
-            paragraph "ℹ️ Enable the toggle below to reveal notification settings including frequency, timing, device targets, and which battery groups to include in reports."
-            input "enablePush", "bool", title: "Enable notifications", defaultValue: true, submitOnChange: true
-
-            if (settings?.enablePush != false) {
-                input "reportFrequency", "enum",
-                      title: "Notification Frequency:",
-                      options: ["daily": "Daily", "every2": "Every 2 Days", "every3": "Every 3 Days", "weekly": "Weekly"],
-                      defaultValue: "daily"
-                input "summaryTime", "time", title: "Notification Time:", required: false
-                input "notifyDevices", "capability.notification", title: "Notification devices", multiple: true, required: false
-                input "enablePushover", "bool", title: "⚙️ Enable Pushover Markup", defaultValue: false
-                input "pushoverDevices", "capability.notification",
-                      title: "Pushover notification devices <b>(receives Pushover-formatted message)</b>",
-                      multiple: true, required: false
-                input "pushoverPrefix", "text",
-                      title: "Pushover tags <b>(Only used if Enable Pushover Markup is toggled ON)</b>",
-                      description: "Pushover-specific additions to the Battery Monitor notifications, e.g. [H][TITLE=Battery Report][HTML][SELFDESTRUCT=43200]",
-                      required: false
-                paragraph "<b>Report Sections (choose which battery groups to include in notifications):</b>"
-                input "notifyPoor",      "bool", title: "🔴 Include Poor (≤25%)",                            defaultValue: true
-                input "notifyFair",      "bool", title: "🟠 Include Fair (26–70%)",                          defaultValue: true
-                input "notifyGood",      "bool", title: "🟢 Include Good (71–99%)",                          defaultValue: false
-                input "notifyExcellent", "bool", title: "🟢 Include Excellent (100%)",                       defaultValue: false
-                input "notifyHighDrain", "bool", title: "⚠️ Include Health (Fair, Poor, & High Drain Only)", defaultValue: true
-                input "notifyStale",     "bool", title: "⚠️ Include Stale Devices",                          defaultValue: true
-                input "staleThresholdHours", "number",
-                      title: "<b>Mark device as stale if no activity for X hours</b>",
-                      defaultValue: 24
-                input "suppressEmptyReport",  "bool", title: "🔕 Don't send notification if nothing to report <b>(Skips Notification entirely when all enabled toggles are Empty)</b>", defaultValue: false
-                input "notifyIncludeAppLink", "bool", title: "🔗 Include link to Battery Monitor app <b>(Local Only)</b>", defaultValue: false
-                paragraph "<b>Send notification now:</b>"
-                href(name: "toSendNotification", page: "sendNotificationPage", title: "📤 Send Notification Now")
-            }
-        }
-
-        section("<b>Reports:</b>") {
-            href(name: "toSummary",   page: "summaryPage",      title: "<b>Battery Summary & Trends</b>",     description: "Battery levels, health, drain rates and trends")
-            href(name: "toHistory",   page: "historyPage",      title: "<b>Battery Replacement History</b>",  description: "Auto and manual replacement log")
-            href(name: "toDevManage", page: "deviceManagePage", title: "<b>🔋 Device Battery Management</b>", description: "Assign battery types, log replacements, reset drain history, view history")
-        }
-
-        section("<b>Help & Support</b>") {
-            href(name: "toInfo", page: "infoPage",
-                 title: "📖 App Guide & Reference",
-                 description: "Colors, drain rates, trends, confidence, and replacement detection explained")
-            paragraph rawHtml: true, """
-<div style='padding:4px 0;'>
-  <a href='https://community.hubitat.com/t/release-battery-monitor-2-0/162329/288' target='_blank'
-     style='display:block; background:#f8f8f8; border:1px solid #ddd; border-radius:6px; padding:10px 14px; text-decoration:none; color:#333; margin-bottom:6px;'>
-    <span style='font-size:14px;'>💬 <b>Hubitat Community Thread</b></span><br>
-    <span style='font-size:12px; color:#888;'>Questions, feedback, bug reports, and release notes</span>
-  </a>
-  <a href='https://paypal.me/jdthomas24?locale.x=en_US&country.x=US' target='_blank'
-     style='display:block; background:#f8f8f8; border:1px solid #ddd; border-radius:6px; padding:10px 14px; text-decoration:none; color:#333;'>
-    <span style='font-size:14px;'>☕ <b>Buy Me a Coffee</b></span><br>
-    <span style='font-size:12px; color:#888;'>Enjoying the app? Any amount is appreciated — thank you!</span>
-  </a>
-</div>
+    dynamicPage(name: "notificationsPage", title: "Notifications", install: false) {
+        section {
+            paragraph rawHtml: true, bmPageCss() + """
+<style>
+  .bm-btn-align { padding-top: 22px; box-sizing: border-box; }
+</style>
 """
+            input "enablePush", "bool", title: "Enable notifications", defaultValue: true, submitOnChange: true, width: 4
+            if (notifOn) {
+                input "sendNow", "button", title: "<i class='fa-solid fa-paper-plane' style='margin-right:6px;'></i>Send now",
+                      width: 3, styleClass: "bm-btn"
+                def sendMsg = state.remove("sendMsg")
+                if (sendMsg) paragraph rawHtml: true, bmMsgHtml(sendMsg)
+            }
         }
+        if (notifOn) {
+            section("<b>Schedule and delivery</b>") {
+                input "reportFrequency", "enum", title: "Frequency",
+                      options: ["daily": "Daily", "every2": "Every 2 Days", "every3": "Every 3 Days", "weekly": "Weekly"],
+                      defaultValue: "daily", width: 4
+                input "summaryTime", "time", title: "Time", required: false, width: 4
+                input "enablePushover", "bool", title: "Pushover markup", defaultValue: false, submitOnChange: true, width: 4
+                input "notifyDevices", "capability.notification", title: "Notification devices", multiple: true, required: false, width: 6
+                // Always visible: these devices receive notifications even with markup off
+                input "pushoverDevices", "capability.notification",
+                      title: "Pushover devices", multiple: true, required: false, width: 6
+                if (settings?.enablePushover) {
+                    input "pushoverPrefix", "text", title: "Pushover tags",
+                          description: "e.g. [H][TITLE=Battery Report][HTML][SELFDESTRUCT=43200]",
+                          required: false
+                }
+            }
+            section("<b>What to include</b>") {
+                input "notifyPoor",      "bool", title: "🔴 Poor (≤25%)",       defaultValue: true,  width: 4
+                input "notifyFair",      "bool", title: "🟠 Fair (26–70%)",     defaultValue: true,  width: 4
+                input "notifyGood",      "bool", title: "🟢 Good (71–99%)",     defaultValue: false, width: 4
+                input "notifyExcellent", "bool", title: "🟢 Excellent (100%)",  defaultValue: false, width: 4
+                input "notifyHighDrain", "bool", title: "⚠️ High drain",        defaultValue: true,  width: 4
+                input "notifyStale",     "bool", title: "⚠️ Stale devices",     defaultValue: true,  width: 4
+                input "suppressEmptyReport",  "bool", title: "🔕 Skip when nothing to report", defaultValue: false, width: 4
+                input "notifyIncludeAppLink", "bool", title: "🔗 Include app link (local only)", defaultValue: false, width: 4
+            }
+            section("<b>Snooze</b> ${snoozed ? bmPill("Snoozed, ${hoursLeft}h left", "amber") : bmPill("Off", "gray")}") {
+                def smsg = state.remove("snoozeMsg")
+                if (snoozed) {
+                    def until = new Date(state.notifSnoozedUntil as Long).format("MMM d, h:mm a", location.timeZone)
+                    paragraph rawHtml: true, "<div class='bm-msg bm-msg-warn'>😴 Snoozed until <b>${until}</b>. Cliff alerts still come through by default.</div>"
+                    input "snoozeClear", "button", title: "Resume now", width: 3, styleClass: "bm-btn"
+                } else {
+                    paragraph rawHtml: true, (smsg ? bmMsgHtml(smsg) + "<div style='height:6px;'></div>" : "") +
+                        "<div class='bm-hint'>Pause notifications while you're away. Scanning continues, and cliff alerts still come through by default.</div>"
+                    input "snoozeDurationDays", "number", title: "Days", defaultValue: 7, range: "1..60", required: false, width: 2
+                    input "snoozeStart", "button", title: "😴 Snooze", width: 3, styleClass: "bm-btn bm-btn-align"
+                }
+            }
+        }
+    }
+}
 
-        section("<b>Diagnostics</b>") {
-            input "debugMode", "bool", title: "Debug Logging (auto-disables after 30 min)", defaultValue: false, submitOnChange: true
-            paragraph "<span style='color:#94a3b8; font-size:11px;'>Battery Monitor v2.5.33</span>"
+def portalPage() {
+    def portalOn = state.accessToken != null
+    dynamicPage(name: "portalPage", title: "Web Portal", install: false) {
+        section {
+            paragraph rawHtml: true, bmPageCss() +
+                "<div class='bm-hint'>A live dashboard of every device, sorted by battery level. Add either link to a dashboard Link tile for one-tap access.</div>"
+            if (portalOn) {
+                def cloudUrl = "${getFullApiServerUrl()}/dashboard?access_token=${state.accessToken}"
+                def localUrl = "${getFullLocalApiServerUrl()}/dashboard?access_token=${state.accessToken}"
+                paragraph rawHtml: true, "<div class='bm-msg bm-msg-info' style='word-break:break-all;'>" +
+                    "<b>Cloud (anywhere):</b><br><a href='${cloudUrl}' target='_blank'>${cloudUrl}</a><br><br>" +
+                    "<b>Local (at home):</b><br><a href='${localUrl}' target='_blank'>${localUrl}</a></div>"
+            } else {
+                def hubIp = location?.hub?.localIP ?: ""
+                paragraph rawHtml: true, "<div class='bm-msg bm-msg-err'><b>OAuth isn't enabled yet.</b> To turn on the portal:<br><br>" +
+                    "1. Open <b>Apps Code</b> (" + hubLink("/app/list", "open it here") + ")<br>" +
+                    "2. Open <b>Battery Monitor 2.0</b><br>" +
+                    "3. Click <b>OAuth</b> at the top right, then <b>Enable OAuth in App</b>, then <b>Update</b><br>" +
+                    "4. Come back and tap <b>Done</b>. The links appear here.</div>" + hubLinkScript()
+            }
+        }
+    }
+}
+
+def appNamePage() {
+    dynamicPage(name: "appNamePage", title: "App Name", install: false) {
+        section {
+            paragraph rawHtml: true, bmPageCss() +
+                "<div class='bm-hint'>Rename how this app appears in your Hubitat Apps list. It updates when you return to the main page.</div>"
+            input "customAppName", "text", title: "App name", required: false
+        }
+    }
+}
+
+def generalPage() {
+    dynamicPage(name: "generalPage", title: "Scan Interval", install: false) {
+        section {
+            paragraph rawHtml: true, bmPageCss()
+            input "scanInterval", "enum",
+                  title: "Battery scan interval",
+                  description: "How often levels are read. Devices also update on their own battery events.",
+                  options: ["1": "Hourly", "3": "Every 3 Hours", "6": "Every 6 Hours"],
+                  defaultValue: "3", submitOnChange: true
+            input "staleThresholdHours", "number",
+                  title: "Mark devices stale after (hours without activity)",
+                  description: "Default 24. Used by the summary, banner, and notifications.",
+                  defaultValue: 24, required: false
         }
     }
 }
@@ -476,16 +662,16 @@ def scheduledSummary() {
     // UI once off, with no way to clear them). This makes the master switch authoritative.
     if (settings?.enablePush == false) {
         if (debugMode) log.debug "Notifications disabled (enablePush off) — skipping summary"
-        return
+        return false
     }
 
     if (state.notifSnoozedUntil && state.notifSnoozedUntil >= now()) {
         if (debugMode) log.debug "Notifications snoozed until ${new Date(state.notifSnoozedUntil)} — skipping summary"
-        return
+        return false
     }
 
     def devList = (autoDevices ?: []).findAll { it?.currentValue("battery") != null && !isIgnored(it) }
-    if (!devList) return
+    if (!devList) return false
 
     def categories = [
         "🔴 Poor":      [list: [], enabled: notifyPoor      != null ? notifyPoor      : true],
@@ -602,7 +788,7 @@ def scheduledSummary() {
             ((notifyHighDrain != null ? notifyHighDrain : true) && highDrainList) ||
             ((notifyStale != null ? notifyStale : true) && staleDevices) ||
             deadBatteryList
-        if (!hasContent) return
+        if (!hasContent) return false
     }
 
     def pushoverBody = body
@@ -625,6 +811,7 @@ def scheduledSummary() {
     def poorCount  = categories["🔴 Poor"]?.list?.size() ?: 0
     def staleCount = staleDevices?.size() ?: 0
     def deadCount  = deadBatteryList?.size() ?: 0
+    return true
 }
 
 // ============================================================
@@ -662,6 +849,10 @@ def updateBattery(device, level) {
         state.history = state.history
         data = state.history[device.id]
     }
+
+    // Cliff check runs first on the raw previous->new delta, ahead of dead-battery,
+    // EWMA, and replacement logic
+    checkCliffDrop(device, data.lastLevel, level)
 
     if (level <= 1) {
         data.zeroCount = (data.zeroCount ?: 0) + 1
@@ -771,15 +962,19 @@ def detectReplacement(device, newLevel, oldLevel) {
 
     def data = state.history[device.id]
 
+    // A jump up from a near-empty battery is unambiguous. Samples are cleared at ~0%, so the
+    // sample/age gates below would otherwise block detection of dead-battery swaps entirely.
+    def fromEmpty = (oldLevel as Integer) <= 5
+
     def sampleCount = data?.samples?.size() ?: 0
-    if (sampleCount < 3) {
+    if (!fromEmpty && sampleCount < 3) {
         if (debugMode) log.debug "${device.displayName}: replacement gate — only ${sampleCount}/3 prior samples, skipping"
         return
     }
 
     def firstSeen = data?.firstSeenDate ?: data?.lastDate ?: now()
     def ageDays   = (now() - (firstSeen as Long)) / (1000 * 60 * 60 * 24)
-    if (ageDays < 3) {
+    if (!fromEmpty && ageDays < 3) {
         if (debugMode) log.debug "${device.displayName}: replacement gate — device only ${ageDays.toInteger()}d old (min 3d), skipping"
         return
     }
@@ -1023,7 +1218,7 @@ def getHealthDisplay(device) {
             daysSinceReplaced = ((now() - (hist.lastDate as Long)) / (1000 * 60 * 60 * 24)).toInteger()
         }
         def minDays = 5
-        return "<span style='color:#94a3b8; font-size:11px;'>⏳ ${samples}/${minSamples} samples &nbsp;·&nbsp; ${daysSinceReplaced}/${minDays} days</span>"
+        return "<span style='color:#94a3b8; font-size:11px;'>⏳ ${Math.min(samples, minSamples)}/${minSamples} samples &nbsp;·&nbsp; ${Math.min(daysSinceReplaced, minDays)}/${minDays} days</span>"
     }
 
     def colorMap = ["Excellent": "#22c55e", "Good": "#22c55e", "Fair": "#f97316", "Poor": "#ef4444"]
@@ -1174,7 +1369,7 @@ def logReplacement(device, newLevel, manual = false) {
         date:     new Date().format("MM/dd/yyyy", location.timeZone),
         type:     manual ? "manual" : "auto"
     ]
-    state.replacements = state.replacements.sort { a, b -> b.date <=> a.date }.take(100)
+    state.replacements = state.replacements.sort { a, b -> replacementTime(b) <=> replacementTime(a) }.take(100)
 
     state.history[device.id] = data
     state.history = state.history
@@ -1210,135 +1405,74 @@ def forceRefreshEndpoint() {
 // ============================================================
 def serveDashboardPage() {
     try {
-        def devList = (autoDevices ?: []).findAll { it?.currentValue("battery") != null && !isIgnored(it) }
-
-        devList = devList.sort { a, b ->
-            def levelA = a.currentValue("battery") != null ? a.currentValue("battery").toInteger() : 100
-            def levelB = b.currentValue("battery") != null ? b.currentValue("battery").toInteger() : 100
-            levelA != levelB ? levelA <=> levelB : a.displayName.trim() <=> b.displayName.trim()
-        }
-
-        def totalCount     = devList.size()
-        def poorCount      = devList.count { it.currentValue("battery") != null && it.currentValue("battery").toInteger() <= 25 && !isBatteryDead(it) }
-        def deadCount      = devList.count { isBatteryDead(it) }
-        def staleCount     = devList.count { isStale(it) }
-        def highDrainCount = devList.count { device ->
-            def h = health(device)
-            (h == "Poor" || h == "Fair") && getDrain(device) > 1.5
-        }
-
-        def css = """
-body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:20px;background:#0d0d0d;color:#e0e0e0;margin:0}
-.container{max-width:820px;margin:0 auto;background:#151515;padding:25px;border-radius:12px;box-sizing:border-box}
-h2{text-align:center;color:#fff;margin:0 0 4px 0}
-.subtitle{text-align:center;font-size:12px;color:#666;margin-bottom:20px}
-.summary-box{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px}
-.summary-card{flex:1;min-width:90px;box-sizing:border-box;background:#1e1e1e;padding:12px;border-radius:8px;text-align:center;border-bottom:3px solid #333}
-.summary-card b{display:block;font-size:22px;color:#fff;margin-bottom:4px}
-.summary-card span{font-size:11px;color:#aaa;text-transform:uppercase}
-.btn{display:block;background:#1f618d;color:#fff;padding:13px 20px;border-radius:8px;text-align:center;text-decoration:none;font-weight:600;margin-bottom:10px}
-.btn:hover{background:#1a5276}
-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:15px}
-th{background:#1e1e1e;color:#aaa;padding:8px 6px;text-align:left;border-bottom:2px solid #333;font-size:11px;text-transform:uppercase}
-td{padding:8px 6px;border-bottom:1px solid #222;vertical-align:middle}
-tr:hover td{background:#1a1a1a}
-.badge{display:inline-block;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:bold}
-.badge-poor{background:#3b1212;color:#ef4444}
-.badge-fair{background:#3b2a12;color:#f97316}
-.badge-good{background:#12301a;color:#22c55e}
-.badge-excellent{background:#12301a;color:#22c55e}
-.badge-dead{background:#3b1212;color:#ef4444}
-.badge-pending{background:#1e1e1e;color:#94a3b8}
-.batt-bg{width:80px;background:#333;height:5px;border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:6px}
-.batt-fg{height:100%}
-.stale-tag{font-size:10px;color:#f97316;margin-left:4px}
-.section-title{color:#fff;font-size:15px;font-weight:bold;margin:20px 0 8px 0;border-bottom:1px solid #333;padding-bottom:6px}
-"""
-
-        StringBuilder html = new StringBuilder()
-        html.append("<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>")
-        html.append("<title>Battery Monitor Portal</title><style>${css}</style>")
-        html.append("<script>setTimeout(function(){location.reload();},120000);</script>")
-        html.append("</head><body><div class='container'>")
-
-        html.append("<h2>🔋 Battery Monitor</h2>")
-        html.append("<p class='subtitle'>Live Dashboard &nbsp;·&nbsp; Auto-refreshes every 2 min</p>")
-
-        html.append("<div class='summary-box'>")
-        html.append("<div class='summary-card' style='border-bottom-color:#ef4444;'><b>${poorCount}</b><span>Low Battery</span></div>")
-        html.append("<div class='summary-card' style='border-bottom-color:#f97316;'><b>${staleCount}</b><span>Stale</span></div>")
-        html.append("<div class='summary-card' style='border-bottom-color:#f97316;'><b>${highDrainCount}</b><span>High Drain</span></div>")
-        html.append("<div class='summary-card' style='border-bottom-color:#ef4444;'><b>${deadCount}</b><span>Dead</span></div>")
-        html.append("<div class='summary-card' style='border-bottom-color:#1a73e8;'><b>${totalCount}</b><span>Total</span></div>")
-        html.append("</div>")
-
-        html.append("<a href='refresh?access_token=${state.accessToken}' class='btn'>🔄 Force Scan Now</a>")
-
-        html.append("<div class='section-title'>All Devices</div>")
-        html.append("<table><thead><tr>")
-        html.append("<th>Device</th><th>Battery</th><th>Drain</th><th>Est Days</th><th>Health & Trend</th><th>Last Activity</th><th>Type</th>")
-        html.append("</tr></thead><tbody>")
-
-        devList.each { device ->
-            def dead      = isBatteryDead(device)
-            def level     = device.currentValue("battery") != null ? device.currentValue("battery").toInteger() : 0
-            def h         = health(device)
-            def drain     = getDrain(device)
-            def est       = estDays(device)
-            def stale     = isStale(device)
-            def catalog   = getCatalogBatteryInfo(device) ?: "—"
-            def lastActMs = getLastActivityTime(device)
-            def lastAct   = lastActMs ? formatTimeAgo(lastActMs) : "N/A"
-            def trend     = state.trend[device.id] ?: "Stable"
-
-            // Slim battery column — dot + %
-            def dotColor  = dead ? "#ef4444" : level >= 100 ? "#22c55e" : level > 70 ? "#22c55e" : level > 25 ? "#f97316" : "#ef4444"
-            def recently  = (state.history?.containsKey(device.id) && state.history[device.id]?.justReplaced) ? " <span style='display:inline-block;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:600;padding:1px 7px;border-radius:10px;'>✓ Replaced</span>" : ""
-            def battDisp  = dead ? "🪫 Dead" : "<span style='color:${dotColor};'>●</span> ${level}%${recently}"
-
-            // Health & Trend — same divergence logic as summary
-            def healthRank = ["Excellent": 1, "Good": 2, "Fair": 3, "Poor": 4]
-            def trendRank  = ["Stable": 1, "Moderate": 2, "Heavy Drain": 3]
-            def hRank      = healthRank[h] ?: 2
-            def tRank      = trendRank[trend] ?: 1
-            def diverges   = tRank > hRank
-            def showTrend  = hRank >= 3 || diverges
-            def trendLabel = trend == "Moderate" ? "Moderate Drain" : trend
-            def trendColor = trend == "Heavy Drain" ? "#ef4444" : trend == "Moderate" ? "#f97316" : "#22c55e"
-            def badgeCls   = dead ? "badge-dead" : h == "Poor" ? "badge-poor" : h == "Fair" ? "badge-fair" : h == "Good" ? "badge-good" : h == "Excellent" ? "badge-excellent" : "badge-pending"
-            def badgeLbl   = dead ? "🪫 Dead" : h
-            def trendHtml  = showTrend ? " <span style='color:${trendColor};font-size:11px;'>${diverges ? '⚠ ' : ''}${trendLabel}</span>" : ""
-            def healthCell = dead
-                ? "<span class='badge ${badgeCls}'>${badgeLbl}</span>"
-                : h == "Pending"
-                ? "<span class='badge ${badgeCls}'>${badgeLbl}</span> ${getHealthDisplay(device) ?: ''}"
-                : "<span class='badge ${badgeCls}'>${badgeLbl}</span>${trendHtml}"
-
-            def drainStr  = (dead || h == "Pending") ? "—" : "${String.format('%.2f', drain)}%"
-            def estStr    = (dead || h == "Pending" || est == null) ? "—" : "${est}d"
-            def staleHtml = stale ? "<span class='stale-tag'>⚠ Stale</span>" : ""
-
-            html.append("<tr>")
-            html.append("<td><b>${device.displayName}</b>${staleHtml}</td>")
-            html.append("<td>${battDisp}</td>")
-            html.append("<td>${drainStr}</td>")
-            html.append("<td>${estStr}</td>")
-            html.append("<td>${healthCell}</td>")
-            html.append("<td>${lastAct}</td>")
-            html.append("<td>${catalog}</td>")
-            html.append("</tr>")
-        }
-
-        html.append("</tbody></table>")
-        html.append("<p style='text-align:center;font-size:10px;color:#444;margin-top:20px;'>Battery Monitor v2.5.33 &nbsp;·&nbsp; jdthomas24</p>")
-        html.append("</div></body></html>")
-
-        return render(contentType: "text/html", data: html.toString(), status: 200)
-
+        def rows = buildSummaryRows()
+        def ts   = new Date().format("h:mm a", location.timeZone)
+        def body = rows ? summaryHtml(rows, "", true) :
+            "<div class='bm-ok'>No monitored devices with a battery reading yet.</div>"
+        def html = """<!DOCTYPE html><html><head><meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width,initial-scale=1'>
+<title>Battery Monitor</title>
+<link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css'>
+<style>${portalCss()}</style>
+<script>setTimeout(function(){ location.reload(); }, 120000);</script>
+</head><body>
+<div class='bm-portal bm-dark'>
+  <div class='bm-portal-head'>
+    <div><div class='bm-portal-title'>🔋 Battery Monitor</div>
+      <div class='bm-portal-sub'>Updated ${ts} · refreshes every 2 min</div></div>
+    <a class='bm-scan' href='refresh?access_token=${state.accessToken}'><i class='fa-solid fa-rotate-right'></i>Force scan</a>
+  </div>
+  ${body}
+  <div class='bm-portal-foot'>Battery Monitor v${APP_VERSION} · jdthomas24</div>
+</div>
+</body></html>"""
+        return render(contentType: "text/html", data: html, status: 200)
     } catch (Exception e) {
         log.error "Battery Monitor portal error: ${e}"
         return render(contentType: "text/html", data: "<h3 style='color:white;font-family:sans-serif;'>Portal Error</h3><p style='color:#ccc;'>${e}</p>", status: 500)
     }
+}
+
+/** Dark theme for the standalone portal; shares markup with the Summary page. */
+private String portalCss() {
+    """
+  body { margin: 0; padding: 16px; background: #0d0d0d; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+  .bm-portal { max-width: 1000px; margin: 0 auto; background: #151515; border-radius: 12px; padding: 18px 20px; box-sizing: border-box; }
+  .bm-portal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  .bm-portal-title { font-size: 20px; font-weight: 600; color: #fff; }
+  .bm-portal-sub { font-size: 12px; color: #8b8b8b; margin-top: 2px; }
+  .bm-scan { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 6px; background: #1f618d; color: #fff; text-decoration: none; font-size: 14px; font-weight: 600; }
+  .bm-scan:hover { background: #1a5276; }
+  .bm-portal-foot { text-align: center; font-size: 11px; color: #555; margin-top: 18px; }
+  .bm-dark .bm-wrap { color: #e5e7eb; }
+  .bm-dark .bm-devname { color: #fff; font-weight: 600; }
+  .bm-dark .bm-stat { background: #1e1e1e; }
+  .bm-dark .bm-stat:hover { border-color: #3a3a3a; }
+  .bm-dark .bm-stat.bm-on { background: #17263d; border-color: #3b82f6; }
+  .bm-dark .bm-stat-label, .bm-dark .bm-sub, .bm-dark .bm-muted, .bm-dark .bm-table th { color: #9ca3af; }
+  .bm-dark .bm-list { border-color: #2a2a2a; }
+  .bm-dark .bm-item { border-top-color: #232323; }
+  .bm-dark .bm-table th { border-bottom-color: #2a2a2a; }
+  .bm-dark .bm-table td { border-bottom-color: #222; }
+  .bm-dark .bm-table tr.bm-row:hover td { background: #1b1b1b; }
+  .bm-dark .bm-bar { background: #333; }
+  .bm-dark .bm-ok { background: #12301a; color: #4ade80; }
+  .bm-dark .bm-buy, .bm-dark .bm-switch { color: #d1d5db; }
+  .bm-dark .bm-toolbar input { background: #1e1e1e; border-color: #333; color: #e5e7eb; }
+  .bm-dark .bm-t-red   { background: #3b1212; color: #f87171; }
+  .bm-dark .bm-t-green { background: #12301a; color: #4ade80; }
+  .bm-dark .bm-t-amber { background: #3b2a12; color: #fbbf24; }
+  .bm-dark .bm-t-gray  { background: #262626; color: #a3a3a3; }
+  .bm-dark .bm-t-blue  { background: #172554; color: #93c5fd; }
+  .bm-dark .bm-c-red   { color: #f87171; }
+  .bm-dark .bm-c-amber { color: #fbbf24; }
+  .bm-dark .bm-c-green { color: #4ade80; }
+  @media (max-width: 700px) {
+    body { padding: 8px; }
+    .bm-portal { padding: 14px 12px; }
+    .bm-dark .bm-table tr.bm-row { border-color: #2a2a2a; }
+  }
+"""
 }
 
 // ============================================================
@@ -1357,178 +1491,552 @@ def summaryPage() {
         }
 
         def hubIp = location?.hub?.localIP ?: ""
+        def rows  = buildSummaryRows()
 
         section("") {
-            paragraph rawHtml: true, """
-<link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
-<script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
-"""
-            paragraph "<span style='display:inline-block; background:#fde8e8; color:#c0392b; font-size:11px; font-weight:600; padding:3px 10px; border-radius:20px;'>⚠ LAN only — device links will not work remotely</span>"
             href(name: "toForceScanFromSummary", page: "forceScanPage",
-                 title: "🔄 Force Scan Now",
-                 description: "Tap to immediately read battery levels from all monitored devices")
-
-            def devList = (autoDevices ?: []).findAll {
-                try { it?.currentValue("battery") != null && !isIgnored(it) } catch (e) {
-                    log.warn "Error checking battery capability for ${it?.displayName}: ${e.message}"
-                    return false
-                }
-            }
-
-            devList = devList.sort { a, b ->
-                def levelA = null
-                def levelB = null
-                try { levelA = a.currentValue("battery") != null ? a.currentValue("battery").toInteger() : 100 } catch (e) { levelA = 100 }
-                try { levelB = b.currentValue("battery") != null ? b.currentValue("battery").toInteger() : 100 } catch (e) { levelB = 100 }
-                levelA != levelB ? levelA <=> levelB : (a.displayName ?: "") <=> (b.displayName ?: "")
-            }
-
-            if (!devList) { paragraph "No battery devices found."; return }
-
-            def table = "<table id='batteryTable' style='width:100%; border-collapse: collapse; border: 1px solid #ccc;'>"
-            table += "<thead><tr style='font-weight:bold; background-color:#f0f0f0;'>"
-            table += "<th style='padding:4px; border:1px solid #ccc;'>Device</th>"
-            table += "<th style='padding:4px; border:1px solid #ccc;'>Battery</th>"
-            table += "<th style='padding:4px; border:1px solid #ccc;'>Drain %/day</th>"
-            table += "<th style='padding:4px; border:1px solid #ccc;'>Est Days</th>"
-            table += "<th style='padding:4px; border:1px solid #ccc;'>Health &amp; Trend</th>"
-            table += "<th style='padding:4px; border:1px solid #ccc;'>Last Battery</th>"
-            table += "<th style='padding:4px; border:1px solid #ccc;'>Last Activity</th>"
-            table += "<th style='padding:4px; border:1px solid #ccc;'>Battery Type</th>"
-            table += "</tr></thead><tbody>"
-            def summaryRowNum = 0
-
-            devList.each { device ->
-                def dead = isBatteryDead(device)
-                def level = null
-                try { level = device.currentValue("battery") != null ? device.currentValue("battery").toInteger() : 100 } catch (e) { level = 100 }
-
-                def catalogInfo = ""
-                try { catalogInfo = getCatalogBatteryInfo(device) ?: "" } catch (e) { }
-
-                def drain = 0.3
-                try { drain = getDrain(device) } catch (e) { }
-
-                def est = null
-                try { est = estDays(device) } catch (e) { }
-
-                def lastBatteryStr = "N/A"
-                def lastBatteryMs  = 0
-                try {
-                    def lastBatteryTime = getLastBatteryTime(device)
-                    lastBatteryMs  = lastBatteryTime ?: 0
-                    lastBatteryStr = formatTimeAgo(lastBatteryTime)
-                } catch (e) { }
-
-                def lastActivityStr = "N/A"
-                def lastActivityMs  = 0
-                def lastActivity    = null
-                try { lastActivity = device.getLastActivity() } catch (e) { }
-                if (lastActivity) {
-                    try {
-                        lastActivityMs  = safeTime(lastActivity) ?: 0
-                        lastActivityStr = formatTimeAgo(safeTime(lastActivity))
-                    } catch (e) { }
-                }
-
-                def stale = false
-                try { stale = isStale(device) } catch (e) { }
-
-                def color = ""
-                try {
-                    if (isBatteryDead(device)) {
-                        color = "<span style='color:#ef4444;'>🪫 Dead</span>"
-                    } else {
-                        def dotColor = level >= 100 ? "#22c55e" : level > 70 ? "#22c55e" : level > 25 ? "#f97316" : "#ef4444"
-                        def recently = (state.history?.containsKey(device.id) && state.history[device.id]?.justReplaced) ? " <span style='display:inline-block;background:#dbeafe;color:#1d4ed8;font-size:10px;font-weight:600;padding:1px 7px;border-radius:10px;'>✓ Replaced</span>" : ""
-                        color = "<span style='color:${dotColor};'>●</span> ${level}%${recently}"
-                    }
-                } catch (e) { color = "${level}%" }
-
-                def staleTag      = (stale && lastActivity) ? " ⚠️ Stale" : ""
-                def healthDisplay = ""
-                try { healthDisplay = getHealthDisplay(device) } catch (e) { healthDisplay = "Unknown" }
-
-                def name         = device.displayName ?: "Unknown Device"
-                def summaryRowBg = (summaryRowNum % 2 == 0) ? "#ffffff" : "#ebebeb"
-                summaryRowNum++
-                table += "<tr style='background-color:${summaryRowBg};'>"
-
-                def sortName = name.toLowerCase()
-                if (hubIp) {
-                    table += "<td style='padding:4px; border:1px solid #ccc;' data-order='${sortName}'><a href='http://${hubIp}/device/edit/${device.id}' target='_blank'>${name}</a></td>"
-                } else {
-                    table += "<td style='padding:4px; border:1px solid #ccc;' data-order='${sortName}'>${name}</td>"
-                }
-
-                table += "<td style='padding:4px; border:1px solid #ccc;' data-order='${level}'>${color}</td>"
-
-                def trend      = state.trend[device.id] ?: "Stable"
-                def trendIcon  = trend == "Heavy Drain" ? "🔴" : trend == "Moderate" ? "🟠" : "🟢"
-                def trendOrder = dead ? 999 : (health(device) == "Pending" ? 99 : (["Heavy Drain": 3, "Moderate": 2, "Stable": 1][trend] ?: 1))
-
-                if (dead) {
-                    table += "<td style='padding:4px; border:1px solid #ccc; color:#94a3b8;' data-order='999'>—</td>"
-                    table += "<td style='padding:4px; border:1px solid #ccc; color:#94a3b8;' data-order='999'>—</td>"
-                    table += "<td style='padding:4px; border:1px solid #ccc; color:#94a3b8;' data-order='999'>—</td>"
-                } else if (health(device) == "Pending") {
-                    table += "<td style='padding:4px; border:1px solid #ccc; color:#94a3b8;' data-order='9999'>📈</td>"
-                    table += "<td style='padding:4px; border:1px solid #ccc; color:#94a3b8;' data-order='9999'>📈</td>"
-                    def pendingDisplay = getHealthDisplay(device) ?: "⏳ Pending"
-                    table += "<td style='padding:4px; border:1px solid #ccc;' data-order='99'>${pendingDisplay}</td>"
-                } else {
-                    table += "<td style='padding:4px; border:1px solid #ccc;' data-order='${String.format('%.2f', drain)}'>${String.format('%.2f', drain)}</td>"
-                    def estDisplay = est != null ? est.toString() : "—"
-                    def estOrder   = est != null ? est : 9999
-                    table += "<td style='padding:4px; border:1px solid #ccc;' data-order='${estOrder}'>${estDisplay}</td>"
-                    def healthOrder = health(device) == "Poor" ? 4 : health(device) == "Fair" ? 3 : health(device) == "Good" ? 2 : health(device) == "Excellent" ? 1 : 99
-                    def healthRank  = ["Excellent": 1, "Good": 2, "Fair": 3, "Poor": 4]
-                    def trendRank   = ["Stable": 1, "Moderate": 2, "Heavy Drain": 3]
-                    def hRank       = healthRank[health(device)] ?: 2
-                    def tRank       = trendRank[trend] ?: 1
-                    def diverges    = tRank > hRank
-                    def showTrend   = hRank >= 3 || diverges  // always show trend for Fair/Poor or when worsening
-                    def trendColor  = trend == "Heavy Drain" ? "#ef4444" : trend == "Moderate" ? "#f97316" : "#22c55e"
-                    def trendPrefix = diverges ? "⚠ " : ""
-                    def trendLabel  = trend == "Moderate" ? "Moderate Drain" : trend
-                    def healthTrendDisplay = showTrend
-                        ? "${healthDisplay} &nbsp;<span style='color:${trendColor};font-size:11px;'>${trendPrefix}${trendLabel}</span>"
-                        : "${healthDisplay}"
-                    table += "<td style='padding:4px; border:1px solid #ccc;' data-order='${healthOrder}'>${healthTrendDisplay}</td>"
-                }
-
-                table += "<td style='padding:4px; border:1px solid #ccc;' data-order='${lastBatteryMs}'>${lastBatteryStr}</td>"
-                table += "<td style='padding:4px; border:1px solid #ccc;' data-order='${lastActivityMs}'>${lastActivityStr}${staleTag}</td>"
-                table += "<td style='padding:4px; border:1px solid #ccc;'>${catalogInfo}</td>"
-                table += "</tr>"
-            }
-
-            table += "</tbody></table>"
-
-            paragraph rawHtml: true, """
-<div style='overflow-x:auto; -webkit-overflow-scrolling:touch;'>${table}</div>
-<script>
-\$(document).ready(function() {
-    \$('#batteryTable').DataTable({
-        paging:     false,
-        info:       false,
-        searching:  true,
-        order:      [[1, 'asc']],
-        columnDefs: [
-            { type: 'num', targets: [1, 2, 3, 6, 7] }
-        ]
-    });
-});
-</script>
-"""
+                 title: "<i class='fa-solid fa-rotate-right' style='margin-right:6px;'></i>Force scan now",
+                 description: "")
+            if (!rows) { paragraph "No battery devices found."; return }
+            paragraph rawHtml: true, summaryHtml(rows, hubIp)
         }
 
         section("<b>📖 Legend</b>", hideable: true, hidden: true) {
-            paragraph "<div style='background-color:#e8f0fe; border-left:4px solid #1a73e8; border-radius:4px; padding:8px 12px; font-size:13px; color:#1a1a1a;'>" +
-                      "📈 Drain and Est Days show <b>📈</b> for <b>Pending</b> devices — the app is actively learning. Data populates automatically once the Pending gate clears. 🪫 <b>Dead</b> = battery confirmed dead, replace immediately.<br><br>" +
-                      "🔋 <b>Health &amp; Trend column</b>: Excellent/Good = healthy, no action needed &nbsp;·&nbsp; Fair = elevated drain, worth watching &nbsp;·&nbsp; Poor = high drain, replace soon &nbsp;·&nbsp; ⚠ = trend worsening." +
+            paragraph "<div style='background-color:#e8f0fe; border-left:4px solid #1a73e8; border-radius:0; padding:8px 12px; font-size:13px; color:#1a1a1a;'>" +
+                      "<b>Pending</b> = still learning; drain and life fill in once enough samples are collected. <b>Dead</b> = confirmed dead, replace now.<br><br>" +
+                      "<b>Health</b>: Excellent/Good = healthy &nbsp;·&nbsp; Fair = elevated drain, worth watching &nbsp;·&nbsp; Poor = high drain, replace soon. " +
+                      "A ⚠ note under health means the recent trend is worse than the long-term rating.<br><br>" +
+                      "<b>&lt;0.01%/day</b> = very slow drain, normal for smoke and CO detectors.<br><br>" +
+                      "Tap a count at the top to filter, a column header to sort, or search by name. <b>Issues only</b> hides devices with nothing flagged and is remembered in this browser." +
                       "</div>"
         }
+    }
+}
+
+/** One data map per monitored, non-ignored device. Display only. */
+private List buildSummaryRows() {
+    def devList = (autoDevices ?: []).findAll {
+        try { it?.currentValue("battery") != null && !isIgnored(it) } catch (e) { false }
+    }
+    def healthRank = ["Excellent": 1, "Good": 2, "Fair": 3, "Poor": 4]
+    def trendRank  = ["Stable": 1, "Moderate": 2, "Heavy Drain": 3]
+    return devList.collect { device ->
+        def r = [dev: device, name: device.displayName ?: "Unknown Device", dead: false, level: 0,
+                 h: "Pending", drain: 0.3, est: null, actMs: 0, stale: false, low: false, highDrain: false]
+        try {
+            r.dead      = isBatteryDead(device)
+            r.level     = device.currentValue("battery") != null ? device.currentValue("battery").toInteger() : 0
+            r.h         = r.dead ? "Dead" : health(device)
+            r.drain     = getDrain(device)
+            r.est       = estDays(device)
+            try { r.actMs = safeTime(device.getLastActivity()) ?: 0 } catch (e) { }
+            r.stale     = isStale(device)
+            r.low       = !r.dead && r.level <= 25
+            r.highDrain = !r.dead && (r.h == "Poor" || r.h == "Fair") && r.drain > 1.5
+            r.type      = getCatalogBatteryInfo(device)
+            r.replaced  = state.history?.get(device.id)?.justReplaced == true
+            def trend   = state.trend?.get(device.id) ?: "Stable"
+            def hR      = healthRank[r.h] ?: 2
+            def tR      = trendRank[trend] ?: 1
+            if (!r.dead && r.h != "Pending" && (hR >= 3 || tR > hR)) {
+                r.trendNote = [label: trend == "Moderate" ? "Moderate Drain" : trend, warn: tR > hR, heavy: trend == "Heavy Drain"]
+            }
+            if (!r.dead && r.h == "Pending") r.pendingNote = getHealthDisplay(device)
+        } catch (e) {
+            log.warn "Battery Monitor: summary row failed for ${device.displayName}: ${e.message}"
+        }
+        r
+    }
+}
+
+/** Hub-relative link; hubLinkScript() adds any remote-access path prefix. */
+private String hubLink(String path, String inner) {
+    "<a href='${path}' class='bm-hublink' data-path='${path}' target='_blank'>${inner}</a>"
+}
+
+private String hubLinkScript() {
+    """
+<script>
+(function(){
+  var p = location.pathname, i = p.indexOf('/installedapp/');
+  var pre = i > 0 ? p.substring(0, i) : '';
+  [].forEach.call(document.querySelectorAll('a.bm-hublink'), function(a){
+    a.setAttribute('href', pre + a.getAttribute('data-path'));
+  });
+})();
+</script>
+"""
+}
+
+private String bmEsc(v) {
+    (v == null ? "" : v.toString()).replace("&", "&amp;").replace("<", "&lt;")
+        .replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#39;")
+}
+
+/** Display-only drain; stored value stays exact. */
+private String fmtDrain(d) {
+    if (d == null) return "—"
+    return (d as double) < 0.01 ? "<0.01" : String.format("%.2f", d as double)
+}
+
+private String bmPill(String text, String tone) {
+    def t = tone in ["red", "green", "amber", "gray", "blue"] ? tone : "gray"
+    "<span class='bm-pill bm-t-${t}'>${text}</span>"
+}
+
+/** Light theme colors for pills, counts, and icons. The portal overrides these for dark mode. */
+private String bmToneCss() {
+    """
+  .bm-t-red   { background: #fdecec; color: #b42318; }
+  .bm-t-green { background: #e7f6ec; color: #1e7b34; }
+  .bm-t-amber { background: #fff4e0; color: #9a5b00; }
+  .bm-t-gray  { background: #f1f3f5; color: #4b5563; }
+  .bm-t-blue  { background: #e8f0fe; color: #1a56c4; }
+  .bm-c-red   { color: #b42318; }
+  .bm-c-amber { color: #9a5b00; }
+  .bm-c-green { color: #1e7b34; }
+"""
+}
+
+private String summaryHtml(List rows, String hubIp, boolean portal = false) {
+    int nDead  = rows.count { it.dead }
+    int nLow   = rows.count { it.low }
+    int nDrain = rows.count { it.highDrain }
+    int nStale = rows.count { it.stale }
+    def hTone  = [Excellent: "green", Good: "green", Fair: "amber", Poor: "red", Dead: "red", Pending: "gray"]
+    def hRank  = [Dead: 5, Poor: 4, Fair: 3, Good: 2, Excellent: 1, Pending: 0]
+
+    def nameLink = { r ->
+        portal ? "<span class='bm-devname'>${bmEsc(r.name)}</span>" : hubLink("/device/edit/${r.dev.id}", bmEsc(r.name))
+    }
+    def seenText = { r -> r.actMs ? formatTimeAgo(r.actMs) : "N/A" }
+
+    def sb = new StringBuilder()
+    sb << """
+<style>
+  .bm-wrap { font-size: 14px; color: #1f2937; }
+  button.hrefElem[name^='_action_href_toForceScanFromSummary'] {
+    display: inline-block; width: auto !important; min-height: 34px; padding: 0 14px; margin: 0;
+    background: #fff; color: #1a56c4; border: 1px solid #cfd6de; border-radius: 4px; box-shadow: none;
+    font-family: inherit; font-size: 14px; font-weight: 500; line-height: 34px;
+  }
+  button.hrefElem[name^='_action_href_toForceScanFromSummary']::before,
+  button.hrefElem[name^='_action_href_toForceScanFromSummary'] > br,
+  button.hrefElem[name^='_action_href_toForceScanFromSummary'] > .state-incomplete-text,
+  button.hrefElem[name^='_action_href_toForceScanFromSummary'] > .state-complete-text { display: none; }
+  button.hrefElem[name^='_action_href_toForceScanFromSummary']:hover { background: #f3f6fa; }
+  .bm-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 2px 0 12px; }
+  .bm-stat { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; background: #f5f7fa; border: 1.5px solid transparent; border-radius: 6px; padding: 6px 12px; cursor: pointer; user-select: none; }
+  .bm-stat:hover { border-color: #c9d3df; }
+  .bm-stat.bm-on { border-color: #1a73e8; background: #eef4fd; }
+  .bm-stat-label { font-size: 13px; color: #6b7280; }
+  .bm-stat-num { font-size: 18px; font-weight: 600; }
+  .bm-h { font-size: 15px; font-weight: 600; margin: 0; }
+  .bm-headrow { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 0 0 6px; }
+  .bm-list { border: 1px solid #e3e6ea; border-radius: 6px; margin-bottom: 14px; }
+  .bm-item { display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-top: 1px solid #eef0f3; }
+  .bm-item:first-child { border-top: 0; }
+  .bm-item-main { flex: 1; min-width: 0; }
+  .bm-sub { font-size: 12px; color: #6b7280; }
+  .bm-buy { font-size: 13px; color: #374151; }
+  .bm-ok { background: #e7f6ec; color: #1e7b34; border-radius: 6px; padding: 8px 12px; margin-bottom: 14px; }
+  .bm-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #374151; cursor: pointer; user-select: none; white-space: nowrap; }
+  .bm-switch input { width: 16px; height: 16px; margin: 0; cursor: pointer; }
+  .bm-tools { display: flex; align-items: center; gap: 12px; }
+  .bm-pill { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; margin-left: 4px; }
+  ${bmToneCss()}
+  .bm-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin: 0 0 4px; }
+  .bm-toolbar input { max-width: 220px; padding: 6px 10px; border: 1px solid #cfd6de; border-radius: 4px; font-size: 14px; }
+  .bm-table { width: 100%; border-collapse: collapse; }
+  .bm-table th { font-size: 12px; font-weight: 600; color: #6b7280; text-align: left; padding: 8px; border-bottom: 1px solid #e3e6ea; cursor: pointer; user-select: none; white-space: nowrap; }
+  .bm-table th.bm-sorted[data-dir='asc']::after { content: ' ▲'; font-size: 10px; }
+  .bm-table th.bm-sorted[data-dir='desc']::after { content: ' ▼'; font-size: 10px; }
+  .bm-table td { padding: 6px 8px; border-bottom: 1px solid #eef0f3; vertical-align: middle; }
+  .bm-foot { font-size: 12px; color: #6b7280; margin-top: 6px; }
+  .bm-table tr.bm-row:hover td { background: #fafbfc; }
+  .bm-bar { display: inline-block; width: 46px; height: 6px; border-radius: 3px; background: #e5e7eb; vertical-align: middle; margin-right: 6px; overflow: hidden; }
+  .bm-bar > span { display: block; height: 100%; }
+  .bm-muted { color: #6b7280; }
+  .bm-note { font-size: 11px; margin-top: 3px; }
+  @media (max-width: 700px) {
+    .bm-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .bm-item { flex-wrap: wrap; }
+    .bm-tools { width: 100%; justify-content: space-between; }
+    .bm-toolbar input { max-width: none; flex: 1; }
+    .bm-table thead { display: none; }
+    .bm-table tr.bm-row { display: block; border: 1px solid #e3e6ea; border-radius: 6px; margin-bottom: 8px; padding: 4px; }
+    .bm-table tr.bm-row td { display: flex; justify-content: space-between; align-items: center; border: 0; padding: 4px 6px; }
+    .bm-table tr.bm-row td::before { content: attr(data-label); color: #6b7280; font-size: 12px; margin-right: 8px; }
+  }
+</style>
+<div class='bm-wrap'>
+<div class='bm-stats'>
+  <div class='bm-stat' data-f='dead'><div class='bm-stat-label'>Dead</div><div class='bm-stat-num ${nDead ? "bm-c-red" : ""}'>${nDead}</div></div>
+  <div class='bm-stat' data-f='low'><div class='bm-stat-label'>Low</div><div class='bm-stat-num ${nLow ? "bm-c-red" : ""}'>${nLow}</div></div>
+  <div class='bm-stat' data-f='drain'><div class='bm-stat-label'>High drain</div><div class='bm-stat-num ${nDrain ? "bm-c-amber" : ""}'>${nDrain}</div></div>
+  <div class='bm-stat' data-f='stale'><div class='bm-stat-label'>Stale</div><div class='bm-stat-num ${nStale ? "bm-c-amber" : ""}'>${nStale}</div></div>
+  <div class='bm-stat bm-on' data-f='all'><div class='bm-stat-label'>Total</div><div class='bm-stat-num'>${rows.size()}</div></div>
+</div>
+"""
+
+    // ---------- Needs attention ----------
+    def attention = rows.findAll { it.dead || it.low || it.highDrain || it.stale }.sort { a, b ->
+        def pa = a.dead ? 0 : a.low ? 1 : a.highDrain ? 2 : 3
+        def pb = b.dead ? 0 : b.low ? 1 : b.highDrain ? 2 : 3
+        pa != pb ? pa <=> pb : a.level <=> b.level
+    }
+    if (!attention) {
+        sb << "<div class='bm-ok'><i class='fa-solid fa-circle-check' style='margin-right:6px;'></i>Nothing needs attention</div>"
+    } else {
+        // What to buy: dead and low devices only
+        def buy = [:]
+        int untyped = 0
+        attention.findAll { it.dead || it.low }.each { r ->
+            def bt = settings["battType_${r.dev.id}"]
+            if (!bt || bt.startsWith("_sep")) { untyped++; return }
+            if (bt == "Integrated") return
+            def t = bt == "Other" ? (settings["battCustomType_${r.dev.id}"]?.trim() ?: "Other") : bt
+            def q = 1
+            try { q = (settings["battCount_${r.dev.id}"] ?: 1) as Integer } catch (e) { }
+            buy[t] = (buy[t] ?: 0) + q
+        }
+        def buyHtml = ""
+        if (buy || untyped) {
+            def parts = buy.sort { it.key }.collect { t, q -> "<b>${q}×</b> ${bmEsc(t)}" }
+            if (untyped) parts << "<span class='bm-muted'>${untyped} with no type set</span>"
+            buyHtml = "<div class='bm-buy'><i class='fa-solid fa-cart-shopping' style='margin-right:6px;color:#1a73e8;'></i>To replace: ${parts.join(' &nbsp;·&nbsp; ')}</div>"
+        }
+        sb << "<div class='bm-headrow'><div class='bm-h'>Needs attention</div>${buyHtml}</div><div class='bm-list'>"
+        attention.each { r ->
+            def icon = r.dead ? "fa-solid fa-battery-empty bm-c-red' style='" :
+                       r.low  ? "fa-solid fa-battery-quarter bm-c-red' style='" :
+                       r.highDrain ? "fa-solid fa-arrow-trend-down bm-c-amber' style='" :
+                       "fa-regular fa-clock bm-c-amber' style='"
+            def sub = []
+            if (r.type) sub << bmEsc(r.type)
+            if (r.low) sub << "${r.level}%"
+            if (r.highDrain) sub << "${fmtDrain(r.drain)}%/day"
+            sub << "last active ${seenText(r)}"
+            def pills = ""
+            if (r.dead)      pills += bmPill("Dead", "red")
+            if (r.low)       pills += bmPill("Low", "red")
+            if (r.highDrain) pills += bmPill("High drain", "amber")
+            if (r.stale)     pills += bmPill("Stale", "amber")
+            sb << "<div class='bm-item'><i class='${icon} font-size:16px;width:18px;text-align:center;' aria-hidden='true'></i>" +
+                  "<div class='bm-item-main'>${nameLink(r)} <span class='bm-sub'>&nbsp;${sub.join(' · ')}</span></div>" +
+                  "<div style='white-space:nowrap;'>${pills}</div></div>"
+        }
+        sb << "</div>"
+    }
+
+    // ---------- Table ----------
+    sb << """
+<div class='bm-toolbar'><div class='bm-h'>All devices</div>
+<div class='bm-tools'><label class='bm-switch'><input id='bmIssues' type='checkbox'>Issues only</label>
+<input id='bmSearch' type='text' placeholder='Search devices' aria-label='Search devices'></div></div>
+<table class='bm-table'>
+<thead><tr>
+  <th class='bm-th' data-k='name' style='width:34%;'>Device</th>
+  <th class='bm-th' data-k='level' style='width:16%;'>Battery</th>
+  <th class='bm-th' data-k='health' style='width:18%;'>Health</th>
+  <th class='bm-th' data-k='drain' style='width:17%;'>Drain and life</th>
+  <th class='bm-th' data-k='seen' style='width:15%;'>Last seen</th>
+</tr></thead>
+<tbody id='bmBody'>
+"""
+    def nowMs = now()
+    rows.each { r ->
+        def flags = []
+        if (r.dead) flags << "dead"
+        if (r.low) flags << "low"
+        if (r.highDrain) flags << "drain"
+        if (r.stale) flags << "stale"
+
+        def meta = ""
+        if (r.type) meta += bmPill(bmEsc(r.type), "gray")
+        if (r.replaced) meta += bmPill("✓ Replaced", "blue")
+        def nameCell = "${nameLink(r)}${meta}"
+
+        def barColor = r.level > 70 ? "#22a045" : r.level > 25 ? "#e08a00" : "#d93025"
+        def battCell = "<span class='bm-bar'><span style='width:${Math.max(0, Math.min(100, r.level))}%;background:${barColor};'></span></span>" +
+            (r.dead ? "<span class='bm-c-red'>${r.level}%</span>" : "${r.level}%")
+
+        def healthCell = bmPill(r.h, hTone[r.h] ?: "gray")
+        if (r.pendingNote) healthCell += "<div class='bm-note'>${r.pendingNote}</div>"
+        if (r.trendNote) {
+            def c = r.trendNote.heavy ? "bm-c-red" : r.trendNote.label == "Stable" ? "bm-c-green" : "bm-c-amber"
+            healthCell += "<div class='bm-note ${c}'>${r.trendNote.warn ? '⚠ ' : ''}${r.trendNote.label}</div>"
+        }
+
+        def drainCell = r.dead ? "<span class='bm-muted'>—</span>" :
+            r.h == "Pending" ? "<span class='bm-muted'>Learning</span>" :
+            "${fmtDrain(r.drain)}%/day<span class='bm-muted'> · ${r.est != null ? r.est + 'd' : '—'}</span>"
+
+        def seenCell = seenText(r) + (r.stale ? bmPill("Stale", "amber") : "")
+
+        def sortLevel  = r.dead ? -1 : r.level
+        def sortDrain  = (r.dead || r.h == "Pending") ? -1 : (r.drain as double)
+        def sortSeen   = r.actMs ? ((nowMs - (r.actMs as Long)) / 1000).toLong() : 999999999L
+
+        sb << "<tr class='bm-row' data-name=\"${bmEsc(r.name.toLowerCase())}\" data-level='${sortLevel}' " +
+              "data-health='${hRank[r.h] ?: 0}' data-drain='${sortDrain}' data-seen='${sortSeen}' data-flags='${flags.join(' ')}'>" +
+              "<td data-label='Device'>${nameCell}</td>" +
+              "<td data-label='Battery'>${battCell}</td>" +
+              "<td data-label='Health'>${healthCell}</td>" +
+              "<td data-label='Drain and life'>${drainCell}</td>" +
+              "<td data-label='Last seen'>${seenCell}</td></tr>"
+    }
+    sb << """
+</tbody>
+<tfoot><tr id='bmEmpty' style='display:none;'><td colspan='5' class='bm-muted' style='text-align:center;padding:16px;'>No devices in this group</td></tr></tfoot>
+</table>
+</div>
+<script>
+(function(){
+  var tb = document.getElementById('bmBody'); if (!tb) return;
+  var rows = [].slice.call(tb.querySelectorAll('tr.bm-row'));
+  var f = 'all', k = 'level', asc = true;
+  var issuesBox = document.getElementById('bmIssues'), key = 'bmIssuesOnly_' + location.pathname;
+  try { issuesBox.checked = localStorage.getItem(key) === '1'; } catch (e) {}
+  function draw(){
+    var q = (document.getElementById('bmSearch').value || '').toLowerCase(), shown = 0;
+    rows.sort(function(a, b){
+      var x = a.getAttribute('data-' + k), y = b.getAttribute('data-' + k);
+      if (k !== 'name') { x = parseFloat(x); y = parseFloat(y); }
+      return (x > y ? 1 : x < y ? -1 : 0) * (asc ? 1 : -1);
+    });
+    rows.forEach(function(r){
+      tb.appendChild(r);
+      var fl = r.getAttribute('data-flags');
+      var ok = (f === 'all' || (' ' + fl + ' ').indexOf(' ' + f + ' ') >= 0) &&
+               (!issuesBox.checked || fl.length > 0) &&
+               r.getAttribute('data-name').indexOf(q) >= 0;
+      r.style.display = ok ? '' : 'none';
+      if (ok) shown++;
+    });
+    var empty = document.getElementById('bmEmpty');
+    empty.style.display = shown ? 'none' : '';
+    empty.firstElementChild.textContent = issuesBox.checked && f === 'all' && !q ? 'No devices need attention' : 'No devices in this group';
+    [].forEach.call(document.querySelectorAll('.bm-th'), function(t){
+      t.classList.toggle('bm-sorted', t.getAttribute('data-k') === k);
+      t.setAttribute('data-dir', asc ? 'asc' : 'desc');
+    });
+  }
+  [].forEach.call(document.querySelectorAll('.bm-stat'), function(s){
+    s.addEventListener('click', function(){
+      [].forEach.call(document.querySelectorAll('.bm-stat'), function(x){ x.classList.remove('bm-on'); });
+      s.classList.add('bm-on'); f = s.getAttribute('data-f'); draw();
+    });
+  });
+  [].forEach.call(document.querySelectorAll('.bm-th'), function(t){
+    t.addEventListener('click', function(){
+      var nk = t.getAttribute('data-k'); asc = (nk === k) ? !asc : (nk !== 'health' && nk !== 'drain'); k = nk; draw();
+    });
+  });
+  document.getElementById('bmSearch').addEventListener('input', draw);
+  issuesBox.addEventListener('change', function(){
+    try { localStorage.setItem(key, issuesBox.checked ? '1' : '0'); } catch (e) {}
+    draw();
+  });
+  draw();
+})();
+</script>
+"""
+    if (!portal) sb << hubLinkScript()
+    return sb.toString()
+}
+
+// ============================================================
+// ===================== SHARED PAGE HELPERS =================
+// ============================================================
+def batteryTypeOptions() {
+    def o = ["": "— Not Set —"]
+    o["_sep1"] = "──────── Standard ────────"
+    ["AA", "AAA", "CR2", "CR1632", "CR2016", "CR2032", "CR2430", "CR2450", "CR2477", "CR123A", "9V", "ER14250", "LS14250"].each { o[it] = it }
+    o["Integrated"] = "Integrated"
+    o["_sep2"] = "──────── Rechargeable ────────"
+    ["Rechargeable AA", "Rechargeable AAA", "LIR2016", "LIR2032", "LIR2430", "LIR2450", "18650", "RCR123A", "RCR2"].each { o[it] = it }
+    o["_sep3"] = "──────── Other ────────"
+    o["Other"] = "Other"
+    return o
+}
+
+private Integer currentLevel(device) {
+    try { return device.currentValue("battery") != null ? device.currentValue("battery").toInteger() : 100 } catch (e) { return 100 }
+}
+
+private List ignoredIdList() { (settings?.ignoredDevices?.collect { it as String }) ?: [] }
+
+private void resetDrainHistory(device) {
+    def existing = state.history[device.id] ?: [:]
+    state.history[device.id] = [
+        lastLevel:     existing.lastLevel ?: currentLevel(device),
+        lastDate:      now(),
+        lastScanDate:  now(),
+        firstSeenDate: existing.firstSeenDate ?: existing.replacedTime ?: existing.lastDate ?: now(),
+        replacedTime:  existing.replacedTime,
+        justReplaced:  existing.justReplaced ?: false,
+        drain:         0.3,
+        samples:       [],
+        zeroCount:     0
+    ]
+    state.trend[device.id] = "Stable"
+    state.history = state.history
+}
+
+/** Fresh start after un-ignoring: history reset plus a Restored entry. */
+private void markRestored(device) {
+    def lvl = currentLevel(device)
+    state.history[device.id] = [
+        lastLevel: lvl, lastDate: now(), lastScanDate: now(),
+        firstSeenDate: now(), replacedTime: now(), justReplaced: true,
+        drain: 0.3, samples: [], zeroCount: 0
+    ]
+    state.trend[device.id] = "Stable"
+    state.history = state.history
+    state.replacements = state.replacements ?: []
+    state.replacements << [deviceId: device.id, device: device.displayName, level: lvl,
+        date: new Date().format("MM/dd/yyyy", location.timeZone), type: "restored"]
+    state.replacements = state.replacements.sort { a, b -> replacementTime(b) <=> replacementTime(a) }.take(100)
+}
+
+/** Red = dead/low, amber = high drain/stale, green = fine. */
+private String deviceStatusColor(device) {
+    try {
+        if (isBatteryDead(device) || currentLevel(device) <= 25) return "#d93025"
+        def h = health(device)
+        if (((h == "Poor" || h == "Fair") && getDrain(device) > 1.5) || isStale(device)) return "#e08a00"
+    } catch (e) { }
+    return "#22a045"
+}
+
+private String bmMsgHtml(Map m) {
+    if (!m) return ""
+    def cls = m.tone == "ok" ? "bm-msg-ok" : m.tone == "err" ? "bm-msg-err" : "bm-msg-warn"
+    return "<div class='bm-msg ${cls}'>${m.text}</div>"
+}
+
+private String bmCardsCss() {
+    """
+  .bm-cards button.hrefElem {
+    position: relative; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; box-shadow: none;
+    min-height: 62px; padding: 8px 28px 8px 48px; font-family: inherit; text-align: left;
+  }
+  .bm-cards button.hrefElem > span:first-child { color: #1565c0; font-weight: 600; font-size: 16px !important; }
+  .bm-cards button.hrefElem > .state-incomplete-text, .bm-cards button.hrefElem > .state-complete-text { color: #6b7280; font-size: 14px !important; }
+  .bm-cards button.hrefElem i { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: #1565c0; font-size: 18px; }
+  .bm-cards button.hrefElem::before { color: #1565c0; }
+  .bm-cards-primary button.hrefElem { background: #eef4fd; border-color: #c7dafc; }
+  .bm-cards-primary button.hrefElem:hover { background: #e3edfc; }
+  .bm-settings > .mdl-grid { border: 1px solid #e3e6ea; border-radius: 6px; overflow: hidden; padding: 0 !important; margin: 0 8px 8px; }
+  .bm-settings .mdl-cell { margin: 0 !important; width: 100% !important; max-width: 100%; box-sizing: border-box; }
+  .bm-settings button.hrefElem {
+    display: flex; align-items: center; width: 100%; box-sizing: border-box; background: #fff; border: 0; border-bottom: 1px solid #eef0f3;
+    border-radius: 0; box-shadow: none; min-height: 0; padding: 11px 44px 11px 14px; font-family: inherit; text-align: left;
+  }
+  .bm-settings .mdl-cell:last-child button.hrefElem { border-bottom: 0; }
+  .bm-settings button.hrefElem:hover { background: #f7f9fb; }
+  .bm-settings button.hrefElem > br { display: none; }
+  .bm-settings button.hrefElem > span:first-child { color: #1f2937; font-weight: 500; font-size: 15px !important; }
+  .bm-settings button.hrefElem > .state-incomplete-text,
+  .bm-settings button.hrefElem > .state-complete-text { margin-left: auto; padding-left: 16px; color: #6b7280; font-size: 14px !important; text-align: right; white-space: nowrap; }
+  .bm-settings button.hrefElem i { color: #6b7280; width: 18px; text-align: center; margin-right: 10px; }
+  @media (max-width: 600px) {
+    .bm-settings button.hrefElem { flex-wrap: wrap; }
+    .bm-settings button.hrefElem > .state-incomplete-text,
+    .bm-settings button.hrefElem > .state-complete-text {
+      width: 100%; margin-left: 28px; padding-left: 0; text-align: left; white-space: normal; margin-top: 2px;
+    }
+  }
+  .bm-helprow { text-align: center; font-size: 14px; color: #6b7280; margin-top: 4px; }
+  .bm-helprow a { color: #1565c0; text-decoration: none; margin: 0 10px; white-space: nowrap; }
+  .bm-helprow a:hover { text-decoration: underline; }
+  .bm-helprow i { margin-right: 5px; }
+"""
+}
+
+private String bmPageCss() {
+    """
+<style>
+  ${tileSecondaryTextCss()}
+  ${tipsCardCss()}
+  ${bmCardsCss()}
+  .bm-pill { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; margin-left: 4px; }
+  ${bmToneCss()}
+  .bm-h { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+  .bm-muted { color: #6b7280; }
+  .bm-hint { font-size: 13px; color: #6b7280; }
+  .bm-msg { border-radius: 6px; padding: 8px 12px; font-size: 14px; }
+  .bm-msg-ok { background: #e7f6ec; color: #1e7b34; }
+  .bm-msg-warn { background: #fff4e0; color: #9a5b00; }
+  .bm-msg-err { background: #fdecec; color: #b42318; }
+  .bm-msg-info { background: #e8f0fe; color: #1a56c4; }
+  .bm-msg-muted { background: #f5f7fa; color: #6b7280; }
+  .bm-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+  .bm-stat { background: #f5f7fa; border-radius: 6px; padding: 6px 12px; }
+  .bm-stat-label { font-size: 12px; color: #6b7280; }
+  .bm-stat-num { font-size: 16px; font-weight: 600; }
+  .bm-btn button {
+    min-height: 36px; width: 100%; padding: 0 12px; border-radius: 4px; font-family: inherit; font-size: 14px;
+    box-shadow: none; background: #fff; color: #1a56c4; border: 1px solid #cfd6de;
+  }
+  .bm-btn button:hover { background: #f3f6fa; }
+  .bm-btn-primary button { background: #1a73e8 !important; color: #fff !important; border-color: #1a73e8 !important; }
+  .bm-btn-danger button { color: #b42318 !important; }
+  .bm-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .bm-table th { font-size: 12px; font-weight: 600; color: #6b7280; text-align: left; padding: 6px 8px; border-bottom: 1px solid #e3e6ea; }
+  .bm-table td { padding: 6px 8px; border-bottom: 1px solid #eef0f3; vertical-align: middle; }
+  @media (max-width: 600px) {
+    .bm-stat { padding: 6px 8px; }
+    .bm-stat-num { font-size: 13px; }
+    .bm-quick { width: calc(50% - 16px) !important; display: inline-block; }
+  }
+</style>
+"""
+}
+
+/** Sort key for history entries. Dates are stored as MM/dd/yyyy text, which sorts by month, not year. */
+private long replacementTime(r) {
+    def d = r?.date?.toString()
+    if (!d) return 0L
+    try {
+        return (d =~ /^\d{4}-\d{2}-\d{2}/) ? new Date().parse("yyyy-MM-dd HH:mm", d).time : new Date().parse("MM/dd/yyyy", d).time
+    } catch (e) {
+        return 0L
+    }
+}
+
+private String historyTypePill(String type) {
+    type == "manual"   ? bmPill("Manual", "blue") :
+    type == "auto"     ? bmPill("Auto", "green") :
+    type == "restored" ? bmPill("Restored", "gray") : bmPill("?", "gray")
+}
+
+// ============================================================
+// ===================== BUTTON HANDLER ======================
+// ============================================================
+void appButtonHandler(String btn) {
+    switch (btn) {
+        case "daReplace":    state.daPending = [action: "replace", deviceId: state.daDeviceId]; break
+        case "daReset":      state.daPending = [action: "reset",   deviceId: state.daDeviceId]; break
+        case "daIgnore":     state.daPending = [action: "ignore",  deviceId: state.daDeviceId]; break
+        case "daCancel":     state.remove("daPending"); break
+        case "daConfirm":    runDeviceAction(); break
+        case "bulkSelDead":  bulkQuickSelect("dead"); break
+        case "bulkSelLow":   bulkQuickSelect("low"); break
+        case "bulkSelStale": bulkQuickSelect("stale"); break
+        case "bulkSelClear": app.updateSetting("bulkSelectedDevices", [value: [], type: "enum"]); break
+        case "bulkApply":    runBulkAction(); break
+        case "sendNow":      sendNotificationNow(); break
+        case "snoozeStart":
+            def days = 7
+            try { days = Math.max(1, (settings?.snoozeDurationDays ?: 7) as Integer) } catch (e) { }
+            state.notifSnoozedUntil = now() + (days * 86400000L)
+            break
+        case "snoozeClear":
+            state.notifSnoozedUntil = 0
+            state.snoozeMsg = [tone: "ok", text: "Snooze cleared. Notifications resumed."]
+            break
     }
 }
 
@@ -1536,46 +2044,35 @@ def summaryPage() {
 // ===================== DEVICE MANAGE PAGE ==================
 // ============================================================
 def deviceManagePage(Map params = [:]) {
-    def devList = (autoDevices ?: []).sort { a, b -> a.displayName.trim() <=> b.displayName.trim() }
-    def ignoredCount = (settings?.ignoredDevices?.size() ?: 0)
+    def ignoredIds   = ignoredIdList()
+    def ignoredNames = (autoDevices ?: []).findAll { ignoredIds.contains(it.id as String) }.collect { it.displayName }
+    int untyped = (autoDevices ?: []).count { dev ->
+        def t = settings["battType_${dev.id}"] ?: ""
+        !t || t.startsWith("_sep") || (t == "Other" && !(settings["battCustomType_${dev.id}"]?.trim()))
+    }
 
-    def typeOptions = ["": "— Not Set —"]
-    typeOptions["_sep1"] = "──────── Standard ────────"
-    ["AA", "AAA", "CR2", "CR1632", "CR2016", "CR2032", "CR2430", "CR2450", "CR2477", "CR123A", "9V", "ER14250", "LS14250"].each { typeOptions[it] = it }
-    typeOptions["Integrated"] = "Integrated"
-    typeOptions["_sep2"] = "──────── Rechargeable ────────"
-    ["Rechargeable AA", "Rechargeable AAA", "LIR2016", "LIR2032", "LIR2430", "LIR2450", "18650", "RCR123A", "RCR2"].each { typeOptions[it] = it }
-    typeOptions["_sep3"] = "──────── Other ────────"
-    typeOptions["Other"] = "Other"
-
-    dynamicPage(name: "deviceManagePage", title: "🔋 Device Battery Management", install: false) {
-
-        section("<span style='display:inline-block; background:#e8f0fe; color:#1a73e8; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.07em; padding:3px 12px; border-radius:20px;'>Actions</span>") {
-            href(name: "toDeviceActions", page: "deviceActionsPage",
-                 title: "<b>⚙️ Device Actions</b>",
-                 description: "Log a replacement, reset drain history, ignore a device, change battery type, or view history. Last selected device is remembered.")
-            href(name: "toBulkActions", page: "bulkActionsPage",
-                 title: "<b>📦 Bulk Actions</b>",
-                 description: "Log replacements, reset drain history, or ignore multiple devices at once.")
+    dynamicPage(name: "deviceManagePage", title: "Device Battery Management", install: false) {
+        section(sectionClass: "bm-cards") {
+            paragraph rawHtml: true, bmPageCss()
+            href name: "toDeviceActions", page: "deviceActionsPage",
+                 title: "<i class='fa-solid fa-sliders' aria-hidden='true'></i>Device actions",
+                 description: "Type, cliff detection, replacements, and history for one device", width: 6, style: "margin:8px;"
+            href name: "toBulkActions", page: "bulkActionsPage",
+                 title: "<i class='fa-solid fa-layer-group' aria-hidden='true'></i>Bulk actions",
+                 description: "Log replacements, reset, ignore, or restore several at once", width: 6, style: "margin:8px;"
+            href name: "toBatteryTypes", page: "batteryTypesPage",
+                 title: "<i class='fa-solid fa-battery-half' aria-hidden='true'></i>Battery types",
+                 description: untyped ? "${untyped} device${untyped == 1 ? '' : 's'} need a type" : "All devices have a type",
+                 width: 6, style: "margin:8px;"
+            href name: "toDetectionSettings", page: "detectionSettingsPage",
+                 title: "<i class='fa-solid fa-magnifying-glass' aria-hidden='true'></i>Auto-detection",
+                 description: "Replacement detection and Li-ion cliff alerts", width: 6, style: "margin:8px;"
         }
-
-        // Build ignored devices summary
-        def ignoredIds   = (settings?.ignoredDevices?.collect { it as String }) ?: []
-        def ignoredNames = autoDevices?.findAll { ignoredIds.contains(it.id as String) }?.collect { it.displayName } ?: []
-
-        section("<span style='display:inline-block; background:#e8f0fe; color:#1a73e8; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.07em; padding:3px 12px; border-radius:20px;'>Configuration</span>") {
-            if (ignoredNames) {
-                paragraph "<div style='background-color:#fff3cd; border-left:3px solid #ffc107; border-radius:0 4px 4px 0; padding:8px 12px;'>" +
-                          "<span style='color:#856404;'><b>🚫 Ignored Devices (${ignoredNames.size()})</b> — excluded from all reports, notifications, and the portal.<br>" +
-                          ignoredNames.collect { "• ${it}" }.join("<br>") + "<br><br>" +
-                          "To restore a device, go to <b>Device Actions</b> and toggle its ignore setting. To restore multiple, use <b>Bulk Actions → Unignore</b>.</span></div>"
+        if (ignoredNames) {
+            section {
+                paragraph rawHtml: true, "<div class='bm-msg bm-msg-warn'><i class='fa-solid fa-ban' style='margin-right:6px;'></i><b>${ignoredNames.size()} ignored:</b> " +
+                    "${ignoredNames.collect { bmEsc(it) }.join(', ')}. Restore from Device actions or Bulk actions.</div>"
             }
-            href(name: "toDetectionSettings", page: "detectionSettingsPage",
-                 title: "<b>🔍 Auto-Detection Settings</b>",
-                 description: "Configure the minimum battery jump % that triggers auto-detection.")
-            href(name: "toBatteryTypes", page: "batteryTypesPage",
-                 title: "<b>🔋 Battery Types</b>",
-                 description: "Assign battery type and quantity to each monitored device.")
         }
     }
 }
@@ -1584,25 +2081,31 @@ def deviceManagePage(Map params = [:]) {
 // ===================== DETECTION SETTINGS PAGE =============
 // ============================================================
 def detectionSettingsPage() {
-    dynamicPage(name: "detectionSettingsPage", title: "🔍 Auto-Detection Settings", install: false) {
-        section("") {
-            paragraph "<div style='background-color:#e8f0fe; border-left:4px solid #1a73e8; border-radius:4px; padding:10px 12px; margin-bottom:8px;'>" +
-                      "Batteries only drain — any significant upward jump in level means a new battery was installed. " +
-                      "Battery Monitor detects this automatically across two consecutive readings." +
-                      "</div>"
-
+    dynamicPage(name: "detectionSettingsPage", title: "Auto-Detection Settings", install: false) {
+        section {
+            paragraph rawHtml: true, bmPageCss() + "<div class='bm-h'>Replacement detection</div>" +
+                "<div class='bm-hint'>A confirmed upward jump of at least this much is logged as a replacement automatically.</div>"
             input "detectionMinJump", "number",
-                  title: "<b>Minimum upward jump % to detect a replacement:</b>",
-                  description: "Default: 30. Any upward jump of this size or more across two readings will be logged as a replacement.",
-                  defaultValue: 30,
-                  range: "15..60",
-                  required: false
-
-            paragraph "<div style='background-color:#fff3cd; border-left:3px solid #ffc107; border-radius:0 4px 4px 0; padding:8px 12px; margin-top:8px;'>" +
-                      "<span style='color:#856404; font-size:12px;'>⚠️ Set too low (under 15%) may cause false positives even with two-reading confirmation. 25–30% works well for most setups.<br><br>" +
-                      "Example: a jump from 40% → 75% (35%) logs as replaced. A jump from 85% → 90% (5%) does not.<br><br>" +
-                      "Manual logging is still available in Device Actions for edge cases.</span>" +
-                      "</div>"
+                  title: "Minimum upward jump (%)",
+                  description: "Default 30. 25 to 30 works well; under 15 risks false positives.",
+                  defaultValue: 30, range: "15..60", required: false, width: 6
+            href name: "tipsDetection", page: "tipsPage", params: [topic: "detection"],
+                 title: "<i class='pi pi-info-circle' aria-hidden='true'></i>How replacement detection works",
+                 description: "Rules, confirmation, and cooldown", width: 6, style: "margin:8px;"
+        }
+        section {
+            paragraph rawHtml: true, "<div class='bm-h'>⚡ Li-ion cliff alerts</div>" +
+                "<div class='bm-hint'>Urgent alert when a cliff-enabled device drops this much between two readings. Turn it on per device in Battery types or Device actions.</div>"
+            input "cliffDropThreshold", "number",
+                  title: "Minimum drop (%)",
+                  description: "Default 40. Applies to any two consecutive readings.",
+                  defaultValue: 40, range: "15..90", required: false, width: 6
+            href name: "tipsCliff", page: "tipsPage", params: [topic: "cliff"],
+                 title: "<i class='pi pi-info-circle' aria-hidden='true'></i>How cliff alerts work",
+                 description: "Which battery types, and why", width: 6, style: "margin:8px;"
+            input "cliffBypassSnooze", "bool",
+                  title: "Cliff alerts bypass Notification Snooze (recommended)",
+                  defaultValue: true
         }
     }
 }
@@ -1611,730 +2114,426 @@ def detectionSettingsPage() {
 // ===================== BATTERY TYPES PAGE ==================
 // ============================================================
 def batteryTypesPage() {
-    def devList = (autoDevices ?: []).sort { a, b -> a.displayName.trim() <=> b.displayName.trim() }
-
-    def typeOptions = ["": "— Not Set —"]
-    typeOptions["_sep1"] = "──────── Standard ────────"
-    ["AA", "AAA", "CR2", "CR1632", "CR2016", "CR2032", "CR2430", "CR2450", "CR2477", "CR123A", "9V", "ER14250", "LS14250"].each { typeOptions[it] = it }
-    typeOptions["Integrated"] = "Integrated"
-    typeOptions["_sep2"] = "──────── Rechargeable ────────"
-    ["Rechargeable AA", "Rechargeable AAA", "LIR2016", "LIR2032", "LIR2430", "LIR2450", "18650", "RCR123A", "RCR2"].each { typeOptions[it] = it }
-    typeOptions["_sep3"] = "──────── Other ────────"
-    typeOptions["Other"] = "Other"
-
-    // v2.5.29→v2.5.30: Split into two sections — unassigned first, assigned collapsed
-    // Fix: "Other" without custom text entered counts as unassigned
-    def unassigned = devList.findAll { dev ->
+    def devList = (autoDevices ?: []).sort { a, b -> a.displayName.trim().toLowerCase() <=> b.displayName.trim().toLowerCase() }
+    def needsType = { dev ->
         def t = settings["battType_${dev.id}"] ?: ""
         !t || t.startsWith("_sep") || (t == "Other" && !(settings["battCustomType_${dev.id}"]?.trim()))
     }
-    def assigned = devList.findAll { dev ->
-        def t = settings["battType_${dev.id}"] ?: ""
-        t && !t.startsWith("_sep") && !(t == "Other" && !(settings["battCustomType_${dev.id}"]?.trim()))
-    }
+    syncCliffDefaults(devList)
+    def unassigned = devList.findAll { needsType(it) }
+    def assigned   = devList.findAll { !needsType(it) }
+    def opts       = batteryTypeOptions()
 
-    dynamicPage(name: "batteryTypesPage", title: "🔋 Battery Types", install: false) {
-        section("") {
-            paragraph "Assign a battery type and quantity to each device so Battery Monitor can include battery type in notifications and replacement history. " +
-                      "This helps you know exactly what to buy when a replacement is needed.<br><br>" +
-                      "Set the type and count for as many devices as you like, then tap <b>Done</b> to save."
+    dynamicPage(name: "batteryTypesPage", title: "Battery Types", install: false) {
+        section {
+            paragraph rawHtml: true, bmPageCss() +
+                "<style>.bm-bt-name { padding-top: 14px; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }" +
+                "@media (max-width: 600px) { .bm-bt-name { padding-top: 10px; font-weight: 600; }" +
+                " .bm-bt-type, .bm-bt-custom { width: calc(65% - 16px) !important; display: inline-block; }" +
+                " .bm-bt-qty { width: calc(35% - 16px) !important; display: inline-block; }" +
+                " .bm-bt-cliff { width: calc(100% - 16px) !important; border-bottom: 1px solid #eef0f3; padding-bottom: 6px; } }</style>" +
+                "<div class='bm-hint'>Assign a type and quantity so notifications and the to-replace list show what to buy. " +
+                "<b>⚡ Cliff</b> turns on Li-ion cliff alerts for that device. Changes save when you tap Done.</div>"
+            href name: "tipsCliffTypes", page: "tipsPage", params: [topic: "cliff"],
+                 title: "<i class='pi pi-info-circle' aria-hidden='true'></i>Which batteries need cliff detection?",
+                 description: "LIR, 18650, RCR, and custom cells", width: 6, style: "margin:8px;"
         }
-
-        def unassignedTitle = unassigned.size() > 0
-            ? "🔋 Not Yet Assigned — <span style='color:red;'>${unassigned.size()} device(s)</span>"
-            : "🔋 Not Yet Assigned — <span style='color:#22c55e;'>✅ All assigned</span>"
-
-        section(unassignedTitle, hideable: true, hidden: unassigned.size() == 0) {
-            if (!unassigned) {
-                paragraph "✅ All devices have a battery type assigned."
-            } else {
-                unassigned.each { dev ->
-                    def currentCount = settings["battCount_${dev.id}"] ?: 1
-                    def isOther = settings["battType_${dev.id}"] == "Other"
-                    def levelStr = ""
-                    try {
-                        def lvl = dev.currentValue("battery")
-                        levelStr = (lvl != null) ? " ${lvl}%" : " —"
-                    } catch (e) { levelStr = " —" }
-                    def deviceTitle = "<b>${dev.displayName}</b> <span style='color:#1a73e8; font-size:12px;'>${levelStr} · Not set</span>"
-                    // Two-column layout: type=5, qty=1 per device, two devices per row (5+1+5+1=12)
-                    // When Other is selected, drop to full-width for that device to fit the custom text field
-                    if (isOther) {
-                        input "battType_${dev.id}", "enum",
-                              title: deviceTitle,
-                              options: typeOptions,
-                              required: false,
-                              defaultValue: "",
-                              submitOnChange: true,
-                              width: 7
-                        input "battCustomType_${dev.id}", "text",
-                              title: "Custom type:",
-                              description: "e.g. CR17450, 4SR44",
-                              required: false,
-                              defaultValue: settings["battCustomType_${dev.id}"] ?: "",
-                              width: 3
-                        input "battCount_${dev.id}", "number",
-                              title: "Qty:",
-                              defaultValue: currentCount,
-                              required: false,
-                              range: "1..99",
-                              width: 2
-                    } else {
-                        input "battType_${dev.id}", "enum",
-                              title: deviceTitle,
-                              options: typeOptions,
-                              required: false,
-                              defaultValue: "",
-                              submitOnChange: true,
-                              width: 4
-                        input "battCount_${dev.id}", "number",
-                              title: "Qty:",
-                              defaultValue: currentCount,
-                              required: false,
-                              range: "1..99",
-                              width: 2
-                    }
-                }
-            }
+        section("<b>Needs a type</b> ${unassigned ? bmPill("${unassigned.size()}", "red") : bmPill("All assigned", "green")}",
+                hideable: true, hidden: !unassigned) {
+            if (!unassigned) paragraph "All devices have a battery type."
+            unassigned.each { dev -> batteryTypeRow(dev, opts) }
         }
-
-        section("✅ Assigned — <span style='color:blue;'>${assigned.size()} device(s)</span>", hideable: true, hidden: true) {
-            if (!assigned) {
-                paragraph "No devices assigned yet."
-            } else {
-                assigned.each { dev ->
-                    def currentType  = settings["battType_${dev.id}"] ?: ""
-                    def currentCount = settings["battCount_${dev.id}"] ?: 1
-                    def currentInfo  = getCatalogBatteryInfo(dev)
-                    def isOther      = currentType == "Other"
-                    def levelStr = ""
-                    try {
-                        def lvl = dev.currentValue("battery")
-                        levelStr = (lvl != null) ? " ${lvl}%" : " —"
-                    } catch (e) { levelStr = " —" }
-                    def infoStr     = currentInfo ?: "Not set"
-                    def deviceTitle = "<b>${dev.displayName}</b> <span style='color:#1a73e8; font-size:12px;'>${levelStr} · ${infoStr}</span>"
-                    if (isOther) {
-                        input "battType_${dev.id}", "enum",
-                              title: deviceTitle,
-                              options: typeOptions,
-                              required: false,
-                              defaultValue: currentType,
-                              submitOnChange: true,
-                              width: 7
-                        input "battCustomType_${dev.id}", "text",
-                              title: "Custom type:",
-                              description: "e.g. CR17450, 4SR44",
-                              required: false,
-                              defaultValue: settings["battCustomType_${dev.id}"] ?: "",
-                              width: 3
-                        input "battCount_${dev.id}", "number",
-                              title: "Qty:",
-                              defaultValue: currentCount,
-                              required: false,
-                              range: "1..99",
-                              width: 2
-                    } else {
-                        input "battType_${dev.id}", "enum",
-                              title: deviceTitle,
-                              options: typeOptions,
-                              required: false,
-                              defaultValue: currentType,
-                              submitOnChange: true,
-                              width: 4
-                        input "battCount_${dev.id}", "number",
-                              title: "Qty:",
-                              defaultValue: currentCount,
-                              required: false,
-                              range: "1..99",
-                              width: 2
-                    }
-                }
-            }
+        section("<b>Assigned</b> ${bmPill("${assigned.size()}", "blue")}", hideable: true, hidden: true) {
+            if (!assigned) paragraph "No devices assigned yet."
+            assigned.each { dev -> batteryTypeRow(dev, opts) }
         }
     }
 }
 
-// ============================================================
-// ===================== IGNORED DEVICES PAGE ================
-// ============================================================
-def ignoredDevicesPage() {
-    def devList = (autoDevices ?: []).sort { a, b -> a.displayName.trim() <=> b.displayName.trim() }
-
-    def previouslyIgnored = state.ignoredDeviceIds ?: []
-    def currentIgnored    = (settings?.ignoredDevices?.collect { it as String }) ?: []
-    def restoredIds       = previouslyIgnored.findAll { !currentIgnored.contains(it) }
-    def restoredNames     = []
-
-    if (restoredIds) {
-        restoredIds.each { deviceId ->
-            def device = autoDevices?.find { it.id == deviceId }
-            if (device) {
-                def level = device.currentValue("battery") != null ? device.currentValue("battery").toInteger() : 100
-                state.history[device.id] = [
-                    lastLevel:     level,
-                    lastDate:      now(),
-                    lastScanDate:  now(),
-                    firstSeenDate: now(),
-                    replacedTime:  now(),
-                    justReplaced:  true,
-                    drain:         0.3,
-                    samples:       [],
-                    zeroCount:     0
-                ]
-                state.trend[device.id] = "Stable"
-                state.history = state.history
-                state.replacements = state.replacements ?: []
-                state.replacements << [
-                    deviceId: device.id,
-                    device:   device.displayName,
-                    level:    level,
-                    date:     new Date().format("MM/dd/yyyy", location.timeZone),
-                    type:     "restored"
-                ]
-                state.replacements = state.replacements.sort { a, b -> b.date <=> a.date }.take(100)
-                state.replacements = state.replacements
-                restoredNames << "${device.displayName} (${level}%)"
-                if (debugMode) log.debug "Device restored from ignored list: ${device.displayName}"
-            }
-        }
+/** One compact row: name, type, (custom), qty, cliff. Widths total 12. */
+private void batteryTypeRow(dev, Map opts) {
+    def t       = settings["battType_${dev.id}"]
+    def isOther = t == "Other"
+    def lvl     = "—"
+    try { def l = dev.currentValue("battery"); if (l != null) lvl = "${l}%" } catch (e) { }
+    paragraph rawHtml: true, "<div class='bm-bt-name'>${bmEsc(dev.displayName)} <span class='bm-muted'>${lvl}</span></div>", width: isOther ? 3 : 4
+    input "battType_${dev.id}", "enum", title: "", options: opts, required: false,
+          defaultValue: t ?: "", submitOnChange: true, width: 3, styleClass: "bm-bt-type"
+    if (isOther) {
+        input "battCustomType_${dev.id}", "text", title: "", description: "Custom type",
+              required: false, width: 2, styleClass: "bm-bt-custom"
     }
-
-    state.ignoredDeviceIds = currentIgnored
-
-    dynamicPage(name: "ignoredDevicesPage", title: "🚫 Ignored Devices", install: false) {
-
-        section("") {
-            paragraph "Select devices to ignore completely. Ignored devices are excluded from all reports, " +
-                      "notifications, stale checks, health scoring, and the web portal. They remain in your " +
-                      "monitored devices list and in any Hubitat rules.<br><br>" +
-                      "<span style='color:#94a3b8; font-size:12px;'>ℹ️ When a device is removed from this list, its drain history resets and a <b>Restored</b> entry is logged " +
-                      "in Battery Replacement History. The device starts fresh as if newly added.</span>"
-        }
-
-        section("<b>Select Devices to Ignore</b>") {
-            input "ignoredDevices", "enum",
-                  title: "Ignored devices:",
-                  options: devList.collectEntries { dev ->
-                      def lvl = ""
-                      try { lvl = dev.currentValue("battery") != null ? " (${dev.currentValue("battery").toInteger()}%)" : "" } catch (e) { }
-                      [(dev.id): "${dev.displayName}${lvl}"]
-                  },
-                  multiple: true,
-                  required: false,
-                  submitOnChange: true
-        }
-
-        if (restoredNames) {
-            section("<b>✅ Devices Restored</b>") {
-                paragraph "<div style='background-color:#d4edda; border-left:3px solid #28a745; border-radius:0 4px 4px 0; padding:10px 14px;'>" +
-                          "<span style='color:#155724;'><b>${restoredNames.size()} device(s) restored</b> — drain history reset, health set to ⏳ Pending, Restored entry logged in Battery Replacement History.</span><br><br>" +
-                          "<span style='color:#155724;'>" + restoredNames.collect { "• ${it}" }.join("<br>") + "</span></div>"
-            }
-        }
-
-        section("") {
-            paragraph "<span style='color:#94a3b8; font-size:12px;'>Changes take effect immediately when you add or remove devices.</span>"
-        }
-    }
+    input "battCount_${dev.id}", "number", title: "", description: "Qty",
+          defaultValue: settings["battCount_${dev.id}"] ?: 1, required: false, range: "1..99", width: isOther ? 1 : 2,
+          styleClass: "bm-bt-qty"
+    input "cliffEnabled_${dev.id}", "bool", title: "⚡ Cliff",
+          defaultValue: (settings["cliffEnabled_${dev.id}"] != null) ? settings["cliffEnabled_${dev.id}"] : isAutoCliffType(t),
+          width: 3, styleClass: "bm-bt-cliff"
 }
 
 // ============================================================
 // ===================== BULK ACTIONS PAGE ===================
 // ============================================================
 def bulkActionsPage() {
-    def devList = (autoDevices ?: []).sort { a, b -> a.displayName.trim() <=> b.displayName.trim() }
-
     def cooldownMs  = 60000
-    def lastRun     = state.bulkActionLastRun ?: 0
-    def elapsed     = now() - lastRun
-    def onCooldown  = elapsed < cooldownMs
-    def secondsLeft = onCooldown ? Math.ceil((cooldownMs - elapsed) / 1000).toInteger() : 0
+    def elapsed     = now() - (state.bulkActionLastRun ?: 0)
+    def secondsLeft = elapsed < cooldownMs ? Math.ceil((cooldownMs - elapsed) / 1000).toInteger() : 0
+    def res         = state.remove("bulkResult")
+    def ignored     = ignoredIdList()
+    def devList     = (autoDevices ?: []).sort { a, b -> a.displayName.trim().toLowerCase() <=> b.displayName.trim().toLowerCase() }
+    def action      = settings?.bulkAction ?: "replace"
+    def selected    = (settings?.bulkSelectedDevices ?: []).collect { it as String }
+    def actions     = [replace: "Log battery replacement", reset: "Reset drain history (no replacement)",
+                       ignore: "Ignore devices", restore: "Restore ignored devices"]
 
-    dynamicPage(name: "bulkActionsPage", title: "📦 Bulk Actions", install: false) {
-
-        section("") {
-            paragraph "<b>Select multiple devices to log battery replacements, reset drain history, or manage ignored devices.</b><br><br>" +
-                      "<span style='color:#94a3b8; font-size:12px;'>ℹ️ Each action has a 60-second cooldown after running to prevent accidental back-to-back runs.</span>"
+    dynamicPage(name: "bulkActionsPage", title: "Bulk Actions", install: false) {
+        section {
+            paragraph rawHtml: true, bmPageCss() + "<div class='bm-h'>1. Choose an action</div>"
+            input "bulkAction", "enum", title: "", options: actions, defaultValue: "replace",
+                  required: true, submitOnChange: true
         }
-
-        section("<span style='display:inline-block; background:#e8f0fe; color:#1a73e8; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.07em; padding:3px 12px; border-radius:20px;'>Select Devices</span>") {
-            if (!devList) {
-                paragraph "No monitored devices found."
-                return
-            }
-            input "bulkSelectedDevices", "enum",
-                  title: "",
-                  options: devList.collectEntries { dev ->
-                      def lvl = ""
-                      try { lvl = dev.currentValue("battery") != null ? " (${dev.currentValue("battery").toInteger()}%)" : "" } catch (e) { }
-                      [(dev.id): "${dev.displayName}${lvl}"]
-                  },
-                  multiple: true,
-                  required: false,
-                  submitOnChange: false
+        section {
+            paragraph rawHtml: true, "<div class='bm-h'>2. Select devices</div><div class='bm-hint'>Quick select, or pick from the list.</div>"
+            input "bulkSelDead",  "button", title: "All dead",  width: 3, styleClass: "bm-btn bm-quick"
+            input "bulkSelLow",   "button", title: "All low",   width: 3, styleClass: "bm-btn bm-quick"
+            input "bulkSelStale", "button", title: "All stale", width: 3, styleClass: "bm-btn bm-quick"
+            input "bulkSelClear", "button", title: "Clear",     width: 3, styleClass: "bm-btn bm-quick"
+            input "bulkSelectedDevices", "enum", title: "",
+                  options: devList.collectEntries { d -> [(d.id as String): bulkLabel(d, ignored)] },
+                  multiple: true, required: false, submitOnChange: true
         }
-
-        if (onCooldown) {
-            section("<b>Actions</b>") {
-                paragraph "<div style='background-color:#fff3cd; border-left:3px solid #ffc107; border-radius:0 4px 4px 0; padding:10px 14px;'>" +
-                          "<span style='color:#856404;'>⏱ Bulk actions are on cooldown — available again in <b>${secondsLeft}s</b>. " +
-                          "This prevents accidental back-to-back runs.</span></div>"
-            }
-            return
-        }
-
-        section("<span style='display:inline-block; background:#e8f0fe; color:#1a73e8; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.07em; padding:3px 12px; border-radius:20px;'>Actions</span>") {
-            paragraph "<b>All actions operate on the selected devices above.</b> Toggle to confirm — each executes independently."
-            input "bulkReplaceConfirm", "bool",
-                  title: "✅ Log battery replacement for all selected",
-                  defaultValue: false,
-                  submitOnChange: true
-            input "bulkResetConfirm", "bool",
-                  title: "🔄 Reset drain history (no replacement logged)",
-                  defaultValue: false,
-                  submitOnChange: true
-            input "bulkIgnoreConfirm", "bool",
-                  title: "🚫 Ignore all selected devices",
-                  defaultValue: false,
-                  submitOnChange: true
-            input "bulkUnignoreConfirm", "bool",
-                  title: "✅ Restore all selected devices (remove from ignored list)",
-                  defaultValue: false,
-                  submitOnChange: true
-        }
-
-        def anyConfirmed = (settings?.bulkReplaceConfirm == true || settings?.bulkResetConfirm == true || settings?.bulkIgnoreConfirm == true || settings?.bulkUnignoreConfirm == true)
-        def hasSelection = (settings?.bulkSelectedDevices?.size() ?: 0) > 0
-
-        if (anyConfirmed && !hasSelection) {
-            section("") {
-                paragraph "<div style='background-color:#f8d7da; border-left:3px solid #f5c6cb; border-radius:0 4px 4px 0; padding:10px 14px;'>" +
-                          "<span style='color:#721c24;'>⚠️ No devices selected — please select at least one device above.</span></div>"
-            }
-            return
-        }
-
-        if (anyConfirmed && hasSelection) {
-            section("") {
-                href(name: "toBulkActionsResult", page: "bulkActionsResultPage",
-                     title: "▶ Apply — tap to execute and see results",
-                     description: "")
+        section {
+            int n = selected.size()
+            def verbs = [replace: "be logged as replaced", reset: "have drain history reset (no replacement logged)",
+                         ignore: "be ignored", restore: "be restored"]
+            def review = n ? "<b>${n}</b> device${n == 1 ? '' : 's'} will ${verbs[action]}." : "Select at least one device."
+            paragraph rawHtml: true, (res ? bmMsgHtml(res) + "<div style='height:8px;'></div>" : "") +
+                "<div class='bm-msg ${n ? 'bm-msg-info' : 'bm-msg-muted'}'>${review}</div>"
+            if (secondsLeft > 0) {
+                paragraph rawHtml: true, "<div class='bm-hint'><i class='fa-regular fa-clock' style='margin-right:4px;'></i>" +
+                    "Bulk actions pause for 60 seconds after each run. Available again in about ${secondsLeft}s.</div>"
+            } else {
+                input "bulkApply", "button", title: "Apply", width: 3, styleClass: "bm-btn bm-btn-primary"
             }
         }
     }
 }
 
-// ============================================================
-// ===================== BULK ACTIONS RESULT PAGE ============
-// ============================================================
-def bulkActionsResultPage() {
-    def doReplace = settings?.bulkReplaceConfirm == true
-    def doReset   = settings?.bulkResetConfirm   == true
-    def doIgnore   = settings?.bulkIgnoreConfirm   == true
-    def doUnignore = settings?.bulkUnignoreConfirm == true
-    def selectedIds = settings?.bulkSelectedDevices ?: []
-
-    def replacedNames  = []
-    def resetNames     = []
-    def ignoredNames   = []
-    def unignoredNames = []
-    def skippedNames   = []
-
-    if (selectedIds) {
-        def selectedDevices = autoDevices?.findAll { selectedIds.contains(it.id) } ?: []
-        def currentIgnored  = (settings?.ignoredDevices?.collect { it as String } ?: [])
-
-        selectedDevices.each { device ->
-            try {
-                def level = device.currentValue("battery") != null ? device.currentValue("battery").toInteger() : 100
-
-                if (doReplace) {
-                    logReplacement(device, level, true)
-                    replacedNames << "${device.displayName} (${level}%)"
-                } else if (doReset) {
-                    def existing = state.history[device.id] ?: [:]
-                    state.history[device.id] = [
-                        lastLevel:     existing.lastLevel     ?: level,
-                        lastDate:      now(),
-                        lastScanDate:  now(),
-                        firstSeenDate: existing.firstSeenDate ?: existing.replacedTime ?: existing.lastDate ?: now(),
-                        replacedTime:  existing.replacedTime,
-                        justReplaced:  existing.justReplaced ?: false,
-                        drain:         0.3,
-                        samples:       [],
-                        zeroCount:     0
-                    ]
-                    state.trend[device.id] = "Stable"
-                    state.history = state.history
-                    resetNames << device.displayName
-                }
-                if (doIgnore && !(currentIgnored.contains(device.id as String))) {
-                    currentIgnored << (device.id as String)
-                    ignoredNames << device.displayName
-                }
-                if (doUnignore && currentIgnored.contains(device.id as String)) {
-                    currentIgnored.remove(device.id as String)
-                    def restoreLevel = device.currentValue("battery") != null ? device.currentValue("battery").toInteger() : 100
-                    state.history[device.id] = [
-                        lastLevel: restoreLevel, lastDate: now(), lastScanDate: now(),
-                        firstSeenDate: now(), replacedTime: now(), justReplaced: true,
-                        drain: 0.3, samples: [], zeroCount: 0
-                    ]
-                    state.trend[device.id] = "Stable"
-                    state.history = state.history
-                    state.replacements = state.replacements ?: []
-                    state.replacements << [deviceId: device.id, device: device.displayName, level: restoreLevel,
-                        date: new Date().format("MM/dd/yyyy", location.timeZone), type: "restored"]
-                    state.replacements = state.replacements.sort { a, b -> b.date <=> a.date }.take(100)
-                    unignoredNames << device.displayName
-                }
-            } catch (e) {
-                skippedNames << device.displayName
-                log.warn "Bulk action failed for ${device.displayName}: ${e.message}"
-            }
+private String bulkLabel(d, List ignored) {
+    def tags = []
+    try {
+        if (ignored.contains(d.id as String)) {
+            tags << "ignored"
+        } else {
+            if (isBatteryDead(d)) tags << "dead"
+            else if (currentLevel(d) <= 25) tags << "low"
+            if (isStale(d)) tags << "stale"
         }
-        if (doIgnore && ignoredNames)     app.updateSetting("ignoredDevices", [value: currentIgnored, type: "enum"])
-        if (doUnignore && unignoredNames) app.updateSetting("ignoredDevices", [value: currentIgnored, type: "enum"])
-    }
+    } catch (e) { }
+    return "${d.displayName} (${currentLevel(d)}%)" + (tags ? " · ${tags.join(', ')}" : "")
+}
 
+private void bulkQuickSelect(String kind) {
+    def ignored = ignoredIdList()
+    def ids = (autoDevices ?: []).findAll { d ->
+        if (ignored.contains(d.id as String)) return false
+        try {
+            if (kind == "dead")  return isBatteryDead(d)
+            if (kind == "low")   return !isBatteryDead(d) && currentLevel(d) <= 25
+            if (kind == "stale") return isStale(d)
+        } catch (e) { }
+        return false
+    }.collect { it.id as String }
+    app.updateSetting("bulkSelectedDevices", [value: ids, type: "enum"])
+}
+
+private void runBulkAction() {
+    if (now() - (state.bulkActionLastRun ?: 0) < 60000) {
+        state.bulkResult = [tone: "warn", text: "Bulk actions are pausing between runs. Try again shortly."]
+        return
+    }
+    def action  = settings?.bulkAction ?: "replace"
+    def ids     = (settings?.bulkSelectedDevices ?: []).collect { it as String }
+    def devices = (autoDevices ?: []).findAll { ids.contains(it.id as String) }
+    if (!devices) {
+        state.bulkResult = [tone: "err", text: "Select at least one device first."]
+        return
+    }
+    def done = [], skipped = []
+    def ignored = ignoredIdList()
+    devices.each { d ->
+        def idStr = d.id as String
+        try {
+            if (action == "replace") {
+                logReplacement(d, currentLevel(d), true); done << d.displayName
+            } else if (action == "reset") {
+                resetDrainHistory(d); done << d.displayName
+            } else if (action == "ignore") {
+                if (!ignored.contains(idStr)) { ignored << idStr; done << d.displayName }
+                else skipped << "${d.displayName} (already ignored)".toString()
+            } else if (action == "restore") {
+                if (ignored.contains(idStr)) { ignored.remove(idStr); markRestored(d); done << d.displayName }
+                else skipped << "${d.displayName} (not ignored)".toString()
+            }
+        } catch (e) {
+            skipped << "${d.displayName} (error)".toString()
+            log.warn "Bulk action failed for ${d.displayName}: ${e.message}"
+        }
+    }
+    if (action in ["ignore", "restore"]) app.updateSetting("ignoredDevices", [value: ignored, type: "enum"])
     state.bulkActionLastRun = now()
-
-    app.updateSetting("bulkReplaceConfirm",   [value: false, type: "bool"])
-    app.updateSetting("bulkResetConfirm",     [value: false, type: "bool"])
-    app.updateSetting("bulkIgnoreConfirm",    [value: false, type: "bool"])
-    app.updateSetting("bulkUnignoreConfirm",  [value: false, type: "bool"])
-    app.updateSetting("bulkSelectedDevices",  [value: [], type: "enum"])
-
-    dynamicPage(name: "bulkActionsResultPage", title: "📦 Bulk Actions — Result", install: false) {
-
-        if (!doReplace && !doReset && !doIgnore && !doUnignore) {
-            section("<b>Nothing to do</b>") {
-                paragraph "No actions were confirmed — nothing was changed. Tap back to return."
-            }
-            return
-        }
-
-        if (replacedNames) {
-            section("<b>✅ Battery Replacements Logged</b>") {
-                paragraph "<div style='background-color:#d4edda; border-left:3px solid #28a745; border-radius:0 4px 4px 0; padding:10px 14px;'>" +
-                          "<span style='color:#155724;'><b>${replacedNames.size()} device(s) updated</b> — replacement logged, drain history reset, health set to ⏳ Pending.</span><br><br>" +
-                          "<span style='color:#155724;'>" + replacedNames.collect { "• ${it}" }.join("<br>") + "</span></div>"
-            }
-        }
-
-        if (resetNames) {
-            section("<b>🔄 Drain History Reset</b>") {
-                paragraph "<div style='background-color:#d4edda; border-left:3px solid #28a745; border-radius:0 4px 4px 0; padding:10px 14px;'>" +
-                          "<span style='color:#155724;'><b>${resetNames.size()} device(s) reset</b> — drain history cleared, health set to ⏳ Pending. No replacement logged.</span><br><br>" +
-                          "<span style='color:#155724;'>" + resetNames.collect { "• ${it}" }.join("<br>") + "</span></div>"
-            }
-        }
-
-        if (ignoredNames) {
-            section("<b>🚫 Devices Ignored</b>") {
-                paragraph "<div style='background-color:#fff3cd; border-left:3px solid #ffc107; border-radius:0 4px 4px 0; padding:10px 14px;'>" +
-                          "<span style='color:#856404;'><b>${ignoredNames.size()} device(s) ignored</b> — excluded from all reports, notifications, and the portal.</span><br><br>" +
-                          "<span style='color:#856404;'>" + ignoredNames.collect { "• ${it}" }.join("<br>") + "</span></div>"
-            }
-        }
-
-        if (unignoredNames) {
-            section("<b>✅ Devices Restored</b>") {
-                paragraph "<div style='background-color:#d4edda; border-left:3px solid #28a745; border-radius:0 4px 4px 0; padding:10px 14px;'>" +
-                          "<span style='color:#155724;'><b>${unignoredNames.size()} device(s) restored</b> — drain history reset, health set to ⏳ Pending, Restored entry logged.</span><br><br>" +
-                          "<span style='color:#155724;'>" + unignoredNames.collect { "• ${it}" }.join("<br>") + "</span></div>"
-            }
-        }
-
-        if (skippedNames) {
-            section("<b>⚠️ Skipped</b>") {
-                paragraph "<div style='background-color:#fff3cd; border-left:3px solid #ffc107; border-radius:0 4px 4px 0; padding:10px 14px;'>" +
-                          "<span style='color:#856404;'>The following devices encountered an error and were skipped:<br><br>" +
-                          skippedNames.collect { "• ${it}" }.join("<br>") + "</span></div>"
-            }
-        }
-
-        section("") {
-            paragraph "<span style='color:#94a3b8; font-size:12px;'>⏱ Bulk actions are on a 60-second cooldown. Tap back to return to the management page.</span>"
-        }
-    }
+    app.updateSetting("bulkSelectedDevices", [value: [], type: "enum"])
+    def verb = [replace: "Replacement logged", reset: "Drain history reset", ignore: "Ignored", restore: "Restored"][action]
+    def text = done ? "${verb} for ${done.size()} device${done.size() == 1 ? '' : 's'}: ${done.collect { bmEsc(it) }.join(', ')}." : "Nothing changed."
+    if (skipped) text += "<br>Skipped: ${skipped.collect { bmEsc(it) }.join(', ')}."
+    state.bulkResult = [tone: done ? "ok" : "warn", text: text.toString()]
 }
 
 // ============================================================
 // ===================== DEVICE ACTIONS PAGE =================
 // ============================================================
-def deviceActionsPage() {
-    def devList    = (autoDevices ?: []).sort { a, b -> a.displayName.trim() <=> b.displayName.trim() }
-    def selectedId = settings?.ddDeviceId
-    def device     = selectedId ? autoDevices?.find { it.id == selectedId } : null
-
-    if (selectedId && selectedId != settings?.ddLastDeviceId) {
-        app.updateSetting("ddReplaceConfirm", [value: false, type: "bool"])
-        app.updateSetting("ddResetConfirm",   [value: false, type: "bool"])
-        app.updateSetting("ddLastDeviceId",   [value: selectedId, type: "string"])
+def deviceActionsPage(params) {
+    // Hubitat can resend page params on refresh, so only reset when the device actually changes
+    if (params?.deviceId && (params.deviceId as String) != (state.daDeviceId as String)) {
+        state.daDeviceId = params.deviceId as String
+        state.remove("daPending")
     }
+    def ignoredIds = ignoredIdList()
+    def rank = { d ->
+        if (ignoredIds.contains(d.id as String)) return 3
+        def c = deviceStatusColor(d)
+        return c == "#d93025" ? 0 : c == "#e08a00" ? 1 : 2
+    }
+    def devList = (autoDevices ?: []).sort { a, b ->
+        def ra = rank(a), rb = rank(b)
+        ra != rb ? ra <=> rb : a.displayName.trim().toLowerCase() <=> b.displayName.trim().toLowerCase()
+    }
+    def selId  = state.daDeviceId ?: settings?.ddDeviceId
+    def device = selId ? devList.find { (it.id as String) == (selId as String) } : null
+    if (!device && devList) { device = devList[0]; state.daDeviceId = device.id as String }
+    if (device) syncCliffDefaults([device])
+    def msg     = state.remove("daMessage")
+    def pending = state.daPending
+    if (pending && (pending.deviceId as String) != (device?.id as String)) { state.remove("daPending"); pending = null }
 
-    def typeOptions = ["": "— Not Set —"]
-    typeOptions["_sep1"] = "──────── Standard ────────"
-    ["AA", "AAA", "CR2", "CR1632", "CR2016", "CR2032", "CR2430", "CR2450", "CR2477", "CR123A", "9V", "ER14250", "LS14250"].each { typeOptions[it] = it }
-    typeOptions["Integrated"] = "Integrated"
-    typeOptions["_sep2"] = "──────── Rechargeable ────────"
-    ["Rechargeable AA", "Rechargeable AAA", "LIR2016", "LIR2032", "LIR2430", "LIR2450", "18650", "RCR123A", "RCR2"].each { typeOptions[it] = it }
-    typeOptions["_sep3"] = "──────── Other ────────"
-    typeOptions["Other"] = "Other"
-
-    dynamicPage(name: "deviceActionsPage", title: "⚙️ Device Actions", install: false) {
-
-        section("") {
-            paragraph "<b>Manage battery type, log replacements, reset drain history, or ignore a device.</b><br>" +
-                      "<span style='color:#94a3b8; font-size:12px;'>ℹ️ Last selection remembered — change the dropdown to switch devices.</span>"
+    dynamicPage(name: "deviceActionsPage", title: "Device Actions", install: false) {
+        section(sectionClass: "bm-da-index") {
+            paragraph rawHtml: true, bmPageCss() + daStylesHtml() +
+                "<input id='daSearch' class='bm-search' type='text' placeholder='Search devices' aria-label='Search devices'>"
+            devList.each { d ->
+                def dot = ignoredIds.contains(d.id as String) ? "#9ca3af" : deviceStatusColor(d)
+                def cur = (d.id as String) == (device?.id as String) ? "bm-da-current" : ""
+                href name: "daDev_${d.id}", page: "deviceActionsPage", params: [deviceId: d.id as String],
+                     title: "<span class='${cur}'><span class='bm-dot' style='background:${dot};'></span>${bmEsc(d.displayName)}</span>",
+                     description: "", width: 12, style: "margin:0 8px;"
+            }
+            paragraph rawHtml: true, daSearchScript()
         }
+        section(sectionClass: "bm-da-detail") {
+            if (!device) {
+                paragraph "No monitored devices. Select devices on the main page, then tap Done."
+                return
+            }
+            def idStr   = device.id as String
+            def isIgn   = ignoredIds.contains(idStr)
+            def dead    = isBatteryDead(device)
+            def lvl     = currentLevel(device)
+            def h       = dead ? "Dead" : health(device)
+            def hTone   = [Excellent: "green", Good: "green", Fair: "amber", Poor: "red", Dead: "red", Pending: "gray"]
+            def pills   = bmPill(h, hTone[h] ?: "gray")
+            if (isStale(device)) pills += bmPill("Stale", "amber")
+            if (isIgn) pills += bmPill("Ignored", "gray")
+            def cliffOn = isCliffEnabled(device)
+            def est     = estDays(device)
+            def drainTx = dead ? "—" : h == "Pending" ? "Learning" : "${fmtDrain(getDrain(device))}%/day · ${est != null ? est + 'd' : '—'}"
+            def name    = bmEsc(device.displayName)
 
-        section("<span style='display:inline-block; background:#e8f0fe; color:#1a73e8; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.07em; padding:3px 12px; border-radius:20px;'>Select Device</span>") {
-            input "ddDeviceId", "enum",
-                  title: "",
-                  options: devList.collectEntries { [(it.id): it.displayName] },
-                  required: false,
+            paragraph rawHtml: true, """
+<div class='bm-da-head'><div class='bm-da-title'>${name}</div><div style='white-space:nowrap;'>${pills}</div></div>
+<div class='bm-stats'>
+  <div class='bm-stat'><div class='bm-stat-label'>Battery</div><div class='bm-stat-num'>${lvl}%</div></div>
+  <div class='bm-stat'><div class='bm-stat-label'>Drain and life</div><div class='bm-stat-num'>${drainTx}</div></div>
+  <div class='bm-stat'><div class='bm-stat-label'>Cliff detection</div><div class='bm-stat-num' style='color:${cliffOn ? "#1e7b34" : "#6b7280"};'>${cliffOn ? "On" : "Off"}</div></div>
+</div>
+${bmMsgHtml(msg)}
+"""
+            def bt      = settings["battType_${device.id}"]
+            def isOther = bt == "Other"
+            input "battType_${device.id}", "enum", title: "Battery type", options: batteryTypeOptions(), required: false,
+                  defaultValue: bt ?: "", submitOnChange: true, width: isOther ? 5 : 8
+            if (isOther) {
+                input "battCustomType_${device.id}", "text", title: "Custom type", description: "e.g. CR17450",
+                      required: false, submitOnChange: true, width: 3
+            }
+            input "battCount_${device.id}", "number", title: "Qty", defaultValue: settings["battCount_${device.id}"] ?: 1,
+                  required: false, range: "1..99", submitOnChange: true, width: 4
+            def cliffNote = isAutoCliffType(bt) ? "auto-enabled, ${bt} is always Li-ion" :
+                            isCliffCandidateType(bt) ? "${bt} is usually Li-ion, confirm before enabling" :
+                            "enable only for Li-ion cells"
+            input "cliffEnabled_${device.id}", "bool",
+                  title: "⚡ Cliff detection <span class='bm-hint'>· ${cliffNote}</span>",
+                  defaultValue: (settings["cliffEnabled_${device.id}"] != null) ? settings["cliffEnabled_${device.id}"] : isAutoCliffType(bt),
                   submitOnChange: true
-        }
 
-        if (!device) { return }
-
-        def level       = null
-        try { level = device.currentValue("battery") != null ? device.currentValue("battery").toInteger() : "?" } catch (e) { level = "?" }
-        def h           = health(device)
-        def catalogInfo = getCatalogBatteryInfo(device) ?: "Not set"
-        def dead        = isBatteryDead(device)
-        def healthStr   = dead ? "🪫 Dead" : getHealthDisplay(device)
-
-        // Device info card — trimmed: Battery, Health, Type only
-        section("") {
-            paragraph "<div style='background:#dbeafe; border-left:4px solid #1a73e8; border-radius:4px; padding:10px 12px;'>" +
-                      "<b style='font-size:15px;'>${device.displayName}</b><br>" +
-                      "<span style='color:#374151;'>Battery: <b>${level}%</b> &nbsp;·&nbsp; " +
-                      "Health: <b>${healthStr}</b> &nbsp;·&nbsp; " +
-                      "Type: <b>${catalogInfo}</b></span></div>"
-        }
-
-        // Actions — side by side
-        section("<span style='display:inline-block; background:#e8f0fe; color:#1a73e8; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.07em; padding:3px 12px; border-radius:20px;'>⚡ Actions</span>") {
-            input "ddReplaceConfirm", "bool",
-                  title: "✅ Log Manual Replacement",
-                  description: "Resets drain history and restarts the learning period.",
-                  defaultValue: false,
-                  submitOnChange: true,
-                  width: 6
-            input "ddResetConfirm", "bool",
-                  title: "🔄 Reset Drain History",
-                  description: "Clears samples and resets health to ⏳ Pending. No replacement logged.",
-                  defaultValue: false,
-                  submitOnChange: true,
-                  width: 6
-        }
-        if (settings?.ddReplaceConfirm == true) {
-            section("<b>Replacement Result</b>") {
-                def currentLevel = device.currentValue("battery") != null ? device.currentValue("battery").toInteger() : 100
-                logReplacement(device, currentLevel, true)
-                app.updateSetting("ddReplaceConfirm", [value: false, type: "bool"])
-                paragraph "✅ Replacement logged for <b>${device.displayName}</b> at ${currentLevel}%. Health set to ⏳ Pending."
-            }
-        }
-        if (settings?.ddResetConfirm == true) {
-            section("<b>Reset Result</b>") {
-                def existing = state.history[device.id] ?: [:]
-                state.history[device.id] = [
-                    lastLevel:     existing.lastLevel     ?: (device.currentValue("battery") != null ? device.currentValue("battery").toInteger() : 100),
-                    lastDate:      now(),
-                    lastScanDate:  now(),
-                    firstSeenDate: existing.firstSeenDate ?: existing.replacedTime ?: existing.lastDate ?: now(),
-                    replacedTime:  existing.replacedTime,
-                    justReplaced:  existing.justReplaced ?: false,
-                    drain:         0.3,
-                    samples:       [],
-                    zeroCount:     0
-                ]
-                state.trend[device.id] = "Stable"
-                state.history = state.history
-                app.updateSetting("ddResetConfirm", [value: false, type: "bool"])
-                paragraph "✅ Drain history reset for <b>${device.displayName}</b>. Health set to ⏳ Pending."
-            }
-        }
-
-        section("") { paragraph "<hr style='border:none; border-top:1px solid #e0e0e0; margin:4px 0;'>" }
-
-        // Ignore
-        section("<span style='display:inline-block; background:#e8f0fe; color:#1a73e8; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.07em; padding:3px 12px; border-radius:20px;'>🚫 Ignore This Device</span>") {
-            def isCurrentlyIgnored = (settings?.ignoredDevices?.collect { it as String } ?: []).contains(device.id as String)
-            paragraph "<span style='color:#94a3b8; font-size:12px;'>${isCurrentlyIgnored ? 'Currently ignored — excluded from all reports, notifications, and the portal.' : 'Excludes from all reports, notifications, and the portal. History resets when restored.'}</span>"
-            input "ddIgnoreConfirm", "bool",
-                  title: isCurrentlyIgnored ? "✅ Confirm — restore this device" : "🚫 Confirm — ignore this device",
-                  defaultValue: false,
-                  submitOnChange: true
-        }
-        if (settings?.ddIgnoreConfirm == true) {
-            section("<b>Ignore Result</b>") {
-                def currentIgnored = (settings?.ignoredDevices?.collect { it as String } ?: [])
-                def deviceIdStr    = device.id as String
-                def isIgnoredNow   = currentIgnored.contains(deviceIdStr)
-                if (isIgnoredNow) {
-                    def newIgnored = currentIgnored.findAll { it != deviceIdStr }
-                    app.updateSetting("ignoredDevices", [value: newIgnored, type: "enum"])
-                    def restoreLevel = device.currentValue("battery") != null ? device.currentValue("battery").toInteger() : 100
-                    state.history[device.id] = [
-                        lastLevel: restoreLevel, lastDate: now(), lastScanDate: now(),
-                        firstSeenDate: now(), replacedTime: now(), justReplaced: true,
-                        drain: 0.3, samples: [], zeroCount: 0
-                    ]
-                    state.trend[device.id] = "Stable"
-                    state.history = state.history
-                    state.replacements = state.replacements ?: []
-                    state.replacements << [deviceId: device.id, device: device.displayName, level: restoreLevel,
-                        date: new Date().format("MM/dd/yyyy", location.timeZone), type: "restored"]
-                    state.replacements = state.replacements.sort { a, b -> b.date <=> a.date }.take(100)
-                    paragraph "✅ <b>${device.displayName}</b> restored — drain history reset, health set to ⏳ Pending."
-                } else {
-                    def newIgnored = currentIgnored + [deviceIdStr]
-                    app.updateSetting("ignoredDevices", [value: newIgnored, type: "enum"])
-                    paragraph "🚫 <b>${device.displayName}</b> is now ignored."
-                }
-                app.updateSetting("ddIgnoreConfirm", [value: false, type: "bool"])
-            }
-        }
-
-        section("") { paragraph "<hr style='border:none; border-top:1px solid #e0e0e0; margin:4px 0;'>" }
-
-        // Battery Type — moved to bottom, "Changes save" note removed
-        section("<span style='display:inline-block; background:#e8f0fe; color:#1a73e8; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.07em; padding:3px 12px; border-radius:20px;'>🔋 Battery Type</span>") {
-            input "battType_${device.id}", "enum",
-                  title: "Type:",
-                  options: typeOptions,
-                  required: false,
-                  defaultValue: settings["battType_${device.id}"] ?: "",
-                  submitOnChange: true,
-                  width: 8
-            if (settings["battType_${device.id}"] == "Other") {
-                input "battCustomType_${device.id}", "text",
-                      title: "Custom type:",
-                      description: "e.g. CR17450, 4SR44",
-                      required: false,
-                      defaultValue: settings["battCustomType_${device.id}"] ?: "",
-                      width: 8
-            }
-            input "battCount_${device.id}", "number",
-                  title: "Qty:",
-                  defaultValue: settings["battCount_${device.id}"] ?: 1,
-                  required: false,
-                  range: "1..99",
-                  width: 2
-        }
-
-        section("") { paragraph "<hr style='border:none; border-top:1px solid #e0e0e0; margin:4px 0;'>" }
-
-        section("<b>📋 Replacement History</b>", hideable: true, hidden: true) {
-            def deviceHistory = state.replacements?.findAll { r ->
-                r.deviceId == device.id || r.device == device.displayName
-            }?.sort { a, b -> b.date <=> a.date }
-
-            if (!deviceHistory || deviceHistory.size() == 0) {
-                paragraph "No replacements logged yet for this device."
+            if (pending) {
+                def ask = pending.action == "replace" ? "Log a replacement for <b>${name}</b> at ${lvl}%? Drain history restarts." :
+                          pending.action == "reset"   ? "Reset drain history for <b>${name}</b>? No replacement is logged." :
+                          isIgn ? "Restore <b>${name}</b>? Drain history resets and a Restored entry is logged." :
+                                  "Ignore <b>${name}</b>? It's excluded from reports, notifications, and the portal until restored."
+                paragraph rawHtml: true, "<div class='bm-msg bm-msg-warn'>${ask}</div>"
+                input "daConfirm", "button", title: "Confirm", width: 3, styleClass: "bm-btn bm-btn-primary"
+                input "daCancel",  "button", title: "Cancel",  width: 3, styleClass: "bm-btn"
             } else {
-                def table = "<table style='width:100%; border-collapse:collapse; border:1px solid #ccc;'>"
-                table += "<tr style='font-weight:bold; background-color:#f0f0f0;'>"
-                table += "<td style='padding:4px; border:1px solid #ccc;'>Date</td>"
-                table += "<td style='padding:4px; border:1px solid #ccc;'>Level</td>"
-                table += "<td style='padding:4px; border:1px solid #ccc;'>Type</td>"
-                table += "</tr>"
-                deviceHistory.eachWithIndex { r, idx ->
-                    def rowBg   = (idx % 2 == 0) ? "#ffffff" : "#ebebeb"
-                    def typeTag = r.type == "manual"   ? "<span style='color:blue;'>Manual</span>" :
-                                  r.type == "auto"     ? "<span style='color:green;'>Auto</span>" :
-                                  r.type == "restored" ? "<span style='color:#9333ea;'>Restored</span>" : "?"
-                    table += "<tr style='background-color:${rowBg};'>"
-                    table += "<td style='padding:4px; border:1px solid #ccc;'>${r.date}</td>"
-                    table += "<td style='padding:4px; border:1px solid #ccc;'>${r.level}%</td>"
-                    table += "<td style='padding:4px; border:1px solid #ccc;'>${typeTag}</td>"
-                    table += "</tr>"
-                }
-                table += "</table>"
-                paragraph "<div style='overflow-x:auto;'>${table}</div>"
+                input "daReplace", "button", title: "<i class='fa-solid fa-battery-full' style='margin-right:6px;'></i>Log replacement",
+                      width: 4, styleClass: "bm-btn"
+                input "daReset", "button", title: "<i class='fa-solid fa-rotate-left' style='margin-right:6px;'></i>Reset drain history",
+                      width: 4, styleClass: "bm-btn"
+                input "daIgnore", "button",
+                      title: isIgn ? "<i class='fa-solid fa-rotate' style='margin-right:6px;'></i>Restore device" :
+                                     "<i class='fa-solid fa-ban' style='margin-right:6px;'></i>Ignore device",
+                      width: 4, styleClass: isIgn ? "bm-btn" : "bm-btn bm-btn-danger"
             }
+
+            def hist = (state.replacements ?: []).findAll { r ->
+                (r.deviceId as String) == idStr || r.device == device.displayName
+            }.sort { a, b -> replacementTime(b) <=> replacementTime(a) }
+            def histHtml = hist ? "<table class='bm-table'>" + hist.collect { r ->
+                "<tr><td>${r.date}</td><td>${r.level}%</td><td style='text-align:right;'>${historyTypePill(r.type)}</td></tr>"
+            }.join("") + "</table>" : "<div class='bm-hint'>No replacements logged yet.</div>"
+            paragraph rawHtml: true, "<div class='bm-h' style='margin-top:6px;'>Replacement history</div>${histHtml}"
         }
     }
 }
 
+private void runDeviceAction() {
+    def p = state.remove("daPending")
+    def device = p ? autoDevices?.find { (it.id as String) == (p.deviceId as String) } : null
+    if (!device) return
+    def name = bmEsc(device.displayName)
+    try {
+        if (p.action == "replace") {
+            def lvl = currentLevel(device)
+            logReplacement(device, lvl, true)
+            state.daMessage = [tone: "ok", text: "Replacement logged for <b>${name}</b> at ${lvl}%. Health reset to Pending.".toString()]
+        } else if (p.action == "reset") {
+            resetDrainHistory(device)
+            state.daMessage = [tone: "ok", text: "Drain history reset for <b>${name}</b>. No replacement logged.".toString()]
+        } else if (p.action == "ignore") {
+            def ids   = ignoredIdList()
+            def idStr = device.id as String
+            if (ids.contains(idStr)) {
+                app.updateSetting("ignoredDevices", [value: ids.findAll { it != idStr }, type: "enum"])
+                markRestored(device)
+                state.daMessage = [tone: "ok", text: "<b>${name}</b> restored. Drain history reset and a Restored entry logged.".toString()]
+            } else {
+                app.updateSetting("ignoredDevices", [value: ids + [idStr], type: "enum"])
+                state.daMessage = [tone: "warn", text: "<b>${name}</b> is now ignored.".toString()]
+            }
+        }
+    } catch (e) {
+        log.warn "Battery Monitor: device action failed for ${device.displayName}: ${e.message}"
+        state.daMessage = [tone: "err", text: "That action failed for <b>${name}</b>. Check the logs.".toString()]
+    }
+}
+
+private String daStylesHtml() {
+    """
+<style>
+  div.panel-body { padding: 0 !important; margin-left: -0.5em; margin-right: -0.5em; }
+  .bm-da-index { float: left; width: calc(30% - 8px); box-sizing: border-box; }
+  .bm-da-detail { float: right; width: 70%; border-left: 1px solid #e0e0e0; padding-left: 8px; box-sizing: border-box; }
+  .bm-da-index > .mdl-grid, .bm-da-detail > .mdl-grid { padding: 4px 0 !important; }
+  .bm-da-index > .mdl-grid { max-height: 72vh; overflow-y: auto; align-content: flex-start; padding-top: 0 !important; }
+  .bm-da-index .mdl-cell { margin-top: 0 !important; margin-bottom: 0 !important; }
+  .bm-da-index .mdl-cell:first-child {
+    position: sticky; top: 0; z-index: 2; background: #fff; padding: 4px 0 6px;
+    box-shadow: 0 4px 4px -4px rgba(0, 0, 0, 0.18);
+  }
+  .bm-da-index button.hrefElem {
+    background: transparent; box-shadow: none; border: 0; border-left: 3px solid transparent; border-radius: 0;
+    padding: 6px 10px; min-height: 0; font-family: inherit; font-size: 14px; color: #1f2937; text-align: left;
+  }
+  .bm-da-index button.hrefElem::before,
+  .bm-da-index button.hrefElem > br,
+  .bm-da-index button.hrefElem > .state-incomplete-text,
+  .bm-da-index button.hrefElem > .state-complete-text { display: none; }
+  .bm-da-index button.hrefElem:has(.bm-da-current) { background: #eaf2fc; border-left-color: #1565c0; font-weight: 600; }
+  .bm-da-index button.hrefElem:hover { background: #f3f6fa; }
+  .bm-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
+  .bm-search { width: 100%; box-sizing: border-box; padding: 6px 10px; border: 1px solid #cfd6de; border-radius: 4px; font-size: 14px; margin: 0 0 6px; }
+  .bm-da-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+  .bm-da-title { font-size: 17px; font-weight: 600; }
+  #formApp:has(.bm-da-index) #fieldsetAppButtons { clear: both; }
+  @media (max-width: 1000px) {
+    .bm-da-index, .bm-da-detail { float: none; width: 100%; padding: 0; border-left: 0; }
+    .bm-da-index > .mdl-grid { max-height: 280px; }
+  }
+</style>
+"""
+}
+
+private String daSearchScript() {
+    """
+<script>
+(function(){
+  // Keep the selected device in view inside the scrolling list after a reload
+  var list = document.querySelector('.bm-da-index > .mdl-grid');
+  var cur = document.querySelector('.bm-da-index .bm-da-current');
+  var btn = cur ? (cur.closest('button') || cur) : null;
+  if (list && btn) {
+    var offset = btn.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    list.scrollTop += offset - list.clientHeight / 3;
+  }
+  var box = document.getElementById('daSearch'); if (!box) return;
+  box.addEventListener('input', function(){
+    var q = box.value.toLowerCase();
+    [].forEach.call(document.querySelectorAll('.bm-da-index button.hrefElem'), function(b){
+      var cell = b.closest('.mdl-cell') || b;
+      cell.style.display = b.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
+    });
+  });
+})();
+</script>
+"""
+}
 
 // ============================================================
 // ===================== HISTORY PAGE ========================
 // ============================================================
 def historyPage() {
     def hubIp = location?.hub?.localIP ?: ""
-    dynamicPage(name: "historyPage", title: "🔋 Battery Replacement History", install: false) {
-        section("") {
+    dynamicPage(name: "historyPage", title: "Battery Replacement History", install: false) {
+        section {
+            paragraph rawHtml: true, bmPageCss()
             if (!state.replacements || state.replacements.size() == 0) {
                 paragraph "No battery replacements have been logged yet."
                 return
             }
-
-            def table = "<table style='width:100%; border-collapse: collapse; border: 1px solid #ccc;'>"
-            table += "<tr style='font-weight:bold; background-color:#f0f0f0;'>"
-            table += "<td style='padding:4px; border:1px solid #ccc;'>Device</td>"
-            table += "<td style='padding:4px; border:1px solid #ccc;'>Battery Type</td>"
-            table += "<td style='padding:4px; border:1px solid #ccc;'>Level</td>"
-            table += "<td style='padding:4px; border:1px solid #ccc;'>Date</td>"
-            table += "<td style='padding:4px; border:1px solid #ccc;'>Type</td>"
-            table += "</tr>"
-
-            state.replacements.sort { a, b -> b.date <=> a.date }.take(100).eachWithIndex { r, idx ->
-                def historyRowBg = (idx % 2 == 0) ? "#ffffff" : "#ebebeb"
-
-                // Pill badges
-                def typeTag = r.type == "manual"
-                    ? "<span style='display:inline-block;background:#dbeafe;color:#1d4ed8;font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;'>Manual</span>"
-                    : r.type == "auto"
-                    ? "<span style='display:inline-block;background:#dcfce7;color:#15803d;font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;'>Auto</span>"
-                    : r.type == "restored"
-                    ? "<span style='display:inline-block;background:#f3e8ff;color:#7e22ce;font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;'>Restored</span>"
-                    : "?"
-
+            def rowsHtml = state.replacements.sort { a, b -> replacementTime(b) <=> replacementTime(a) }.take(100).collect { r ->
                 def dev = r.deviceId
                     ? autoDevices?.find { it.id == r.deviceId }
                     : autoDevices?.find { it.displayName == r.device }
-                def orphaned    = (dev == null)
-                def info        = dev ? getCatalogBatteryInfo(dev) : null
-                def infoStr     = info ? "${info}" : ""
-                def displayName = dev ? dev.displayName : r.device
-
-                // Clickable device link
-                def nameDisplay = orphaned
-                    ? "<span style='color:#94a3b8;'>${displayName} <em>(device removed)</em></span>"
-                    : (hubIp && dev ? "<a href='http://${hubIp}/device/edit/${dev.id}' target='_blank'>${displayName}</a>" : displayName)
-
-                // Normalize date display — handle both yyyy-MM-dd HH:mm and MM/dd/yyyy formats
+                def displayName = bmEsc(dev ? dev.displayName : r.device)
+                def nameHtml = !dev ? "<span class='bm-muted'>${displayName} <em>(device removed)</em></span>" :
+                    hubLink("/device/edit/${dev.id}", displayName)
+                def info = dev ? getCatalogBatteryInfo(dev) : null
                 def dateDisplay = r.date ?: ""
                 try {
                     if (dateDisplay =~ /^\d{4}-\d{2}-\d{2}/) {
-                        def parsed = new Date().parse("yyyy-MM-dd HH:mm", dateDisplay)
-                        dateDisplay = parsed.format("MM/dd/yyyy", location.timeZone)
+                        dateDisplay = new Date().parse("yyyy-MM-dd HH:mm", dateDisplay).format("MM/dd/yyyy", location.timeZone)
                     }
                 } catch (e) { }
-
-                table += "<tr style='background-color:${historyRowBg};${orphaned ? "opacity:0.6;" : ""}'>"
-                table += "<td style='padding:4px; border:1px solid #ccc;'>${nameDisplay}</td>"
-                table += "<td style='padding:4px; border:1px solid #ccc;'>${infoStr}</td>"
-                table += "<td style='padding:4px; border:1px solid #ccc;'>${r.level}%</td>"
-                table += "<td style='padding:4px; border:1px solid #ccc;'>${dateDisplay}</td>"
-                table += "<td style='padding:4px; border:1px solid #ccc;'>${typeTag}</td>"
-                table += "</tr>"
-            }
-
-            table += "</table>"
-            paragraph "<div style='overflow-x:auto; -webkit-overflow-scrolling:touch;'>${table}</div>"
-            if (hubIp) paragraph "<span style='color:#94a3b8; font-size:11px;'>⚠ Device links accessible on local network (LAN) only.</span>"
+                "<tr${dev ? '' : " style='opacity:0.6;'"}><td>${nameHtml}${info ? bmPill(bmEsc(info), 'gray') : ''}</td>" +
+                    "<td>${r.level}%</td><td>${dateDisplay}</td><td style='text-align:right;'>${historyTypePill(r.type)}</td></tr>"
+            }.join("")
+            paragraph rawHtml: true, "<div style='overflow-x:auto;'><table class='bm-table'>" +
+                "<thead><tr><th>Device</th><th>Level</th><th>Date</th><th style='text-align:right;'>Type</th></tr></thead>" +
+                "<tbody>${rowsHtml}</tbody></table></div>" +
+                hubLinkScript()
         }
-
-        section("<b>Delete an Entry</b>") {
-            href(name: "toDeleteHistory", page: "deleteHistoryPage", title: "🗑️ Delete a History Entry")
+        section {
+            href(name: "toDeleteHistory", page: "deleteHistoryPage",
+                 title: "<i class='fa-regular fa-trash-can' style='margin-right:6px;'></i>Delete a history entry", description: "")
         }
     }
 }
@@ -2351,7 +2550,7 @@ def deleteHistoryPage() {
             section() { paragraph "No replacement history to delete." }
         } else {
             def options = [:]
-            state.replacements.sort { a, b -> b.date <=> a.date }.take(100).eachWithIndex { r, i ->
+            state.replacements.sort { a, b -> replacementTime(b) <=> replacementTime(a) }.take(100).eachWithIndex { r, i ->
                 options["${i}"] = "🗑️ ${r.device} — ${r.date}"
             }
             section("<b>Select Entry to Delete</b>") {
@@ -2384,7 +2583,7 @@ def deleteHistoryConfirmPage() {
             } else if (deleteEntrySelection == null) {
                 paragraph "⚠️ No entry selected."
             } else {
-                def sorted = state.replacements.sort { a, b -> b.date <=> a.date }.take(100)
+                def sorted = state.replacements.sort { a, b -> replacementTime(b) <=> replacementTime(a) }.take(100)
                 def idx    = deleteEntrySelection.toInteger()
                 if (idx >= 0 && idx < sorted.size()) {
                     def entry = sorted[idx]
@@ -2402,71 +2601,40 @@ def deleteHistoryConfirmPage() {
 }
 
 // ============================================================
-// ============= SEND NOTIFICATION PAGE ======================
+// ===================== SEND NOW ============================
 // ============================================================
-def sendNotificationPage() {
-    dynamicPage(name: "sendNotificationPage", title: "Send Notification", install: false) {
-
-        def devList    = autoDevices ?: []
-        def hasDevices = devList.size() > 0
-        def hasTargets = (settings?.notifyDevices?.size() ?: 0) > 0 ||
-                         (settings?.pushoverDevices?.size() ?: 0) > 0 ||
-                         (settings?.enablePush == true)
-        def notifyOn   = settings?.enablePush != false
-        def snoozed    = state.notifSnoozedUntil && state.notifSnoozedUntil >= now()
-
-        if (!hasDevices) {
-            section("<b>Cannot Send</b>") {
-                paragraph "⚠️ No monitored devices are selected. Please go back to the main page, select devices, and tap Done before sending a notification."
-            }
-            return
-        }
-        if (!notifyOn) {
-            section("<b>Cannot Send</b>") {
-                paragraph "⚠️ Notifications are turned off. Enable the Notifications toggle on the main page before sending."
-            }
-            return
-        }
-        if (!hasTargets) {
-            section("<b>Cannot Send</b>") {
-                paragraph "⚠️ No notification devices are configured. Add at least one notification device on the main page before sending."
-            }
-            return
-        }
-        if (snoozed) {
-            def hoursLeft = Math.ceil((state.notifSnoozedUntil - now()) / 3600000).toInteger()
-            section("<b>⚠️ Notifications Snoozed</b>") {
-                paragraph "😴 Notifications are currently snoozed for ${hoursLeft}h. This send will bypass the snooze and send immediately."
-            }
-        }
-
-        section("<b>Confirm</b>") {
-            paragraph "This will send a battery summary notification to all configured notification devices right now."
-            input "sendNowConfirm", "bool",
-                  title: "✅ Confirm — send the notification",
-                  defaultValue: false,
-                  submitOnChange: true
-        }
-        if (settings?.sendNowConfirm) {
-            section("<b>Result</b>") {
-                def savedSnooze = state.notifSnoozedUntil
-                state.notifSnoozedUntil = 0
-                scheduledSummary()
-                state.notifSnoozedUntil = savedSnooze
-                app.updateSetting("sendNowConfirm", [value: false, type: "bool"])
-
-                def sentTo = []
-                if (settings?.notifyDevices)   sentTo.addAll(settings.notifyDevices.collect { it.displayName })
-                if (settings?.pushoverDevices) sentTo.addAll(settings.pushoverDevices.collect { "${it.displayName} (Pushover)" })
-
-                if (sentTo) {
-                    paragraph "✅ Notification sent to:\n" + sentTo.collect { "• ${it}" }.join("\n")
-                } else {
-                    paragraph "✅ Notification sent via hub push."
-                }
-            }
-        }
+/** Sends the summary immediately, bypassing snooze. Result shown on the Notifications page. */
+private void sendNotificationNow() {
+    if (!(autoDevices?.size())) {
+        state.sendMsg = [tone: "err", text: "No monitored devices are selected yet."]
+        return
     }
+    def hasTargets = (settings?.notifyDevices?.size() ?: 0) > 0 || (settings?.pushoverDevices?.size() ?: 0) > 0 ||
+                     settings?.enablePush == true
+    if (!hasTargets) {
+        state.sendMsg = [tone: "err", text: "Add at least one notification device first."]
+        return
+    }
+    def savedSnooze = state.notifSnoozedUntil
+    def sent = false
+    try {
+        state.notifSnoozedUntil = 0
+        sent = scheduledSummary() == true
+    } catch (e) {
+        log.warn "Battery Monitor: send now failed: ${e.message}"
+        state.sendMsg = [tone: "err", text: "Sending failed. Check the logs."]
+        return
+    } finally {
+        state.notifSnoozedUntil = savedSnooze
+    }
+    if (!sent) {
+        state.sendMsg = [tone: "warn", text: "Nothing sent. There's nothing to report and <b>Skip when nothing to report</b> is on."]
+        return
+    }
+    def sentTo = []
+    if (settings?.notifyDevices)   sentTo.addAll(settings.notifyDevices.collect { bmEsc(it.displayName) })
+    if (settings?.pushoverDevices) sentTo.addAll(settings.pushoverDevices.collect { "${bmEsc(it.displayName)} (Pushover)".toString() })
+    state.sendMsg = [tone: "ok", text: (sentTo ? "Sent to ${sentTo.join(', ')}." : "Sent via hub push.").toString()]
 }
 
 // ============================================================
@@ -2490,108 +2658,348 @@ def forceScanPage() {
 }
 
 // ============================================================
-// ===================== INFO PAGE ===========================
+// ===================== UI: STATUS BANNER ===================
 // ============================================================
-def infoPage(Map params = [:]) {
-    dynamicPage(name: "infoPage", title: "App Guide & Reference", install: false) {
 
-        section("<b>🌐 Web Portal</b>") {
-            paragraph rawHtml: true, "<div style='background-color:#f8f8f8; border:1px solid #dddddd; border-radius:6px; padding:10px; margin-bottom:4px;'>" +
-                      "Enable OAuth in App Code to unlock the web portal — Cloud and Local URLs appear on the main page once active. " +
-                      "The portal shows all devices sorted by battery level with health, drain, est days, last activity, and battery type. Auto-refreshes every 2 minutes.<br><br>" +
-                      "Add a Link tile to your Hubitat dashboard and paste in your Cloud or Local URL to access it directly.</div>"
+private String bmStatusBannerHtml() {
+    def devs = (autoDevices ?: []).findAll { !isIgnored(it) }
+    if (!devs) return statusBannerHtml(false, "Setup required", "Choose <b>Monitored devices</b> below, then tap <b>Done</b>")
+
+    int low = 0, dead = 0, stale = 0, drain = 0
+    devs.each { d ->
+        try {
+            if (isBatteryDead(d)) { dead++; return }
+            def lvl = d.currentValue("battery")
+            if (lvl != null && lvl.toInteger() <= 25) low++
+            if (isStale(d)) stale++
+            def h = health(d)
+            if ((h == "Poor" || h == "Fair") && getDrain(d) > 1.5) drain++
+        } catch (e) { }
+    }
+    def parts = ["${countText(devs.size(), 'device')} monitored"]
+    if (low)   parts << "${low} low"
+    if (dead)  parts << "${dead} dead"
+    if (drain) parts << "${drain} high drain"
+    if (stale) parts << "${stale} stale"
+    boolean ok = !(low || dead || drain || stale)
+    return statusBannerHtml(ok, ok ? "No issues found" : "Attention needed", parts.join(" &middot; "))
+}
+
+private String statusBannerHtml(boolean ok, String title, String summary) {
+    String tone = ok ? "bg-green-50 border-green-200" : "p-message p-message-warn app-message"
+    String icon = ok ? "pi pi-check-circle text-green-700" : "fa-solid fa-exclamation-triangle text-yellow-700"
+    """
+<style>
+  ${tileSecondaryTextCss()}
+  ${tipsCardCss()}
+  .app-heading { font-size: 16px; }
+  .p-message.app-message { padding: 0.75rem !important; margin: 0; border: 0 !important; }
+  .app-message .text-color-secondary, .app-message .text-blue-700, .app-message .text-yellow-700 { color: inherit !important; }
+  .app-main-support button.hrefElem[name^='_action_href_tips'] { height: 61.5px; padding-bottom: 13.5px; box-sizing: border-box; }
+  ${bmCardsCss()}
+  @media (max-width: 600px) {
+    .bm-banner { flex-wrap: wrap; }
+    .bm-banner > a { margin-left: 44px; }
+  }
+</style>
+<div class='bm-banner flex align-items-center justify-content-between gap-3 ${tone} border-1 border-round p-3'>
+  <div class='flex align-items-center gap-3 min-w-0'>
+    <div class='flex-shrink-0'><i class='${icon} text-2xl' aria-hidden='true'></i></div>
+    <div class='min-w-0'>
+      <div class='app-heading font-semibold'>${title}</div>
+      <div class='text-color-secondary mt-1' style='font-size:14px;'>${summary}</div>
+    </div>
+  </div>
+  <a href='/logs?tab=past&amp;appId=${app.id}' target='_blank' class='text-blue-700 font-semibold white-space-nowrap no-underline'>
+    View logs <i class='fa-regular fa-external-link'></i>
+  </a>
+</div>
+"""
+}
+
+private String countText(int count, String singular) {
+    "${count} ${singular}${count == 1 ? '' : 's'}"
+}
+
+// ============================================================
+// ===================== UI: HELP & SUPPORT ==================
+// ============================================================
+
+/** href must stay named "tips" for tipsCardCss() to style it. */
+private void helpAndSupportSection() {
+    section(title: "<b>Help & Support</b>", sectionClass: "app-main-support") {
+        href name: "tips", title: "<i class='pi pi-info-circle' aria-hidden='true'></i>Tips & Troubleshooting",
+            page: "tipsPage", description: "Colors, health, detection, and known quirks", width: 4, style: "margin:8px;"
+        paragraph rawHtml: true, supportLinkHtml(COMMUNITY_URL, "pi pi-comments",
+            "Hubitat Community Thread", "Questions, feedback, and release notes"), width: 4
+        paragraph rawHtml: true, supportLinkHtml(COFFEE_URL, "fa-solid fa-mug-hot",
+            "Buy Me a Coffee", "Support development"), width: 4
+    }
+}
+
+private void versionFooterSection() {
+    section {
+        paragraph "<div class='text-center text-color-secondary text-xs mt-2'>Battery Monitor v${APP_VERSION}</div>"
+    }
+}
+
+private String supportLinkHtml(String url, String iconClass, String title, String subtitle) {
+    """
+<a href='${url}' target='_blank' rel='noopener noreferrer'
+   class='flex align-items-center gap-3 border-1 border-gray-200 border-round px-3 py-2 text-color no-underline'>
+  <i class='${iconClass} text-blue-700 text-xl flex-shrink-0'></i>
+  <span class='min-w-0'>
+    <span class='block text-blue-700 font-semibold'>${title}</span>
+    <span class='block text-color-secondary mt-1' style='font-size:14px;'>${subtitle}</span>
+  </span>
+</a>
+"""
+}
+
+// ============================================================
+// ===================== UI: TIPS PAGE =======================
+// ============================================================
+
+def tipsPage(params = null) {
+    def topics = tipsTopics()
+    def topic = topics.find { it.id == params?.topic } ?: topics.find { it.id == DEFAULT_TIP_TOPIC } ?: topics[0]
+    int i = topics.indexOf(topic)
+    def next = i + 1 < topics.size() ? topics[i + 1] : null
+    dynamicPage(name: "tipsPage", title: "Tips & Troubleshooting", install: false) {
+        section(sectionClass: "app-tips-index") {
+            paragraph rawHtml: true, tipsStylesHtml()
+            topics.groupBy { it.group }.each { group, entries ->
+                paragraph rawHtml: true, "<div class='app-heading font-semibold mt-2'>${group}</div>"
+                entries.each { entry ->
+                    String selected = entry.id == topic.id ? "app-topic-current" : ""
+                    href name: "tip_${entry.id}",
+                        title: "<span class='${selected}'><i class='pi ${entry.icon} mr-3' aria-hidden='true'></i>${entry.label}</span>",
+                        description: "", page: "tipsPage", params: [topic: entry.id], width: 12, style: "margin:0 8px;"
+                }
+            }
         }
-
-        section("<b>🔑 Battery Level Ranges</b>") {
-            paragraph rawHtml: true, "<div style='background-color:#f8f8f8; border:1px solid #dddddd; border-radius:6px; padding:10px; margin-bottom:4px;'>Battery level colors reflect current charge percentage. " +
-                      "Health ratings use the same color scheme but are based on drain rate — not battery percentage. " +
-                      "A device can show 🟢 Good battery level yet 🔴 Poor health if it is draining unusually fast.<br><br>" +
-                      "<div style='overflow-x:auto; -webkit-overflow-scrolling:touch;'><table style='width:100%; border-collapse: collapse;'>" +
-                      "<tr style='font-weight:bold;'><td>Level</td><td>Range</td><td>Meaning</td></tr>" +
-                      "<tr><td>🟢 Excellent</td><td>100%</td><td>Fully charged</td></tr>" +
-                      "<tr><td>🟢 Good</td><td>71–99%</td><td>Healthy — no action needed</td></tr>" +
-                      "<tr><td>🟠 Fair</td><td>26–70%</td><td>Getting low — keep an eye on it</td></tr>" +
-                      "<tr><td>🔴 Poor</td><td>0–25%</td><td>Replace soon</td></tr>" +
-                      "<tr><td>🪫 Dead</td><td>0% (confirmed)</td><td>Battery confirmed dead — replace immediately</td></tr>" +
-                      "</table></div></div>"
-        }
-
-        section("<b>🔋 Battery Health & Trend</b>") {
-            paragraph rawHtml: true, "<div style='background-color:#f8f8f8; border:1px solid #dddddd; border-radius:6px; padding:10px; margin-bottom:4px;'>" +
-                      "<b>Health</b> is a long-term confidence-weighted average drain rate — slow to change by design. It answers: <i>how efficiently has this battery been used overall?</i><br><br>" +
-                      "<b>Trend</b> reacts faster to recent readings. It answers: <i>what is this battery doing right now?</i><br><br>" +
-                      "In the <b>Health &amp; Trend</b> column:<br>" +
-                      "• When Health and Trend agree, only Health is shown — no noise<br>" +
-                      "• When Trend is <i>worse</i> than Health, a <span style='color:#f97316;font-weight:bold;'>⚠ warning</span> appears alongside Health — this is the most actionable signal, meaning something has recently changed<br><br>" +
-                      "<div style='overflow-x:auto; -webkit-overflow-scrolling:touch;'><table style='width:100%; border-collapse: collapse;'>" +
-                      "<tr style='font-weight:bold;'><td>Health</td><td>Drain/day</td><td>What It Means</td></tr>" +
-                      "<tr><td>⏳ Pending</td><td>—</td><td>Not enough data yet — still learning</td></tr>" +
-                      "<tr><td>🟢 Excellent</td><td>&lt;= 0.3%</td><td>Very efficient, minimal drain</td></tr>" +
-                      "<tr><td>🟢 Good</td><td>0.3–0.8%</td><td>Normal battery usage</td></tr>" +
-                      "<tr><td>🟠 Fair</td><td>0.8–1.5%</td><td>Above average — worth monitoring</td></tr>" +
-                      "<tr><td>🔴 Poor</td><td>&gt; 1.5%</td><td>High drain — notification fires</td></tr>" +
-                      "</table></div><br>" +
-                      "When trend is active it shows as <b>Moderate Drain</b> or <b>Heavy Drain</b> next to the health rating. " +
-                      "Moderate Drain means drain is elevated but not yet at the notification threshold. Heavy Drain means drain is high enough to trigger the High Drain notification.<br><br>" +
-                      "<b>Example:</b> A device showing <b>Good ⚠ Heavy Drain</b> has a solid long-term history but is draining unusually fast right now — worth watching before it becomes Poor.<br><br>" +
-                      "<b>Note:</b> Door locks use higher drain thresholds. Locks showing a Moderate warning are not necessarily a concern unless drain is consistently high.<br><br>" +
-                      "<b>Slow drain devices:</b> Smoke and CO detectors may show 0.00%/day drain. This is normal — they run for 1–3 years on a single set. Est Days is capped at 365; actual life may be longer.</div>"
-        }
-
-        section("<b>⏳ Pending Health & Samples</b>") {
-            paragraph rawHtml: true, "<div style='background-color:#f8f8f8; border:1px solid #dddddd; border-radius:6px; padding:10px; margin-bottom:4px;'>" +
-                      "Health shows ⏳ Pending until enough data is collected. Progress shows inline — for example: <b>⏳ 3/5 samples · 3/5 days</b><br><br>" +
-                      "Requires <b>5 samples</b> and <b>5 days</b> minimum (7 samples for locks, smoke, and CO detectors). " +
-                      "Devices that report infrequently clear Pending automatically after <b>14 days</b> with 2+ samples.<br><br>" +
-                      "<b>Confidence weighting:</b> Early readings carry less weight — by 10 samples the full measured drain is used.</div>"
-        }
-
-        section("<b>🔍 Drain, Estimated Days & Last Battery</b>") {
-            paragraph rawHtml: true, "<div style='background-color:#f8f8f8; border:1px solid #dddddd; border-radius:6px; padding:10px; margin-bottom:4px;'>" +
-                      "Drain = %/day based on the last 10 readings. Est Days = current level ÷ drain, capped at 365.<br><br>" +
-                      "<b>Last Battery</b> shows when the app last received a battery reading — independent of Last Activity.</div>"
-        }
-
-        section("<b>😴 Notification Snooze</b>") {
-            paragraph rawHtml: true, "<div style='background-color:#f8f8f8; border:1px solid #dddddd; border-radius:6px; padding:10px; margin-bottom:4px;'>" +
-                      "Silences all Battery Monitor notifications for a configurable number of days. " +
-                      "Scanning continues normally — only notifications are paused. " +
-                      "Manual Send Notification Now bypasses the snooze. Snooze expires automatically.</div>"
-        }
-
-        section("<b>🔋 Device Battery Management</b>") {
-            paragraph rawHtml: true, "<div style='background-color:#f8f8f8; border:1px solid #dddddd; border-radius:6px; padding:10px; margin-bottom:4px;'>" +
-                      "Assign battery types, log replacements, reset drain history, and view per-device history from the Reports menu.<br><br>" +
-                      "<b>Bulk Actions:</b> Log replacements or reset drain history across multiple devices at once. 60-second cooldown prevents accidental back-to-back runs.<br><br>" +
-                      "<b>Ignored Devices:</b> Excludes a device completely from all reports, notifications, stale checks, health scoring, and the portal. " +
-                      "Removing from the list resets history, logs a <b>Restored (R)</b> entry, and shows <b>Recently Replaced</b> for up to 24 hours.</div>"
-        }
-
-        section("<b>🔄 Force Scan & Replacement Detection</b>") {
-            paragraph rawHtml: true, "<div style='background-color:#f8f8f8; border:1px solid #dddddd; border-radius:6px; padding:10px; margin-bottom:4px;'>" +
-                      "<b>How it works:</b> Batteries only drain naturally — they never recharge on their own. So any significant upward jump in battery level means a new battery was installed. " +
-                      "Battery Monitor watches for these jumps and logs a replacement automatically.<br><br>" +
-                      "<b>Detection rules:</b><br>" +
-                      "• Battery level jumps up by at least the configured minimum (default 30%)<br>" +
-                      "• Jump is confirmed across two consecutive readings within 48 hours<br>" +
-                      "• Device has 3+ prior drain samples and is 3+ days old<br>" +
-                      "• 12-hour cooldown prevents duplicate detections<br><br>" +
-                      "A single spurious spike will not log a replacement — the two-reading confirmation catches noisy devices. " +
-                      "The minimum jump % is configurable under <b>🔋 Device Battery Management → Auto-Detection Settings</b>.<br><br>" +
-                      "<b>Manual logging</b> is still available in Device Actions for edge cases: integrated batteries, " +
-                      "unreliable reporters, or replacements you want to back-date.<br><br>" +
-                      "<b>Force Scan</b> reads all battery levels immediately. A new drain sample only records if the level has changed since the last reading.</div>"
-        }
-
-        section("<b>💡 Tips for Best Results</b>") {
-            paragraph rawHtml: true, "<div style='background-color:#f8f8f8; border:1px solid #dddddd; border-radius:6px; padding:10px; margin-bottom:4px;'>" +
-                      "• Let new batteries run at least a week before trusting health ratings<br>" +
-                      "• Assign battery types in 🔋 Device Battery Management — used in notifications and the portal<br>" +
-                      "• After replacing a battery, log it in 🔋 Device Battery Management or use Bulk Actions for multiple devices<br>" +
-                      "• Auto-detection logs replacements for any upward battery jump ≥ your configured minimum % (default 30%) confirmed across two readings<br>• If a replacement isn't auto-detected, log it manually in Device Actions — useful for integrated batteries or unreliable reporters<br>" +
-                      "• Use Ignored Devices for spare or storage devices you don't want to monitor<br>" +
-                      "• Use Reset Drain History if a device shows incorrect Heavy Drain after first install<br>" +
-                      "• Use Notification Snooze when traveling</div>"
+        section(sectionClass: "app-tips-article") {
+            paragraph rawHtml: true, tipsArticleHtml(topic)
+            if (topic.append) {
+                def extra = topics.find { it.id == topic.append }
+                if (extra) paragraph rawHtml: true, tipsArticleHtml(extra)
+            }
+            if (next) {
+                href name: "nextTip", title: "<span class='text-blue-700'>${next.label}</span>",
+                    description: "Next topic", page: "tipsPage", params: [topic: next.id], width: 12, style: "margin:8px;"
+            }
         }
     }
+}
+
+private List tipsTopics() {
+    [
+        // ---------- Getting started ----------
+        [id: "best", label: "Tips for best results", title: "Tips for best results", group: "Getting started", icon: "pi-star",
+            body: "<p>A few habits that make ratings more accurate and notifications more useful.</p>",
+            checklist: [
+                [title: "Give new batteries a week", detail: "Health ratings need time to learn before they can be trusted."],
+                [title: "Assign battery types", detail: "Used in notifications, the portal, and history, and they set Li-ion cliff detection defaults."],
+                [title: "Log replacements that aren't auto-detected", detail: "Use Device Actions for integrated batteries or unreliable reporters."],
+                [title: "Ignore spare or stored devices", detail: "Keeps them out of reports without removing them from Hubitat."],
+                [title: "Reset drain history after a bad start", detail: "Useful if a device shows Heavy Drain right after first install."],
+                [title: "Snooze notifications when traveling", detail: "Scanning continues; only notifications pause."]
+            ]],
+        [id: "pending", label: "How health is learned", title: "Pending health and samples", group: "Getting started", icon: "pi-hourglass",
+            body: "<p>Health shows <b>Pending</b> until enough data is collected. Progress shows inline, for example " +
+                "<b>3/5 samples &middot; 3/5 days</b>.</p>" +
+                "<p>Requires <b>5 samples</b> and <b>5 days</b> minimum (<b>7 samples</b> for locks, smoke, and CO detectors). " +
+                "Devices that report infrequently clear Pending automatically after <b>14 days</b> with 2 or more samples.</p>" +
+                "<p><b>Confidence weighting:</b> early readings carry less weight, and the full measured drain is used from 5 samples on.</p>"],
+
+        // ---------- Reading the report ----------
+        [id: "levels", label: "Battery levels", title: "Battery level ranges", group: "Reading the report", icon: "pi-bolt",
+            body: "<p>Level colors reflect current charge. Health uses the same colors but is based on drain rate, not percentage, " +
+                "so a device can show a Good level and Poor health if it's draining unusually fast.</p>" +
+                "<table><tr><td><b>Excellent</b></td><td>100%</td><td>Fully charged</td></tr>" +
+                "<tr><td><b>Good</b></td><td>71&ndash;99%</td><td>Healthy, no action needed</td></tr>" +
+                "<tr><td><b>Fair</b></td><td>26&ndash;70%</td><td>Getting low, keep an eye on it</td></tr>" +
+                "<tr><td><b>Poor</b></td><td>0&ndash;25%</td><td>Replace soon</td></tr>" +
+                "<tr><td><b>Dead</b></td><td>0% (confirmed)</td><td>Confirmed dead after 3 consecutive readings, replace now</td></tr></table>"],
+        [id: "health", label: "Health and trend", title: "Battery health and trend", group: "Reading the report", icon: "pi-heart",
+            body: "<p><b>Health</b> is a long-term, confidence-weighted drain average and changes slowly by design. " +
+                "<b>Trend</b> reacts faster and shows what the battery is doing right now.</p>" +
+                "<p>When they agree, only Health is shown. When Trend is <i>worse</i> than Health, a warning appears next to it. " +
+                "That's the most actionable signal, meaning something recently changed.</p>" +
+                "<table><tr><td><b>Pending</b></td><td>&mdash;</td><td>Still learning</td></tr>" +
+                "<tr><td><b>Excellent</b></td><td>under 0.3%/day</td><td>Minimal drain</td></tr>" +
+                "<tr><td><b>Good</b></td><td>0.3&ndash;0.8%/day</td><td>Normal usage</td></tr>" +
+                "<tr><td><b>Fair</b></td><td>0.8&ndash;1.5%/day</td><td>Above average, worth watching</td></tr>" +
+                "<tr><td><b>Poor</b></td><td>over 1.5%/day</td><td>High drain, notification fires</td></tr></table>" +
+                "<p><b>Example:</b> <i>Good, Heavy Drain</i> means a solid history but unusually fast drain right now.</p>" +
+                "<p>Locks use higher drain thresholds, so a Moderate lock warning isn't necessarily a concern. " +
+                "Smoke and CO detectors often show <b>&lt;0.01%/day</b>, meaning very slow drain. That's normal.</p>" +
+                "<p><b>Li-ion note:</b> health and trend are long-term averages and aren't built to catch a sudden end-of-life crash. See <b>Li-ion cliff alerts</b>.</p>"],
+        [id: "drain", label: "Drain and estimates", title: "Drain, estimated life, and last seen", group: "Reading the report", icon: "pi-chart-line",
+            body: "<p><b>Drain</b> is %/day based on the last 10 readings. <b>Est Days</b> is current level divided by drain, capped at 365.</p>" +
+                "<p><b>Last seen</b> is the device's last activity of any kind. Past the stale threshold (default 24 hours, set under Scan interval) it's marked <b>Stale</b>.</p>" +
+                "<p><b>Force Scan</b> reads all levels immediately. A new drain sample is only recorded when the level has changed.</p>"],
+
+        // ---------- Replacements ----------
+        [id: "detection", label: "Replacement detection", title: "Automatic replacement detection", group: "Replacements", icon: "pi-sync",
+            body: "<p>Batteries only drain on their own, so a significant upward jump means a new battery was installed. " +
+                "Battery Monitor watches for these jumps and logs the replacement automatically.</p>",
+            checklist: [
+                [title: "Jump meets the minimum", detail: "Default 30%, set under Device management, Auto-detection."],
+                [title: "Confirmed by a second reading", detail: "Must hold within 48 hours, so a single spike isn't logged."],
+                [title: "Enough history", detail: "Device needs 3+ drain samples and must be at least 3 days old, unless the old battery was near empty (5% or below)."],
+                [title: "Cooldown", detail: "12 hours between detections prevents duplicates."]
+            ],
+            warning: "<b>Setting the minimum below 15% can cause false positives.</b><br>25&ndash;30% works well for most setups."],
+        [id: "manage", label: "Device management", title: "Device battery management", group: "Replacements", icon: "pi-cog",
+            body: "<p>Assign battery types, log replacements, reset drain history, and view per-device history from " +
+                "<b>Device Battery Management</b>.</p>" +
+                "<p><b>Bulk Actions</b> apply to several devices at once, with a 60-second cooldown to prevent accidental repeats.</p>" +
+                "<p><b>Ignored devices</b> are excluded from reports, notifications, stale checks, health scoring, and the portal. " +
+                "Restoring one resets its history, logs a <b>Restored</b> entry, and shows Recently Replaced for up to 24 hours.</p>"],
+
+        // ---------- Notifications ----------
+        [id: "snooze", label: "Notification snooze", title: "Notification snooze", group: "Notifications", icon: "pi-bell-slash",
+            body: "<p>Silences all Battery Monitor notifications for a set number of days. Scanning continues; only notifications pause. " +
+                "Find it at the bottom of the Notifications page. It expires automatically, and <b>Send now</b> bypasses it.</p>" +
+                "<p>Li-ion cliff alerts bypass snooze by default. Change this under Device management, Auto-detection.</p>"],
+        [id: "cliff", label: "Li-ion cliff alerts", title: "Li-ion cliff-drop alerts", group: "Notifications", icon: "pi-bolt",
+            body: "<p>Li-ion rechargeable cells hold a flat charge for most of their life, then fail suddenly, sometimes dropping from a healthy level to near-dead within hours. " +
+                "A Li-ion cell can look Excellent right up until the cliff. That's the chemistry, not a bug.</p>" +
+                "<p>Cliff detection compares two <i>consecutive</i> readings, regardless of how far apart they were taken. If the drop meets the threshold (default 40%), " +
+                "an urgent alert fires right away, separate from the scheduled summary.</p>",
+            checklist: [
+                [title: "LIR types: on automatically", detail: "LIR2016, LIR2032, LIR2430, and LIR2450 are always Li-ion."],
+                [title: "18650, RCR123A, RCR2: off until confirmed", detail: "These are size labels; LiFePO4 cells come in the same sizes."],
+                [title: "Any other type: available", detail: "Turn it on for a custom Li-ion cell under Other."],
+                [title: "Set per device", detail: "On the Battery Types or Device Actions page. Changing a device's type resets its switch to that type's default."]
+            ],
+            warning: "<b>Assign the correct battery type first.</b><br>Cliff detection defaults come entirely from that assignment."],
+        [id: "thresholds", label: "Level thresholds", title: "Why Poor and Fair thresholds are fixed", group: "Notifications", icon: "pi-sliders-h",
+            body: "<p>The Poor (25% and below) and Fair (26&ndash;70%) cutoffs aren't adjustable. They drive the color coding, " +
+                "report grouping, notifications, and portal counts across the whole app, so changing them in one place would make those disagree.</p>" +
+                "<p>If a device consistently reports low or drops faster than expected, the cause is usually the device, its driver, " +
+                "or the battery chemistry rather than the threshold. See <b>Readings look wrong</b>.</p>"],
+
+        // ---------- Web portal ----------
+        [id: "portal", label: "Web portal", title: "Battery web portal", group: "Web portal", icon: "pi-globe",
+            body: "<p>Shows every device sorted by battery level, with health, drain, estimated days, last activity, and battery type. " +
+                "Auto-refreshes every 2 minutes.</p>" +
+                "<p>Once OAuth is enabled, Cloud and Local URLs appear on the <b>Web portal</b> settings page. Add a Link tile to a Hubitat dashboard " +
+                "and paste in either URL for one-tap access.</p>",
+            checklist: [
+                [title: "Open Apps Code", detail: "Find Battery Monitor 2.0 in the list."],
+                [title: "Enable OAuth", detail: "OAuth (top right), then Enable OAuth in App, then Update."],
+                [title: "Return and tap Done", detail: "The links appear under Settings, Web portal."]
+            ]],
+
+        // ---------- Troubleshooting ----------
+        [id: "readings", label: "Readings look wrong", title: "When battery readings look wrong", group: "Troubleshooting", icon: "pi-exclamation-triangle",
+            body: "<p>Battery Monitor reports what each device sends. Before assuming an app issue, check the source.</p>",
+            checklist: [
+                [title: "Driver", detail: "Some drivers report battery infrequently, round heavily, or estimate from voltage."],
+                [title: "Battery chemistry", detail: "Rechargeable cells run at a different voltage than alkaline or lithium, so some devices misread them."],
+                [title: "Device reporting", detail: "Check the device's own page for how often it sends battery events."]
+            ],
+            warning: "<b>Rechargeable lithium cells can hold near-full, then drop quickly.</b><br>A sudden fall after weeks of stable readings is often the chemistry, not the app. Turn on cliff detection for those devices."],
+        [id: "logging", label: "Scan logging", title: "Scan messages in the logs", group: "Troubleshooting", icon: "pi-file",
+            body: "<p>Each scheduled scan logs a <b>scan started</b> and <b>scan complete</b> line at info level. This is intentional, " +
+                "so you can confirm scans are running without turning on debug logging.</p>" +
+                "<p><b>Debug logging</b> (the toggle at the bottom of the main page) adds step-by-step detail and turns itself off after 30 minutes.</p>"]
+    ]
+}
+
+private String tipsArticleHtml(Map topic) {
+    String extra = ""
+    if (topic.checklist) {
+        extra += "<div class='border-1 border-gray-200 border-round p-3 mb-3'>" + topic.checklist.collect { item ->
+            "<div class='flex align-items-center gap-3 py-2'><i class='pi pi-check-circle text-blue-700 text-xl' aria-hidden='true'></i>" +
+            "<div><div class='font-semibold'>${item.title}</div><div class='text-sm text-color-secondary'>${item.detail}</div></div></div>"
+        }.join("") + "</div>"
+    }
+    if (topic.warning) extra += warningMessageHtml(topic.warning)
+    """
+<article class='app-tip-card'>
+  <div class='app-tip-card-header flex align-items-center gap-3'>
+    <i class='pi ${topic.icon} text-blue-700 text-xl' aria-hidden='true'></i>
+    <h4 class='app-heading font-semibold m-0'>${topic.title}</h4>
+  </div>
+  <div class='app-tip-copy'>${topic.body}${extra}</div>
+</article>
+"""
+}
+
+private String tipsStylesHtml() {
+    """
+<style>
+  ${appPageSpacingCss()}
+  .app-tips-index { float: left; width: calc(27% - 8px); box-sizing: border-box; }
+  .app-tips-article { float: right; width: 73%; border-left: 1px solid #e0e0e0; padding-left: 8px; box-sizing: border-box; }
+  .app-tips-index > .mdl-grid, .app-tips-article > .mdl-grid { padding: 4px 0 !important; }
+  .app-tips-index .mdl-cell:has(> style) { display: none; }
+  .app-tips-index button.hrefElem {
+    background: transparent; box-shadow: none; border: 0; border-left: 3px solid transparent;
+    border-radius: 0; padding: 9px 10px; font-family: inherit; font-size: 16px; color: #1565c0;
+  }
+  .app-tips-index button.hrefElem::before { display: none; }
+  .app-tips-index button.hrefElem:has(.app-topic-current) { background: #eaf2fc; border-left-color: #1565c0; font-weight: 600; }
+  .app-tips-index button.hrefElem:hover { background: #f3f6fa; }
+  .app-tips-index button.hrefElem:focus-visible { outline: 2px solid #1565c0; outline-offset: 2px; }
+  .app-tip-card { border: 1px solid #dfe3e8; border-radius: 4px; overflow: hidden; margin-bottom: 12px; }
+  .app-tip-card-header { padding: 16px; background: #f5f7fa; border-bottom: 1px solid #e4e7ec; }
+  .app-tip-copy { padding: 16px; line-height: 1.55; overflow-wrap: anywhere; }
+  .app-tip-copy p { margin: 0 0 16px; }
+  .app-tip-copy p:last-child { margin-bottom: 0; }
+  .app-tip-copy table { width: 100%; border-collapse: collapse; margin: 0 0 16px; }
+  .app-tip-copy td { padding: 6px 8px; border-bottom: 1px solid #e4e7ec; }
+  .app-tips-article button.hrefElem { background: #fff; box-shadow: none; border: 1px solid #dfe3e8; border-radius: 4px; font-family: inherit; }
+  .app-tips-article button.hrefElem::before { color: #1565c0; }
+  #formApp:has(.app-tips-index) #fieldsetAppButtons { clear: both; }
+  @media (max-width: 1000px) {
+    .app-tips-index, .app-tips-article { float: none; width: 100%; padding: 0; border-left: 0; }
+    .app-tips-index > .mdl-grid { max-height: 260px; overflow-y: auto; border-bottom: 1px solid #e0e0e0; }
+  }
+</style>
+"""
+}
+
+// ============================================================
+// ===================== UI: SHARED STYLES ===================
+// ============================================================
+
+private String warningMessageHtml(String content, String extraClasses = "") {
+    "<div class='p-message p-message-warn app-message flex align-items-center gap-2 ${extraClasses}'>" +
+        "<div class='flex-shrink-0'><i class='fa-solid fa-exclamation-triangle text-xl' aria-hidden='true'></i></div>" +
+        "<div class='min-w-0 flex-1'>${content}</div></div>"
+}
+
+private String appPageSpacingCss() {
+    """
+  ${tileSecondaryTextCss()}
+  .app-heading { font-size: 16px; }
+  .p-message.app-message { padding: 0.75rem !important; margin: 0; border: 0 !important; }
+  .app-message .text-color-secondary, .app-message .text-blue-700, .app-message .text-yellow-700 { color: inherit !important; }
+  div.panel-body { padding: 0 !important; margin-left: -0.5em; margin-right: -0.5em; }
+  fieldset#fieldsetAppButtons { margin-left: 0.5em; margin-right: 0.5em; }
+"""
+}
+
+private String tileSecondaryTextCss() {
+    "#formApp .hrefElem > .state-incomplete-text, #formApp .hrefElem > .state-complete-text { font-size: 14px !important; }"
+}
+
+private String tipsCardCss() {
+    """
+  button.hrefElem[name^='_action_href_tips'] {
+    position: relative; background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; box-shadow: none;
+    color: #333; height: 56px; font-family: inherit; font-size: 16px; font-weight: 500; line-height: 1.4;
+    padding: 8px 28px 8px 46px;
+  }
+  button.hrefElem[name^='_action_href_tips'] > span:first-child { color: #1565c0; font-weight: 600; font-size: 16px !important; }
+  button.hrefElem[name^='_action_href_tips'] > span.state-incomplete-text { color: #777; font-size: 14px; font-weight: 500; line-height: 1.4; }
+  button.hrefElem[name^='_action_href_tips'] i.pi {
+    position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: #1565c0; font-size: 20px;
+  }
+  button.hrefElem[name^='_action_href_tips']::before { color: #1565c0; }
+"""
 }
