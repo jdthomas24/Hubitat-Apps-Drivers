@@ -1,6 +1,6 @@
 {
     "packageName": "Reolink Integration",
-    "releaseNotes": "v1.6.3: Fixes constant reconnects from 1.6.2 and bridges not reconnecting after a hub reboot. Much quieter connection logging. After updating, open the app and click Done once.",
+    "releaseNotes": "v1.6.4: Stuck or given-up event connections now recover automatically. Offline warnings log once per outage. After updating, open the app and click Done once.v1.6.3: Fixes constant reconnects from 1.6.2 and bridges not reconnecting after a hub reboot. Much quieter connection logging. After updating, open the app and click Done once.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "communityLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "author": "jdthomas24",
