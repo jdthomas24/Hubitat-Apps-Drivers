@@ -11,6 +11,8 @@
  * data, so quiet switches that answer a refresh without creating an event are no longer flagged.
  * These devices now need 3 unanswered checks in a row before Offline, never elapsed time alone.
  * Optional hub login for Hub Login Security. New tip: Z-Wave controller check.
+ * Beta 2: hub radio check now runs before the state-event check, so a "State verified" device
+ * that stays Poor still gets confirmed and restored.
  * v1.6.0 -- Major UI refresh (Reolink/Battery Monitor pattern): status banner, Reports
  * cards, settings list with live values, Summary with Needs attention, Issues only,
  * search and built-in sort (no DataTables CDN), phone layouts, remote-friendly device
@@ -1763,29 +1765,8 @@ def updateHealth(device, boolean allowProbe = true) {
 
     if (state.verifying == null) state.verifying = [:]
 
-    if (getStateVerified(id as String)) {
-        state.verifying[id] = "state_verified"
-        log.info "Device Health Monitor: ${currentHealth} — ${device.displayName} self-verified via state change event (no ping needed)"
-        def capMapSV  = state.deviceCapabilities ?: [:]
-        def capDataSV = capMapSV[id as String] ?: [:]
-        if (capDataSV.pingTrustSource == "weak" || capDataSV.weakTrustFirstGranted || capDataSV.weakTrustCooldownUntil) {
-            capDataSV.pingTrustSource        = "confirmed"
-            capDataSV.weakTrustFirstGranted  = null
-            capDataSV.weakTrustCooldownUntil = null
-            capMapSV[id as String] = capDataSV
-            state.deviceCapabilities = capMapSV
-        }
-        if (data?.samples?.size() > 0) {
-            data.samples.remove(data.samples.size() - 1)
-            if (data.samples.size() >= 3) {
-                data.avgInterval = (data.samples.sum() / data.samples.size()).toBigDecimal().setScale(2, BigDecimal.ROUND_HALF_UP)
-            }
-            state.history[id] = data
-        }
-        return
-    }
-
-    // v1.7.0: confirm through the hub radio instead of trusting that refresh didn't throw
+    // v1.7.0: confirm through the hub radio instead of trusting that refresh didn't throw.
+    // Runs before the state-event check, which can mark a device verified yet leave it Poor.
     if (zwOk && device.hasCommand("refresh")) {
         if (!allowProbe) return
         def capMapZ  = state.deviceCapabilities ?: [:]
@@ -1805,6 +1786,28 @@ def updateHealth(device, boolean allowProbe = true) {
         }
         capMapZ[id as String] = capDataZ
         state.deviceCapabilities = capMapZ
+        return
+    }
+
+    if (getStateVerified(id as String)) {
+        state.verifying[id] = "state_verified"
+        log.info "Device Health Monitor: ${currentHealth} — ${device.displayName} self-verified via state change event (no ping needed)"
+        def capMapSV  = state.deviceCapabilities ?: [:]
+        def capDataSV = capMapSV[id as String] ?: [:]
+        if (capDataSV.pingTrustSource == "weak" || capDataSV.weakTrustFirstGranted || capDataSV.weakTrustCooldownUntil) {
+            capDataSV.pingTrustSource        = "confirmed"
+            capDataSV.weakTrustFirstGranted  = null
+            capDataSV.weakTrustCooldownUntil = null
+            capMapSV[id as String] = capDataSV
+            state.deviceCapabilities = capMapSV
+        }
+        if (data?.samples?.size() > 0) {
+            data.samples.remove(data.samples.size() - 1)
+            if (data.samples.size() >= 3) {
+                data.avgInterval = (data.samples.sum() / data.samples.size()).toBigDecimal().setScale(2, BigDecimal.ROUND_HALF_UP)
+            }
+            state.history[id] = data
+        }
         return
     }
 
