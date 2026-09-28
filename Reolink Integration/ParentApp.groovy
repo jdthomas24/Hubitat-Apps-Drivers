@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.6.2
+ * Version: 1.6.3
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -19,6 +19,19 @@
  * in-app Tips page, not duplicated here. TODO markers mark spots needing
  * exact command/param names verified against firmware (field names can
  * drift by version). Full history prior to 1.3.6 is in GitHub commit history.
+ *
+ * v1.6.3 -- Connection and logging fixes (watchdog regression fix is in
+ * ReolinkDeviceBridge.groovy):
+ *  - After a hub reboot the saved "connected" status survived but the socket
+ *    didn't, so ensureSourceBridge() skipped the restart and the bridge sat
+ *    silent while showing online (likely the original 5-day outage). Reboot
+ *    now clears saved connection modes, and "connected" is confirmed against
+ *    the bridge's live traffic before a restart is skipped.
+ *  - Log level is pushed to each bridge (setLogRank) so suppressed bridge
+ *    logging never makes the cross-device call. Per-status connection
+ *    changes log at Full; offline/back-online transitions come from the bridge.
+ *  - singleInstance and installOnOpen set (gopher.ny).
+ *  - Tips: many standalone cameras are better served by an NVR/Home Hub.
  *
  * v1.6.2 -- Scheduler ticks every 1s only while a source needs polling,
  * otherwise every IDLE_TICK_SEC (30s), and skips unchanged state writes.
@@ -216,7 +229,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.6.2"
+@Field static final String APP_VERSION = "1.6.3"
 
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 
@@ -236,7 +249,7 @@ definition(
 // v1.5.3: how stale a source's event connection can look (per the bridge's
 // own isEventConnectionStale() liveness check) before the app-level audit
 // job (auditEventConnections()) force-reconnects it. Deliberately looser
-// than the bridge's own internal 90s watchdog threshold (STALE_CONNECTION_
+// than the bridge's own internal 180s watchdog threshold (STALE_CONNECTION_
 // THRESHOLD_SEC in ReolinkDeviceBridge.groovy) -- this audit exists to
 // catch the case where that first-layer watchdog itself silently stops
 // running, not to compete with it on timing.
@@ -334,6 +347,8 @@ def mainPage() {
     state.remove("editSourceId")
     app.removeSetting("editPass")
     state.remove("pendingSourceRemoval")
+    // v1.6.3: keep each bridge's cached log level in sync with this setting.
+    if (state.pushedLogLevel != (logLevel ?: "Errors Only")) pushLogRankToBridges()
     if (newLabel && newHost && newUser && newPass) {
         addSource()
         // FIXED (2026-08-17): newPort and newIsHub were never cleared here,
@@ -807,7 +822,10 @@ private List tipsTopics() {
                 "logging) every time the hub restarts or the app re-initializes, before eventually giving up " +
                 "and polling anyway. If you already know a source falls into this category, turning this off " +
                 "skips that runway entirely and goes straight to polling -- a convenience, not a different " +
-                "outcome, since it lands in the same place either way.") + "</p>"
+                "outcome, since it lands in the same place either way.") + "</p>",
+                "<p>" + ("<b>Many standalone cameras:</b> each standalone camera keeps its own live " +
+                "connection to the hub. Past roughly 10, an NVR or Home Hub is the better setup: one " +
+                "connection and one login cover every channel.") + "</p>"
             ].join("")],
         [id: "sleep", label: "Sleep status", title: "Awake and asleep", group: "Devices & connections", icon: "pi-moon",
             body: [
@@ -2888,10 +2906,15 @@ def ensureSourceBridge(sourceId) {
     // with state.sources, independent of whether the subscription is
     // actually wanted right now.
     bridge.configureConnection(src.host, BAICHUAN_PORT, src.username, src.password, sourceId as Integer)
+    try { bridge.setLogRank(logLevelRank()) } catch (e) { /* older bridge driver */ }
 
     def wantEvent = settings["useEventSubscription_${sourceId}"] != false  // default true
     def currentStatus = state.sourceConnMode?.get(sourceId.toString())
     def currentlyRunning = currentStatus in ["connected", "connecting", "reconnecting"]
+    // v1.6.3: a saved "connected" can outlive its socket (reboot, driver reload).
+    if (currentStatus == "connected") {
+        try { currentlyRunning = bridge.isEventConnectionAlive() } catch (e) { /* older bridge driver */ }
+    }
     if (wantEvent && !currentlyRunning) {
         bridge.startEventSubscription()
         logNormal "Reolink source ${sourceId}: event subscription starting"
@@ -2911,7 +2934,7 @@ def componentEventConnectionStatus(child, sourceId, String status) {
     map[key] = status
     state.sourceConnMode = map
     if (prev != status) {
-        logNormal "Reolink source ${sourceId}: event connection ${status}"
+        logFull "Reolink source ${sourceId}: event connection ${status}"
     }
     if (status != "connected") {
         // Falling back to polling -- mark this source's children due
@@ -3147,6 +3170,8 @@ def uninstalled() {
  */
 def systemStartHandler(evt) {
     logNormal "Reolink Integration: hub restarted, resuming polling"
+    // v1.6.3: sockets don't survive a reboot; saved connection modes must not either.
+    state.remove("sourceConnMode")
     initialize()
 }
 
@@ -3258,6 +3283,7 @@ private void runMigrations() {
 /** Auto-reverts Full back to Errors Only after 60 minutes -- Full is meant for actively chasing something, not a steady state. Reverting to Errors Only (not Normal) matches this app's actual default, so a forgotten Full session doesn't leave routine logging elevated indefinitely. */
 def revertToNormalLogging() {
     app.updateSetting("logLevel", [type: "enum", value: "Errors Only"])
+    pushLogRankToBridges(0)
     log.info "Reolink Integration: log level auto-reverted from Full to Errors Only after 60 minutes"
 }
 
@@ -4081,6 +4107,15 @@ def componentBridgeButtonPushed(child, sourceId, Integer btn) {
 }
 
 // ---------- Logging ----------
+
+/** v1.6.3: pushes the log rank to every bridge so they skip suppressed messages locally. */
+private void pushLogRankToBridges(Integer rank = null) {
+    int r = rank != null ? rank : logLevelRank()
+    (state.sources ?: []).each { src ->
+        try { getSourceBridge(src.id)?.setLogRank(r) } catch (e) { /* older bridge driver */ }
+    }
+    state.pushedLogLevel = LOG_LEVELS[r]
+}
 
 /** Rank of the current logLevel setting within LOG_LEVELS (0=Errors Only, 1=Normal, 2=Full). Defaults to Normal if unset/unrecognized. */
 private int logLevelRank() {
