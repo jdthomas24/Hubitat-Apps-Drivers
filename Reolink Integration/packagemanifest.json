@@ -1,6 +1,6 @@
 {
     "packageName": "Reolink Integration",
-    "releaseNotes": "v1.6.2: Fixes excessive hub load from the scheduler on installs with many standalone sources, and false event-connection reconnects.v1.6.1 adds RTSP live video for cameras and doorbells (supported hubs only) and a redesigned app UI, contributed by gopher.ny. This is the version Hubitat is adopting as its built-in Reolink integration.",
+    "releaseNotes": "v1.6.3: Fixes constant reconnects from 1.6.2 and bridges not reconnecting after a hub reboot. Much quieter connection logging. After updating, open the app and click Done once.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "communityLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "author": "jdthomas24",
