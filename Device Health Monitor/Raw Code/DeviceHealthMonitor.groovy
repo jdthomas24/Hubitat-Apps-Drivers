@@ -1,12 +1,24 @@
 /**
  * Device Health Monitor
- * Version: 1.6.0
+ * Version: 1.7.0
  *
  * Learns each device's normal check-in pattern and flags devices that go quiet, across
  * Zigbee, Z-Wave, Matter, Hub Mesh, LAN, Virtual and Hub Variable. Verifies Poor/Offline
- * devices by state events, refresh/ping, or Hue Bridge / Konnected Panel round-trips.
- * Optional OAuth web portal.
+ * devices by state events, refresh/ping, the hub's Z-Wave and Zigbee radio data, or Hue Bridge /
+ * Konnected Panel round-trips. Optional OAuth web portal.
  *
+ * v1.7.0 -- Hub radio check. DHM reads the hub's own Z-Wave and Zigbee radio data, so quiet devices
+ * that answer without creating events are no longer flagged Offline.
+ * Z-Wave: mains devices are checked with a refresh sent through one paced queue (about one per second),
+ * then confirmed in the hub radio data. 3 unanswered checks in a row means Offline, whatever timing says.
+ * Zigbee: radio messages count as activity for every device, battery included. Mains Zigbee devices (no
+ * Battery capability) also get the same probe and 3-miss rule as mains Z-Wave.
+ * New General page (scanning, hub radio status and login, app name). Check with hub radio button in
+ * Device actions. Deep verification covers every unconfirmed mains device, warns against
+ * back-to-back runs, and lists devices that didn't answer. Deep verification moved to the Verification page.
+ * Locations page rebuilt as two panes (list with device counts, pick one to rename, remove, or see its
+ * devices). Renaming a location now moves its devices with it; removing one unassigns them.
+ * Fixed: a "State verified" device could stay Poor indefinitely.
  * v1.6.0 -- Major UI refresh (Reolink/Battery Monitor pattern): status banner, Reports
  * cards, settings list with live values, Summary with Needs attention, Issues only,
  * search and built-in sort (no DataTables CDN), phone layouts, remote-friendly device
@@ -40,15 +52,18 @@ definition(
     importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Device%20Health%20Monitor/Raw%20Code/DeviceHealthMonitor.groovy",
     iconUrl: "",
     iconX2Url: "",
-    version: "1.6.0",
+    version: "1.7.0",
     doNotFocus: true,
     oauth: true
 )
 
-@Field static final String APP_VERSION = "1.6.0"
+@Field static final String APP_VERSION = "1.7.0"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/release-device-health-monitor/163229"
 @Field static final String COFFEE_URL = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "best"
+@Field static final int ZW_MISS_LIMIT = 3
+@Field static final int ZW_PACE_MS = 1000
+@Field static final long DEEP_RECENT_MS = 30L * 60 * 1000
 
 // ============================================================
 // ===================== OAUTH MAPPINGS ======================
@@ -72,7 +87,6 @@ preferences {
     page(name: "deepScanPage")
     page(name: "locationsPage")
     page(name: "portalPage")
-    page(name: "appNamePage")
     page(name: "summaryPage")
     page(name: "verificationPage")
     page(name: "deviceManagePage")
@@ -110,6 +124,7 @@ def updated() {
     }
     state.remove("lastBulkLoc")
 
+    syncLocationSlots()
     initialize()
     runIn(1800, disableDebugLogging)
 }
@@ -126,6 +141,11 @@ def initialize() {
     state.scanStartTime = null
     state.scanQueue     = []
     state.tempResults   = []
+    state.remove("zwPending")
+    atomicState.zwQueue    = []
+    atomicState.zwPending  = [:]
+    atomicState.zwDraining = false
+    if (state.deepScanRunning) state.deepScanRunning = false
     if (state.deviceCapabilities  == null) state.deviceCapabilities  = [:]
     if (state.deepScanResult      == null) state.deepScanResult      = [:]
     if (state.dropHistory         == null) state.dropHistory         = [:]
@@ -461,6 +481,225 @@ def isQuietVerified(deviceId) {
 // v1.5.9: weak (refresh/ping didn't throw) trust is capped at 2x the Offline Threshold
 def getWeakTrustCeilingMs() {
     return ((settings?.offlineThresholdHours ?: 168) * 3600000L) * 2
+}
+
+// ============================================================
+// ===================== Z-WAVE CONTROLLER CHECK =============
+// ============================================================
+// v1.7.0: the hub radio records each node's last reply, even when the driver drops a duplicate report
+private String hubCookie() {
+    if (!settings?.hubSecurity) return null
+    String cookie
+    try {
+        httpPost([uri: "http://127.0.0.1:8080", path: "/login",
+                  requestContentType: "application/x-www-form-urlencoded",
+                  body: [username: settings.hubUser, password: settings.hubPass, submit: "Login"],
+                  followRedirects: false, textParser: true, timeout: 15]) { resp ->
+            resp.headers?.each { h ->
+                if (!cookie && h.name?.equalsIgnoreCase("Set-Cookie")) cookie = h.value?.split(";")?.getAt(0)
+            }
+        }
+    } catch (e) { log.warn "Device Health Monitor: hub login failed (${e.message})" }
+    return cookie
+}
+
+/** Caches [deviceId: [h: last heard ms, l: probeable]] from the hub's Z-Wave details. */
+private Map zwRefreshNodeCache() {
+    Map out = [:]
+    Map params = [uri: "http://127.0.0.1:8080", path: "/hub/zwaveDetails/json",
+                  contentType: "application/json", timeout: 20]
+    String ck = hubCookie()
+    if (ck) params.headers = [Cookie: ck]
+    try {
+        httpGet(params) { resp ->
+            def nodes = resp.data?.nodes
+            if (!(nodes instanceof List)) return
+            nodes.each { n ->
+                if (n?.deviceId == null) return
+                out[n.deviceId as String] = [h: zwParseTime(n.lastTime), l: (n.listening == true || n.beaming == true)]
+            }
+        }
+    } catch (e) {
+        if (debugEnabled()) log.debug "Z-Wave details read failed: ${e.message}"
+    }
+    if (out) state.remove("zwDataIssue") else state.zwDataIssue = true
+    state.zwNodes = out
+    return out
+}
+
+/** Caches [deviceId: [h: last radio message ms]] from the hub's Zigbee details. */
+private Map zbRefreshNodeCache() {
+    Map out = [:]
+    Map params = [uri: "http://127.0.0.1:8080", path: "/hub/zigbeeDetails/json",
+                  contentType: "application/json", timeout: 20]
+    String ck = hubCookie()
+    if (ck) params.headers = [Cookie: ck]
+    try {
+        httpGet(params) { resp ->
+            def devs = resp.data?.devices
+            if (!(devs instanceof List)) return
+            devs.each { d -> if (d?.id != null) out[d.id as String] = [h: zwParseTime(d.lastMessage)] }
+        }
+    } catch (e) {
+        if (debugEnabled()) log.debug "Zigbee details read failed: ${e.message}"
+    }
+    if (out) state.remove("zbDataIssue") else state.zbDataIssue = true
+    state.zbNodes = out
+    return out
+}
+
+/** Local Zigbee device covered by the hub's radio data. */
+private boolean zbCovered(device) {
+    getProtocol(device) == "Zigbee" && !state.zbDataIssue && state.zbNodes?.containsKey(device.id as String)
+}
+
+private String radioIssueText() {
+    def bad = []
+    if (state.zwDataIssue) bad << "Z-Wave"
+    if (state.zbDataIssue) bad << "Zigbee"
+    return bad ? bad.join(" and ") : null
+}
+
+private Long zwParseTime(v) {
+    if (!v) return null
+    try { return new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ").parse(v.toString()).time }
+    catch (e) { return null }
+}
+
+/** Device the hub radio can confirm on demand: mains or FLiRS Z-Wave, or mains Zigbee (no Battery capability). */
+def zwProbeable(device) {
+    def proto = getProtocol(device)
+    if (proto == "Z-Wave") return !state.zwDataIssue && state.zwNodes?.get(device.id as String)?.l == true
+    if (proto == "Zigbee") {
+        if (!zbCovered(device)) return false
+        try { return !device.hasCapability("Battery") } catch (e) { return false }
+    }
+    return false
+}
+
+private Long zwLastHeard(device) {
+    def cache = getProtocol(device) == "Zigbee" ? state.zbNodes : state.zwNodes
+    return cache?.get(device.id as String)?.h as Long
+}
+
+private boolean zwHasProbeCmd(device) {
+    try { return device.hasCommand("refresh") || device.hasCommand("forceRefresh") || device.hasCommand("ping") }
+    catch (e) { return false }
+}
+
+private boolean zwCanProbe(device) { zwProbeable(device) && zwHasProbeCmd(device) }
+
+/** Mains Z-Wave device the hub radio hasn't confirmed within the offline threshold. */
+private boolean zwNeedsRadioCheck(device) {
+    if (!zwCanProbe(device)) return false
+    def at = state.deviceCapabilities?.get(device.id as String)?.zwConfirmedAt
+    return !at || (now() - (at as Long)) > ((settings?.offlineThresholdHours ?: 168) * 3600000L)
+}
+
+// All Z-Wave probes share one queue, sent about one per second so real commands aren't crowded out
+private void zwEnqueue(device) {
+    def key = device.id as String
+    def q   = atomicState.zwQueue ?: []
+    if (q.contains(key) || (atomicState.zwPending ?: [:]).containsKey(key)) return
+    q << key
+    atomicState.zwQueue = q
+    def stalled = atomicState.zwDraining && (now() - ((atomicState.zwDrainTick ?: 0) as Long)) > 15000
+    if (!atomicState.zwDraining || stalled) {
+        atomicState.zwDraining  = true
+        atomicState.zwDrainTick = now()
+        runInMillis(200, "zwDrainQueue")
+    }
+}
+
+def zwDrainQueue() {
+    atomicState.zwDrainTick = now()
+    def q = atomicState.zwQueue ?: []
+    if (!q) {
+        atomicState.zwDraining = false
+        runIn(60, "zwProbeReadback", [overwrite: true])
+        return
+    }
+    def key = q.remove(0)
+    atomicState.zwQueue = q
+    def device = getAllMonitoredDevices().find { (it.id as String) == key }
+    if (device) {
+        try {
+            if (device.hasCommand("refresh"))           device.refresh()
+            else if (device.hasCommand("forceRefresh")) device.forceRefresh()
+            else                                        device.ping()
+            def p = atomicState.zwPending ?: [:]
+            p[key] = now()
+            atomicState.zwPending = p
+        } catch (e) {
+            if (debugEnabled()) log.debug "${device.displayName}: hub radio probe failed to send (${e.message})"
+        }
+    }
+    runInMillis(ZW_PACE_MS, "zwDrainQueue")
+}
+
+def zwProbeReadback() {
+    def pending = atomicState.zwPending ?: [:]
+    if (!pending) return
+    long cutoff = now() - 45000
+    def ready   = pending.findAll { k, v -> (v as Long) <= cutoff }
+    def waiting = pending.findAll { k, v -> (v as Long) > cutoff }
+    if (!ready) { runIn(30, "zwProbeReadback", [overwrite: true]); return }
+    atomicState.zwPending = waiting
+    if (waiting) runIn(30, "zwProbeReadback", [overwrite: true])
+
+    def devs   = getAllMonitoredDevices()
+    def protos = ready.keySet().collect { k -> def d = devs.find { (it.id as String) == k }; d ? getProtocol(d) : null }
+    if ("Z-Wave" in protos) zwRefreshNodeCache()
+    if ("Zigbee" in protos) zbRefreshNodeCache()
+
+    def capMap   = state.deviceCapabilities ?: [:]
+    def answered = []
+    def missed   = []
+    ready.each { idStr, sentAt ->
+        def device = devs.find { (it.id as String) == idStr }
+        if (!device) return
+        def proto = getProtocol(device)
+        if ((proto == "Z-Wave" && state.zwDataIssue) || (proto == "Zigbee" && state.zbDataIssue)) return
+        def heard = zwLastHeard(device)
+        def cap   = capMap[idStr] ?: [:]
+        if (heard && heard >= (sentAt as Long) - 1000) {
+            cap.zwMisses = 0; cap.zwConfirmedAt = heard
+            cap.pingWorks = true; cap.pingFailed = 0; cap.pingAttempted = false
+            cap.pingTrustSource = "confirmed"; cap.weakTrustFirstGranted = null; cap.weakTrustCooldownUntil = null
+            def data = state.history?.get(device.id)
+            if (data && heard > ((data.lastSeen ?: 0) as Long)) {
+                data.lastSeen = heard
+                state.history[device.id] = data
+            }
+            answered << device
+            if (debugEnabled()) log.debug "${device.displayName}: answered the hub radio check"
+        } else {
+            cap.zwMisses = (cap.zwMisses ?: 0) + 1
+            missed << [id: idStr, name: device.displayName, misses: cap.zwMisses]
+            if (state.verifying == null) state.verifying = [:]
+            state.verifying[device.id] = "zw_miss"
+            if (cap.zwMisses >= ZW_MISS_LIMIT) state.health[device.id] = "Offline"
+        }
+        capMap[idStr] = cap
+    }
+    state.deviceCapabilities = capMap
+
+    // Re-score only answered devices that were flagged; healthy ones need no recalculation
+    answered.findAll { state.health?.get(it.id) in ["Poor", "Offline"] }.each { updateHealth(it, false) }
+
+    def src  = state.deepScanRunning ? "Deep verification" : "scan"
+    def prev = state.zwLastCheck
+    def merge = src == "Deep verification" && prev?.source == src && (prev.at as Long) >= ((state.deepScanStartedAt ?: 0) as Long)
+    def missedAll = (merge ? (prev.missed ?: []).findAll { m -> !ready.containsKey(m.id) } : []) + missed
+    state.zwLastCheck = [at: now(), source: src, answered: (merge ? (prev.answered ?: 0) : 0) + answered.size(), missed: missedAll]
+
+    def msg = "Device Health Monitor: hub radio check, ${answered.size()} answered".toString()
+    if (missed) {
+        def names = missed.collect { m -> m.name + " " + Math.min(m.misses as int, ZW_MISS_LIMIT) + "/" + ZW_MISS_LIMIT }.join(", ")
+        log.warn(msg + ", ${missed.size()} no answer (${names})")
+    } else {
+        log.info(msg)
+    }
 }
 
 // ============================================================
@@ -1113,7 +1352,7 @@ def runDeepVerificationScan() {
     def devList = getAllMonitoredDevices().findAll { getProtocol(it) != "Unknown" }
     if (!devList) return
 
-    def targets = devList.findAll { getPingStatus(it.id) in ["declared", "unknown"] }
+    def targets = devList.findAll { getPingStatus(it.id) in ["declared", "unknown"] || zwNeedsRadioCheck(it) }
 
     log.info "Device Health Monitor: deep verification scan starting — ${targets.size()} device(s) to verify"
     if (targets.size() == 0) {
@@ -1127,9 +1366,11 @@ def runDeepVerificationScan() {
     def totalGroups  = groups.size()
     log.info "Device Health Monitor: deep scan — ${totalGroups} batch(es) of ${batchSize}"
 
-    state.deepScanQueue   = groups.collect { group -> group.collect { it.id } }
-    state.deepScanTotal   = totalGroups
-    state.deepScanCurrent = 0
+    state.deepScanQueue     = groups.collect { group -> group.collect { it.id } }
+    state.deepScanTotal     = totalGroups
+    state.deepScanCurrent   = 0
+    state.deepScanRunning   = true
+    state.deepScanStartedAt = now()
 
     processDeepScanGroup()
     def actualDelay = ((totalGroups - 1) * 2) + 10
@@ -1162,7 +1403,11 @@ def processDeepScanGroup(data = null) {
         def protocol  = getProtocol(device)
         def isVirtual = protocol in ["Virtual", "Hub Variable"]
 
-        if (isVirtual) {
+        if (zwCanProbe(device)) {
+            capDataD.pingAttempted   = true
+            capDataD.lastPingAttempt = now()
+            zwEnqueue(device)
+        } else if (isVirtual) {
             capDataD.pingWorks  = false
             capDataD.pingFailed = (capDataD.pingFailed ?: 0) + 1
         } else if (isHueDevice(device)) {
@@ -1203,19 +1448,30 @@ def processDeepScanGroup(data = null) {
     }
 }
 
-def finalizeDeepScan() {
+def finalizeDeepScan(data = null) {
+    int waits = (data?.waits ?: 0) as int
+    def zwBusy = (atomicState.zwQueue ?: []).size() || (atomicState.zwPending ?: [:]).size()
+    if (zwBusy && waits < 40) {
+        runIn(30, "finalizeDeepScan", [data: [waits: waits + 1], overwrite: true])
+        return
+    }
     def devList = getAllMonitoredDevices().findAll { getProtocol(it) != "Unknown" }
 
     def verified     = devList.count { getPingStatus(it.id) == "verified"     }
     def unverifiable = devList.count { getPingStatus(it.id) == "unverifiable" }
     def declared     = devList.count { getPingStatus(it.id) == "declared"     }
 
+    def zc = state.zwLastCheck
+    def zwFromRun = zc && zc.source == "Deep verification" && (zc.at as Long) >= ((state.deepScanStartedAt ?: 0) as Long)
     state.deepScanResult = [
         ranAt:        now(),
         verified:     verified,
         unverifiable: unverifiable,
-        declared:     declared
+        declared:     declared,
+        zwAnswered:   zwFromRun ? zc.answered : null,
+        zwMissed:     zwFromRun ? (zc.missed ?: []).size() : null
     ]
+    state.deepScanRunning = false
 
     app.updateSetting("enableDeepScan", [value: false, type: "bool"])
     unschedule("runDeepVerificationScan")
@@ -1253,6 +1509,11 @@ def scanAllDevices() {
     state.scanQueue     = devList.collect { it.id }
 
     purgeOrphanedState(getAllMonitoredDevices())
+    if (devList.any { getProtocol(it) == "Z-Wave" }) zwRefreshNodeCache()
+    else { state.remove("zwNodes"); state.remove("zwDataIssue") }
+    if (devList.any { getProtocol(it) == "Zigbee" }) zbRefreshNodeCache()
+    else { state.remove("zbNodes"); state.remove("zbDataIssue") }
+    state.radioReadAt = now()
     runIn(1, "processScanChunk")
 }
 
@@ -1347,6 +1608,12 @@ def processScanChunk() {
                 if (debugEnabled()) log.debug "currentStates date check error for ${device.displayName}: ${e.message}"
             }
 
+            // v1.7.0: a reply the hub radio heard counts as activity even with no event
+            if (protocol == "Z-Wave" || protocol == "Zigbee") {
+                def heard = (protocol == "Z-Wave" ? zwLastHeard(device) : state.zbNodes?.get(device.id as String)?.h) as Long
+                if (heard && heard > lastSeen) lastSeen = heard
+            }
+
             def capMap  = state.deviceCapabilities ?: [:]
             def capKey  = id as String
             def capData = capMap[capKey] ?: [:]
@@ -1398,6 +1665,11 @@ def processScanChunk() {
                     def capMapRec  = state.deviceCapabilities ?: [:]
                     def capKeyRec  = id as String
                     def capDataRec = capMapRec[capKeyRec] ?: [:]
+                    if (capDataRec.zwMisses) {
+                        capDataRec.zwMisses = 0
+                        capMapRec[capKeyRec] = capDataRec
+                        state.deviceCapabilities = capMapRec
+                    }
                     if (capDataRec.pingAttempted == true) {
                         capDataRec.pingWorks     = true
                         capDataRec.pingFailed    = 0
@@ -1461,10 +1733,32 @@ def finalizeScan() {
 // ============================================================
 // ===================== HEALTH SCORING ======================
 // ============================================================
-def updateHealth(device) {
+def updateHealth(device, boolean allowProbe = true) {
     def id   = device.id
     def data = state.history[id]
     if (!data) return
+    def zwOk = zwProbeable(device)
+
+    // v1.7.0: 3 unanswered hub radio checks in a row is Offline, whatever timing or learning state says
+    def zwMissNow = zwOk ? ((state.deviceCapabilities?.get(id as String)?.zwMisses ?: 0) as int) : 0
+    if (zwMissNow >= ZW_MISS_LIMIT) {
+        def prevZ = state.prevHealth?.get(id as String)
+        if (!(prevZ in ["Poor", "Offline"])) {
+            def dropMap = state.dropHistory ?: [:]
+            def drops   = (dropMap[id as String] ?: []).findAll { now() - it < 86400000 }
+            drops << now()
+            dropMap[id as String] = drops
+            state.dropHistory = dropMap
+        }
+        state.health[id] = "Offline"
+        def pm = state.prevHealth ?: [:]
+        pm[id as String] = "Offline"
+        state.prevHealth = pm
+        if (state.verifying == null) state.verifying = [:]
+        state.verifying[id] = "zw_miss"
+        if (allowProbe && zwHasProbeCmd(device)) zwEnqueue(device)   // keep asking so recovery is caught
+        return
+    }
 
     def samples = data.samples?.size() ?: 0
     if (samples < 3) {
@@ -1509,6 +1803,12 @@ def updateHealth(device) {
         else                   state.health[id] = "Poor"
     }
 
+    // v1.7.0: hub-radio-checkable Z-Wave needs 3 unanswered checks for Offline, not elapsed time
+    if (zwOk && state.health[id] in ["Poor", "Offline"]) {
+        def zm = state.deviceCapabilities?.get(id as String)?.zwMisses ?: 0
+        state.health[id] = zm >= ZW_MISS_LIMIT ? "Offline" : "Poor"
+    }
+
     def currentHealth = state.health[id]
 
     // v1.5.3: pingable devices entering Poor are held at Fair for one scan while a ping is sent
@@ -1522,7 +1822,7 @@ def updateHealth(device) {
                              isKonnectedDevice(device)
             def fairHolds  = state.fairHold ?: [:]
             def alreadyHeld = fairHolds[id as String] == true
-            if (isPingable && !alreadyHeld) {
+            if (isPingable && !alreadyHeld && !zwOk) {
                 state.health[id] = "Fair"
                 currentHealth    = "Fair"
                 if (!state.fairHold) state.fairHold = [:]
@@ -1547,9 +1847,10 @@ def updateHealth(device) {
     // v1.5.5-1.5.9: verified devices are capped at Fair (Quiet). Trust expires after the Offline
     // Threshold; weak trust (refresh/ping merely didn't throw) is also capped at 2x the threshold,
     // then forced to show a real Poor/Offline for a full threshold window before it can return.
+    // v1.7.0: skipped for hub-radio-checkable Z-Wave, which is checked for real every scan.
     if (currentHealth in ["Poor", "Offline"]) {
         def capChk = state.deviceCapabilities?.get(id as String) ?: [:]
-        if (capChk.pingWorks == true) {
+        if (capChk.pingWorks == true && !zwOk) {
             def isWeak        = capChk.pingTrustSource == "weak"
             def weakCeilingMs = getWeakTrustCeilingMs()
             def weakExceeded  = isWeak && capChk.weakTrustFirstGranted &&
@@ -1609,6 +1910,7 @@ def updateHealth(device) {
         capDataR.pingTrustSource        = "confirmed"
         capDataR.weakTrustFirstGranted  = null
         capDataR.weakTrustCooldownUntil = null
+        capDataR.zwMisses               = 0
         capMapR[capKeyR]    = capDataR
         state.deviceCapabilities = capMapR
     }
@@ -1624,6 +1926,25 @@ def updateHealth(device) {
     }
 
     if (state.verifying == null) state.verifying = [:]
+
+    // v1.7.0: confirm through the hub radio instead of trusting that refresh didn't throw.
+    // Runs before the state-event check, which can mark a device verified yet leave it Poor.
+    if (zwOk && zwHasProbeCmd(device)) {
+        if (!allowProbe) return
+        def capMapZ  = state.deviceCapabilities ?: [:]
+        def capDataZ = capMapZ[id as String] ?: [:]
+        capDataZ.pingAttempted          = true
+        capDataZ.lastPingAttempt        = now()
+        capDataZ.pingTrustSource        = null
+        capDataZ.weakTrustFirstGranted  = null
+        capDataZ.weakTrustCooldownUntil = null
+        state.verifying[id] = (capDataZ.zwMisses ?: 0) > 0 ? "zw_miss" : "zw_probe"
+        zwEnqueue(device)
+        if (debugEnabled()) log.debug "${device.displayName}: queued for the hub radio check"
+        capMapZ[id as String] = capDataZ
+        state.deviceCapabilities = capMapZ
+        return
+    }
 
     if (getStateVerified(id as String)) {
         state.verifying[id] = "state_verified"
@@ -1726,7 +2047,10 @@ def updateHealth(device) {
         capDataH.pingAttempted   = true
         def inCooldown = capDataH.weakTrustCooldownUntil &&
                          now() < (capDataH.weakTrustCooldownUntil as Long)
-        if (!inCooldown) {
+        // v1.7.0: Zigbee radio data confirms for real on the next scan, so no provisional trust
+        if (zbCovered(device)) {
+            if (debugEnabled()) log.debug "${device.displayName}: refresh sent, Zigbee radio data will confirm on the next scan"
+        } else if (!inCooldown) {
             if (capDataH.pingTrustSource != "weak" || !capDataH.weakTrustFirstGranted) {
                 capDataH.weakTrustFirstGranted = now()
             }
@@ -1784,8 +2108,13 @@ private Map healthInfo(device) {
             konnected_panel_failed: "Konnected Panel refresh failed",
             virtual:                "Virtual, can't verify",
             none:                   "Can't verify (no ping or refresh)",
-            failed:                 "Verification command failed"
+            failed:                 "Verification command failed",
+            zw_probe:               "Checking with hub radio"
         ][vm]
+        if (vm == "zw_miss") {
+            def zm = state.deviceCapabilities?.get(id)?.zwMisses ?: 0
+            vNote = "No answer from hub radio (${Math.min(zm as int, ZW_MISS_LIMIT)} of ${ZW_MISS_LIMIT})".toString()
+        }
         if (vNote) tags << vNote
         return [label: h, tone: "red", note: tags.join(" · "), rank: h == "Offline" ? 6 : 5]
     }
@@ -1809,6 +2138,7 @@ private boolean isActiveIssue(device) {
 
 private String verificationPill(deviceId) {
     def cap = state.deviceCapabilities?.get(deviceId as String) ?: [:]
+    if ((cap.zwMisses ?: 0) > 0) return bmPill("No answer", "red")
     switch (getPingStatus(deviceId)) {
         case "verified":     return cap.pingTrustSource == "weak" ? bmPill("Verified (auto)", "blue") : bmPill("Verified", "green")
         case "unverifiable": return bmPill("Can't verify", "gray")
@@ -2108,6 +2438,8 @@ function healthLabel(dev) {
         else if (vm === 'konnected_panel')         vSuffix = ' <span style="color:#1a73e8;font-size:10px;">🔄 Konnected Panel refresh sent</span>';
         else if (vm === 'konnected_no_panel')      vSuffix = ' <span style="color:#94a3b8;font-size:10px;">⚠ Add Konnected Panel</span>';
         else if (vm === 'konnected_panel_failed')  vSuffix = ' <span style="color:#94a3b8;font-size:10px;">⚠ Konnected Panel refresh failed</span>';
+        else if (vm === 'zw_probe')                vSuffix = ' <span style="color:#1a73e8;font-size:10px;">🔄 Checking hub radio...</span>';
+        else if (vm === 'zw_miss')                 vSuffix = ' <span style="color:#f97316;font-size:10px;">⚠ No answer from hub radio</span>';
         return icon + ' ' + h + suffix + vSuffix;
     }
 
@@ -2433,6 +2765,7 @@ void appButtonHandler(String btn) {
         case "daSnooze":     state.daPending = [action: "snooze",   deviceId: state.daDeviceId]; break
         case "daUnsnooze":   state.daPending = [action: "unsnooze", deviceId: state.daDeviceId]; break
         case "daReset":      state.daPending = [action: "reset",    deviceId: state.daDeviceId]; break
+        case "daRadioCheck": runRadioCheck(); break
         case "daCancel":     state.remove("daPending"); break
         case "daConfirm":    runDeviceAction(); break
         case "bulkSelOffline": bulkQuickSelect("offline"); break
@@ -2442,9 +2775,22 @@ void appButtonHandler(String btn) {
         case "bulkApply":    runBulkAction(); break
         case "sendNow":      sendNotificationNow(); break
         case "btnRunDeepScan":
-            runDeepVerificationScan()
-            state.deepMsg = [tone: "ok", text: "Deep verification started. Results appear here in a minute or two."]
+            if (deepScanBusy()) {
+                state.deepMsg = [tone: "warn", text: "Deep verification is already running. Results appear here when it finishes."]
+            } else {
+                runDeepVerificationScan()
+                state.deepMsg = [tone: "ok", text: "Deep verification started. Mains devices are checked about one per second, so large hubs take a few minutes."]
+            }
             break
+        case "locAddBtn":        break   // the page render adds whatever is in the name box
+        case "locMoveBtn":       moveDevicesToLocation(settings?.locMoveTo); break
+        case "locAddHereBtn":
+            def here = (1..30).find { (it as String) == (state.locSel as String) }
+            moveDevicesToLocation(here ? ((settings["loc${here}"] ?: "") as String).trim() : null)
+            break
+        case "locRemove":        state.locPending = state.locSel; break
+        case "locCancel":        state.remove("locPending"); break
+        case "locConfirmRemove": removeLocationSlot(state.locPending); break
         case "snoozeClearAll":
             state.snoozed = [:]
             state.snoozeMsg = [tone: "ok", text: "All snoozes ended."]
@@ -2492,6 +2838,7 @@ def mainPage() {
     def deepOn    = settings?.enableDeepScan == true
     def deepLast  = state.deepScanResult?.ranAt ? new Date(state.deepScanResult.ranAt as Long).format("MMM d", location.timeZone) : null
     def locCount  = getRoomOptions().size()
+    def unassignedN = locCount ? getAllMonitoredDevices().count { !(getDeviceLocation(it.id) in getRoomOptions()) } : 0
     def portalOn  = state.accessToken != null
     def modeOn    = settings?.enableModeRestriction == true && settings?.restrictedModes
 
@@ -2523,31 +2870,24 @@ def mainPage() {
                      "${stOn()}, ${freq}${settings?.summaryTime ? '' : ', ' + stWarn('no time set')}${modeOn ? ' · selected modes only' : ''}" :
                      stOff(),
                  width: 12, style: "margin:0;")
-            href(name: "toScanSettings", page: "scanSettingsPage",
-                 title: "<i class='fa-solid fa-clock' aria-hidden='true'></i>Scan and thresholds",
-                 description: "${scanLabel.capitalize()} · offline after ${threshold}h",
-                 width: 12, style: "margin:0;")
             href(name: "toSnoozeSettings", page: "snoozeSettingsPage",
                  title: "<i class='fa-solid fa-bell-slash' aria-hidden='true'></i>Snooze",
                  description: snoozeEnabled() ?
                      "${stOn()}, ${settings?.snoozeDurationHours ?: 24}h${snoozedN ? ' · ' + stWarn("${snoozedN} snoozed") : ''}" :
                      stOff(),
                  width: 12, style: "margin:0;")
-            href(name: "toDeepScan", page: "deepScanPage",
-                 title: "<i class='fa-solid fa-magnifying-glass' aria-hidden='true'></i>Deep verification",
-                 description: deepOn ? stWarn("Scheduled") : (deepLast ? "Last run ${deepLast}" : "Never run"),
-                 width: 12, style: "margin:0;")
             href(name: "toLocations", page: "locationsPage",
                  title: "<i class='fa-solid fa-tags' aria-hidden='true'></i>Locations",
-                 description: locCount ? "${locCount} defined" : "None yet",
+                 description: locCount ? "${locCount} defined${unassignedN ? ' · ' + stWarn("${unassignedN} unassigned") : ''}" : "None yet",
                  width: 12, style: "margin:0;")
             href(name: "toPortal", page: "portalPage",
                  title: "<i class='fa-solid fa-globe' aria-hidden='true'></i>Web portal",
                  description: portalOn ? stOn() : "${stOff()} · needs OAuth",
                  width: 12, style: "margin:0;")
-            href(name: "toAppName", page: "appNamePage",
-                 title: "<i class='fa-solid fa-pen' aria-hidden='true'></i>App name",
-                 description: bmEsc(app.label ?: "Device Health Monitor"),
+            href(name: "toScanSettings", page: "scanSettingsPage",
+                 title: "<i class='fa-solid fa-gear' aria-hidden='true'></i>General",
+                 description: "Scan: ${scanLabel} · Offline: after ${threshold}h · " +
+                     (radioIssueText() ? stWarn("${radioIssueText()} data unavailable") : "Hub login: " + (settings?.hubSecurity ? stOn() : stOff())),
                  width: 12, style: "margin:0;")
         }
 
@@ -2565,39 +2905,40 @@ def mainPage() {
 // ============================================================
 def devicesPage() {
     def all = getAllMonitoredDevices()
+    def groups = [
+        ["Zigbee",       ["Zigbee", "Hub Mesh (Zigbee)"], "#3b82f6"],
+        ["Z-Wave",       ["Z-Wave", "Hub Mesh (Z-Wave)"], "#8b5cf6"],
+        ["Matter",       ["Matter", "Hub Mesh (Matter)"], "#e65100"],
+        ["Hub Mesh",     ["Hub Mesh"],                    "#06b6d4"],
+        ["LAN",          ["LAN"],                         "#14b8a6"],
+        ["Virtual",      ["Virtual"],                     "#ec4899"],
+        ["Hub Variable", ["Hub Variable"],                "#eab308"],
+        ["Unknown (skipped)", ["Unknown"],                "#9ca3af"]
+    ]
+    def protos = all.collect { getProtocol(it) }
+    def chips  = groups.collect { g ->
+        def n = protos.count { it in g[1] }
+        n ? "<span class='bm-pill' style='background:${g[2]}22;color:${g[2]};margin:0 6px 6px 0;'>${g[0]} ${n}</span>" : ""
+    }.join("")
+    def hueNoBridge = all.any { isHueDevice(it) } && !findHueBridge()
+    def cardCss = """
+<style>
+  .dhm-card > .mdl-grid { border: 1px solid #e3e6ea; border-radius: 8px; background: #fff; margin: 0 8px 14px !important; padding: 6px 8px !important; }
+</style>
+"""
     dynamicPage(name: "devicesPage", title: "Monitored Devices", install: false) {
-        section {
-            paragraph rawHtml: true, bmPageCss() +
-                "<div class='bm-hint'>Choose the devices to monitor. Protocol is detected automatically.</div>"
+        if (all) {
+            section("<b>Your devices</b> ${bmPill("${all.size()} monitored", "blue")}", sectionClass: "dhm-card") {
+                paragraph rawHtml: true, bmPageCss() + cardCss + "<div>${chips}</div>" +
+                    (hueNoBridge ? "<div class='bm-msg bm-msg-info' style='margin-top:4px;'>Hue devices found. Add your <b>Hue Bridge</b> below so Poor or Offline Hue devices can be verified.</div>" : "")
+            }
+        }
+        section("<b>Choose devices</b>", sectionClass: "dhm-card") {
+            if (!all) paragraph rawHtml: true, bmPageCss() + cardCss
+            paragraph rawHtml: true, "<div class='bm-hint'>Protocol is detected automatically.</div>"
             input "monitoredDevices", "capability.*", title: "Devices to monitor",
                   multiple: true, required: false, submitOnChange: true
-            paragraph rawHtml: true, "<div class='bm-msg bm-msg-warn'>After changing devices, tap <b>Done</b> on the main page to save before opening reports.</div>"
-        }
-        if (all) {
-            def protos = all.collect { getProtocol(it) }
-            def groups = [
-                ["Zigbee",       ["Zigbee", "Hub Mesh (Zigbee)"], "#3b82f6"],
-                ["Z-Wave",       ["Z-Wave", "Hub Mesh (Z-Wave)"], "#8b5cf6"],
-                ["Matter",       ["Matter", "Hub Mesh (Matter)"], "#e65100"],
-                ["Hub Mesh",     ["Hub Mesh"],                    "#06b6d4"],
-                ["LAN",          ["LAN"],                         "#14b8a6"],
-                ["Virtual",      ["Virtual"],                     "#ec4899"],
-                ["Hub Variable", ["Hub Variable"],                "#eab308"],
-                ["Unknown (skipped)", ["Unknown"],                "#9ca3af"]
-            ]
-            def chips = groups.collect { g ->
-                def n = protos.count { it in g[1] }
-                n ? "<span class='bm-pill' style='background:${g[2]}22;color:${g[2]};margin:0 6px 6px 0;'>${g[0]} ${n}</span>" : ""
-            }.join("")
-            def unresolvable = all.count { isUnresolvableProtocol(getRawProtocol(it)) }
-            def hints = ""
-            if (unresolvable) hints += "<div class='bm-msg bm-msg-info' style='margin-top:8px;'>${unresolvable} device(s) show as Hub Mesh, LAN, Virtual, or Hub Variable. " +
-                "Check them in <b>Device actions</b> with the <b>Connection type unsure</b> filter.</div>"
-            if (all.any { isHueDevice(it) } && !findHueBridge()) hints += "<div class='bm-msg bm-msg-info' style='margin-top:8px;'>Hue devices found. " +
-                "Add your <b>Hue Bridge</b> to monitored devices so Poor/Offline Hue devices can be verified.</div>"
-            section("<b>By protocol</b>") {
-                paragraph rawHtml: true, "<div>${chips}</div>${hints}"
-            }
+            paragraph rawHtml: true, "<div class='bm-hint'>After changing devices, tap <b>Done</b> on the main page before opening reports.</div>"
         }
     }
 }
@@ -2648,17 +2989,62 @@ def notificationsPage() {
 }
 
 def scanSettingsPage() {
-    dynamicPage(name: "scanSettingsPage", title: "Scan and Thresholds", install: false) {
+    int zwN = (state.zwNodes ?: [:]).size()
+    int zbN = (state.zbNodes ?: [:]).size()
+    def devs   = getAllMonitoredDevices()
+    def zwUsed = devs.any { getProtocol(it) == "Z-Wave" }
+    def zbUsed = devs.any { getProtocol(it) == "Zigbee" }
+    def readAt = state.radioReadAt ? formatTimeAgo(state.radioReadAt as Long) : null
+    def scanTxt = ["0.5": "Every 30 min", "1": "Hourly", "3": "Every 3 hours", "6": "Every 6 hours"][settings?.scanInterval ?: "3"]
+    def radioRow = { String label, boolean used, boolean bad, int n ->
+        def val = !used ? bmPill("Not used", "gray") :
+                  bad   ? bmPill("Couldn't read", "red") :
+                  n     ? bmPill("Reading", "green") + bmPill("${n} device${n == 1 ? '' : 's'}", "blue") :
+                          bmPill("Waiting for next scan", "amber")
+        "<tr><td style='font-weight:500;'>${label}</td><td style='text-align:right;'>${val}</td></tr>"
+    }
+    def issue      = radioIssueText()
+    def radioPill  = issue ? bmPill("${issue} unavailable", "red") :
+                     (zwUsed || zbUsed) && !readAt ? bmPill("Waiting for next scan", "amber") : bmPill("Working", "green")
+    def cardCss = """
+<style>
+  .dhm-card > .mdl-grid { border: 1px solid #e3e6ea; border-radius: 8px; background: #fff; margin: 0 8px 14px !important; padding: 6px 8px !important; }
+  .dhm-card .bm-table td { padding: 8px 6px; }
+</style>
+"""
+    dynamicPage(name: "scanSettingsPage", title: "General", install: false) {
+        section("<b>Scanning</b> ${bmPill(scanTxt, 'blue')}${bmPill("Offline after ${settings?.offlineThresholdHours ?: 168}h", 'gray')}", sectionClass: "dhm-card") {
+            paragraph rawHtml: true, bmPageCss() + cardCss +
+                "<div class='bm-hint'>How often DHM checks every device, and how long a device can go quiet before it's Offline. " +
+                "The offline time also sets how long a verification is trusted.</div>"
+            input "scanInterval", "enum", title: "Scan every",
+                  options: ["0.5": "30 minutes", "1": "Hour", "3": "3 hours", "6": "6 hours"],
+                  defaultValue: "3", submitOnChange: true, width: 6
+            input "offlineThresholdHours", "number", title: "Offline after (hours)",
+                  defaultValue: 168, required: true, submitOnChange: true, width: 6
+        }
+        section("<b>Hub radio</b> ${radioPill}", sectionClass: "dhm-card") {
+            paragraph rawHtml: true, "<div class='bm-hint' style='margin-bottom:6px;'>DHM reads the hub's own Z-Wave and Zigbee radio data to confirm quiet devices are still talking.</div>" +
+                "<table class='bm-table'>" +
+                radioRow("Z-Wave", zwUsed, state.zwDataIssue == true, zwN) +
+                radioRow("Zigbee", zbUsed, state.zbDataIssue == true, zbN) +
+                "</table>" + (readAt ? "<div class='bm-hint' style='margin-top:6px;'>Read on every scan, last ${readAt}.</div>" : "")
+            if (issue) {
+                paragraph rawHtml: true, "<div class='bm-msg bm-msg-warn'>${issue} radio data couldn't be read. " +
+                    "If Hub Login Security is on, turn on the setting below and enter your hub login.</div>"
+            }
+            input "hubSecurity", "bool", title: "Hub Login Security is on <span class='bm-hint'>· only if your hub asks for a login locally</span>",
+                  defaultValue: false, submitOnChange: true
+            if (settings?.hubSecurity) {
+                input "hubUser", "text", title: "Hub username", required: true, width: 6
+                input "hubPass", "password", title: "Hub password", required: true, width: 6
+            }
+        }
+        section("<b>App name</b> ${bmPill(bmEsc(app.label ?: 'Device Health Monitor'), 'gray')}", sectionClass: "dhm-card") {
+            input "customAppName", "text", title: "Name in your Apps list", required: false, width: 6
+        }
         section {
-            paragraph rawHtml: true, bmPageCss()
-            input "scanInterval", "enum", title: "Scan interval",
-                  description: "How often device activity is checked and health is updated.",
-                  options: ["0.5": "Every 30 Minutes", "1": "Hourly", "3": "Every 3 Hours", "6": "Every 6 Hours"],
-                  defaultValue: "3", submitOnChange: true
-            input "offlineThresholdHours", "number", title: "Offline after (hours without activity)",
-                  description: "Default 168 (7 days). Also sets how long a verification is trusted.",
-                  defaultValue: 168, required: true, submitOnChange: true
-            paragraph rawHtml: true, "<div class='bm-hint'>Changes take effect when you tap <b>Done</b> on the main page.</div>"
+            paragraph rawHtml: true, "<div class='bm-hint' style='margin-left:8px;'>Changes take effect when you tap <b>Done</b> on the main page.</div>"
         }
     }
 }
@@ -2692,18 +3078,42 @@ def snoozeSettingsPage() {
     }
 }
 
+private boolean deepScanBusy() {
+    return state.deepScanRunning && (now() - ((state.deepScanStartedAt ?: 0) as Long)) < 30L * 60 * 1000
+}
+
 def deepScanPage() {
-    def r = state.deepScanResult
-    def last = r?.ranAt ? new Date(r.ranAt as Long).format("MMM d, h:mm a", location.timeZone) +
-        " · ${r.verified} verified, ${r.unverifiable} can't verify, ${r.declared} still pending" : "Never run"
+    def r     = state.deepScanResult
+    def busy  = deepScanBusy()
+    def last  = "Never run"
+    if (r?.ranAt) {
+        last = new Date(r.ranAt as Long).format("MMM d, h:mm a", location.timeZone) +
+            " · ${r.verified} verified, ${r.unverifiable} can't verify, ${r.declared} still pending"
+        if (r.zwAnswered != null) last += " · hub radio: ${r.zwAnswered} answered, ${r.zwMissed ?: 0} no answer"
+    }
+    def recentMin = r?.ranAt ? ((now() - (r.ranAt as Long)) / 60000).toInteger() : null
+    def zc = state.zwLastCheck
     dynamicPage(name: "deepScanPage", title: "Deep Verification", install: false) {
         section {
             paragraph rawHtml: true, bmPageCss() +
-                "<div class='bm-hint'>Pings every device that hasn't been verified yet, sorting them into Verified or Can't verify. It runs once, then turns itself off.</div>" +
+                "<div class='bm-hint'>Pings every device that hasn't been verified yet, sorting them into Verified or Can't verify. " +
+                "Mains Z-Wave and Zigbee devices are confirmed through the hub radio, about one per second. It runs once, then turns itself off.</div>" +
                 "<div style='margin-top:8px;'><b>Last run:</b> ${last}</div>"
             def dmsg = state.remove("deepMsg")
             if (dmsg) paragraph rawHtml: true, bmMsgHtml(dmsg)
-            input "btnRunDeepScan", "button", title: "▶ Run now", width: 3, styleClass: "bm-btn"
+            if (busy) {
+                int q = (atomicState.zwQueue ?: []).size()
+                int w = (atomicState.zwPending ?: [:]).size()
+                paragraph rawHtml: true, "<div class='bm-msg bm-msg-info'>🔄 Running. " +
+                    (q ? "${q} device${q == 1 ? '' : 's'} waiting to be checked. " : "") +
+                    (w ? "Waiting on the hub radio for ${w}. " : "") + "Refresh this page to update.</div>"
+            } else {
+                if (recentMin != null && (now() - (r.ranAt as Long)) < DEEP_RECENT_MS) {
+                    paragraph rawHtml: true, "<div class='bm-msg bm-msg-warn'>Last run was ${recentMin} minute${recentMin == 1 ? '' : 's'} ago. " +
+                        "Running again this soon adds Z-Wave traffic without telling you anything new.</div>"
+                }
+                input "btnRunDeepScan", "button", title: "▶ Run now", width: 3, styleClass: "bm-btn"
+            }
             input "enableDeepScan", "bool", title: "Schedule a run (once, then turns off)", defaultValue: false, submitOnChange: true
             if (settings?.enableDeepScan) {
                 input "deepScanTime", "time", title: "Run at", required: true, width: 6
@@ -2712,23 +3122,193 @@ def deepScanPage() {
                  title: "<i class='pi pi-info-circle' aria-hidden='true'></i>How verification works",
                  description: "State events, refresh/ping, Hue and Konnected", width: 6, style: "margin:8px;"
         }
-    }
-}
-
-def locationsPage() {
-    int lastFilled = 0
-    (1..30).each { i -> if ((settings["loc${i}"] ?: "").trim()) lastFilled = i }
-    int shown = Math.min(30, Math.max(lastFilled + 3, 6))
-    dynamicPage(name: "locationsPage", title: "Locations", install: false) {
-        section {
-            paragraph rawHtml: true, bmPageCss() +
-                "<div class='bm-hint'>Rooms or areas used to group devices in the portal and on the Summary. " +
-                "Assign devices in <b>Device actions</b>, <b>Bulk actions</b>, or by tapping a device in the portal. More boxes appear as you fill them.</div>"
-            (1..shown).each { i ->
-                input "loc${i}", "text", title: "Location ${i}", required: false, width: 4, submitOnChange: (i == shown)
+        if (zc?.at) {
+            def when   = new Date(zc.at as Long).format("MMM d, h:mm a", location.timeZone)
+            def missed = zc.missed ?: []
+            section("<b>Last hub radio check</b> ${missed ? bmPill("${missed.size()} no answer", "red") : bmPill("All answered", "green")}") {
+                def body = "<div class='bm-hint' style='margin-bottom:6px;'>${when}, from ${zc.source}. ${zc.answered ?: 0} answered. Replaced by the next check.</div>"
+                if (missed) {
+                    body += "<table class='bm-table'><thead><tr><th>Didn't answer</th><th style='text-align:right;'>Missed in a row</th></tr></thead><tbody>" +
+                        missed.collect { m ->
+                            "<tr><td>${hubLink("/device/edit/${m.id}", bmEsc(m.name))}</td>" +
+                            "<td style='text-align:right;'>${Math.min((m.misses ?: 1) as int, ZW_MISS_LIMIT)} of ${ZW_MISS_LIMIT}</td></tr>"
+                        }.join("") + "</tbody></table>" +
+                        "<div class='bm-hint' style='margin-top:6px;'>A single miss can be a mesh hiccup. Three in a row shows the device as Offline.</div>" +
+                        hubLinkScript()
+                }
+                paragraph rawHtml: true, body
             }
         }
     }
+}
+
+/** Keeps device assignments in step with location renames and removals. */
+private void syncLocationSlots() {
+    def cur  = (1..30).collectEntries { i -> [(i as String): ((settings["loc${i}"] ?: "") as String).trim()] }
+    def snap = state.locSnapshot
+    if (snap == null) { state.locSnapshot = cur; return }
+    cur.keySet().toList().each { k ->
+        def v   = cur[k]
+        def old = (snap[k] ?: "") as String
+        if (old == v || !old) return
+        def devs = getAllMonitoredDevices().findAll { getDeviceLocation(it.id) == old }
+        def n    = "${devs.size()} device${devs.size() == 1 ? '' : 's'}"
+        if (!v) {
+            devs.each { setDeviceLocation(it.id as String, "") }
+            state.locMsg = [tone: "warn", text: "<b>${bmEsc(old)}</b> removed. ${n} now unassigned.".toString()]
+        } else if (cur.any { kk, vv -> kk != k && vv == v }) {
+            app.updateSetting("loc${k}", [type: "text", value: old])
+            cur[k] = old
+            state.locMsg = [tone: "err", text: "There's already a location named <b>${bmEsc(v)}</b>. Name not changed.".toString()]
+        } else {
+            devs.each { setDeviceLocation(it.id as String, v) }
+            state.locMsg = [tone: "ok", text: "Renamed <b>${bmEsc(old)}</b> to <b>${bmEsc(v)}</b>. ${n} moved with it.".toString()]
+        }
+    }
+    state.locSnapshot = cur
+}
+
+private void moveDevicesToLocation(target) {
+    def ids = (settings?.locMoveDevs ?: []).collect { it as String }
+    if (!ids) { state.locMsg = [tone: "err", text: "Pick at least one device first."]; return }
+    if (!target) { state.locMsg = [tone: "err", text: "Pick a location first."]; return }
+    ids.each { setDeviceLocation(it, target as String) }
+    app.removeSetting("locMoveDevs")
+    app.removeSetting("locMoveTo")
+    state.locMsg = [tone: "ok", text: "Moved ${ids.size()} device${ids.size() == 1 ? '' : 's'} to <b>${bmEsc(target)}</b>.".toString()]
+}
+
+private void removeLocationSlot(slot) {
+    state.remove("locPending")
+    if (!slot || slot == "u") return
+    app.removeSetting("loc${slot}")
+    syncLocationSlots()
+    state.remove("locSel")
+}
+
+def locationsPage(params) {
+    if (params?.slot && (params.slot as String) != (state.locSel as String)) {
+        state.locSel = params.slot as String
+        state.remove("locPending")
+        app.removeSetting("locMoveDevs")
+        app.removeSetting("locMoveTo")
+    }
+    syncLocationSlots()
+
+    // Add from the box at the bottom of the list
+    def newName = ((settings?.locNew ?: "") as String).trim()
+    if (newName) {
+        app.removeSetting("locNew")
+        if (getRoomOptions().contains(newName)) {
+            state.locMsg = [tone: "err", text: "There's already a location named <b>${bmEsc(newName)}</b>.".toString()]
+        } else {
+            def free = (1..30).find { !(((settings["loc${it}"] ?: "") as String).trim()) }
+            if (!free) {
+                state.locMsg = [tone: "err", text: "All 30 locations are in use. Remove one first."]
+            } else {
+                app.updateSetting("loc${free}", [type: "text", value: newName])
+                def snap = state.locSnapshot ?: [:]
+                snap[free as String] = newName
+                state.locSnapshot = snap
+                state.locSel = free as String
+                state.locMsg = [tone: "ok", text: "Added <b>${bmEsc(newName)}</b>. Assign devices in Bulk actions or Device actions.".toString()]
+            }
+        }
+    }
+
+    def all    = getAllMonitoredDevices().findAll { getProtocol(it) != "Unknown" }
+    def slots  = (1..30).findAll { ((settings["loc${it}"] ?: "") as String).trim() }
+                        .collect { [slot: it as String, name: ((settings["loc${it}"]) as String).trim()] }
+                        .sort { a, b -> a.name.toLowerCase() <=> b.name.toLowerCase() }
+    def names  = slots*.name
+    def counts = [:]
+    all.each { d -> def l = getDeviceLocation(d.id); if (l) counts[l] = (counts[l] ?: 0) + 1 }
+    def unassigned = all.findAll { !(getDeviceLocation(it.id) in names) }
+    if (!state.locSel || (state.locSel != "u" && !slots.find { it.slot == state.locSel })) state.locSel = slots ? slots[0].slot : "u"
+    def sel     = state.locSel as String
+    def msg     = state.remove("locMsg")
+    def pending = state.locPending
+
+    dynamicPage(name: "locationsPage", title: "Locations", install: false) {
+        section(sectionClass: "bm-da-index") {
+            input "locNew", "text",
+                  title: "<span style='display:inline-block;padding-bottom:2px;'>${bmPill("${slots.size()} defined", "blue")}${unassigned ? bmPill("${unassigned.size()} unassigned", "amber") : ""}</span>",
+                  description: "New location name", required: false, submitOnChange: true, width: 8
+            input "locAddBtn", "button", title: "Add", width: 4, styleClass: "bm-btn bm-btn-primary bm-loc-add"
+            slots.each { l ->
+                def n   = counts[l.name] ?: 0
+                def cur = l.slot == sel ? "bm-da-current" : ""
+                href name: "locSel_${l.slot}", page: "locationsPage", params: [slot: l.slot],
+                     title: "<span class='${cur} bm-loc-row'><span>${bmEsc(l.name)}</span><span class='bm-loc-n ${n ? '' : 'bm-loc-empty'}'>${n ?: 'Empty'}</span></span>",
+                     description: "", width: 12, style: "margin:0 8px;"
+            }
+            href name: "locSel_u", page: "locationsPage", params: [slot: "u"],
+                 title: "<span class='${sel == 'u' ? 'bm-da-current' : ''} bm-loc-row'><span style='color:#9a5b00;'>Unassigned devices</span><span class='bm-loc-n bm-loc-empty'>${unassigned.size()}</span></span>",
+                 description: "", width: 12, style: "margin:0 8px;"
+            paragraph rawHtml: true, bmPageCss() + daStylesHtml() + """
+<style>
+  .bm-loc-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; }
+  .bm-loc-n { font-size: 12px; font-weight: 600; color: #6b7280; }
+  .bm-loc-empty { color: #9a5b00; }
+  .bm-loc-add { padding-top: 22px; box-sizing: border-box; }
+  .bm-da-index button.hrefElem > span:first-child { display: block; width: 100%; }
+</style>
+""" + dhmDaScript()
+        }
+        section(sectionClass: "bm-da-detail") {
+            if (msg) paragraph rawHtml: true, bmMsgHtml(msg)
+            if (sel == "u") {
+                def rows = unassigned.sort { a, b -> a.displayName.trim().toLowerCase() <=> b.displayName.trim().toLowerCase() }
+                paragraph rawHtml: true, "<div class='bm-da-head'><div class='bm-da-title'>Unassigned devices</div><div>${bmPill("${rows.size()}", rows ? "amber" : "green")}</div></div>" +
+                    "<div class='bm-hint' style='margin-bottom:8px;'>This isn't a room. It's every device that hasn't been given a location yet. Pick devices and a location below to move them.</div>" +
+                    (rows ? locDeviceTable(rows, names) : "<div class='bm-msg bm-msg-ok'>Every device has a location.</div>") + hubLinkScript()
+                if (rows && slots) {
+                    input "locMoveDevs", "enum", title: "Devices", required: false, multiple: true, width: 6,
+                          options: rows.collectEntries { d -> [(d.id as String): d.displayName.trim()] }
+                    input "locMoveTo", "enum", title: "Move to", required: false, width: 3,
+                          options: slots.collectEntries { [(it.name): it.name] }
+                    input "locMoveBtn", "button", title: "Move", width: 3, styleClass: "bm-btn bm-btn-primary bm-loc-add"
+                }
+            } else {
+                def l    = slots.find { it.slot == sel }
+                def devs = all.findAll { getDeviceLocation(it.id) == l.name }
+                              .sort { a, b -> a.displayName.trim().toLowerCase() <=> b.displayName.trim().toLowerCase() }
+                input "loc${l.slot}", "text", title: "Location name", required: false, submitOnChange: true, width: 6
+                paragraph rawHtml: true, "<div class='bm-hint' style='padding-top:26px;'>Renaming moves its ${devs.size()} device${devs.size() == 1 ? '' : 's'} with it.</div>", width: 6
+                paragraph rawHtml: true, "<div class='bm-h' style='margin-top:4px;'>Devices here ${bmPill("${devs.size()}", devs ? "gray" : "amber")}</div>" +
+                    (devs ? locDeviceTable(devs, names) : "<div class='bm-hint'>No devices yet.</div>") + hubLinkScript()
+                if (pending == l.slot) {
+                    paragraph rawHtml: true, "<div class='bm-msg bm-msg-warn'>Remove <b>${bmEsc(l.name)}</b>? " +
+                        (devs ? "Its ${devs.size()} device${devs.size() == 1 ? '' : 's'} become unassigned." : "It has no devices.") + "</div>"
+                    input "locConfirmRemove", "button", title: "Remove", width: 3, styleClass: "bm-btn bm-btn-danger"
+                    input "locCancel", "button", title: "Cancel", width: 3, styleClass: "bm-btn"
+                } else {
+                    def others = all.findAll { getDeviceLocation(it.id) != l.name }
+                                    .sort { a, b -> a.displayName.trim().toLowerCase() <=> b.displayName.trim().toLowerCase() }
+                    if (others) {
+                        input "locMoveDevs", "enum", title: "Add devices here", required: false, multiple: true, width: 8,
+                              options: others.collectEntries { d ->
+                                  def cur = getDeviceLocation(d.id)
+                                  [(d.id as String): "${d.displayName.trim()} (${cur in names ? cur : 'unassigned'})".toString()]
+                              }
+                        input "locAddHereBtn", "button", title: "Add", width: 4, styleClass: "bm-btn bm-btn-primary bm-loc-add"
+                    }
+                    input "locRemove", "button", title: "<i class='fa-regular fa-trash-can' style='margin-right:6px;'></i>Remove location",
+                          width: 4, styleClass: "bm-btn bm-btn-danger"
+                }
+            }
+        }
+    }
+}
+
+private String locDeviceTable(List devs, List names) {
+    "<table class='bm-table'>" + devs.collect { d ->
+        def hi   = healthInfo(d)
+        def cur  = getDeviceLocation(d.id)
+        def note = cur && !(cur in names) ? " <span class='bm-hint'>· was ${bmEsc(cur)}</span>" : ""
+        "<tr><td>${hubLink("/device/edit/${d.id}", bmEsc(d.displayName))}${note}</td>" +
+        "<td style='text-align:right;white-space:nowrap;'>${protocolPill(d)}${bmPill(hi.label, hi.tone)}</td></tr>"
+    }.join("") + "</table>"
 }
 
 def portalPage() {
@@ -2750,16 +3330,6 @@ def portalPage() {
                     "3. Click <b>OAuth</b> at the top right, then <b>Enable OAuth in App</b>, then <b>Update</b><br>" +
                     "4. Come back and tap <b>Done</b>. The links appear here.</div>" + hubLinkScript()
             }
-        }
-    }
-}
-
-def appNamePage() {
-    dynamicPage(name: "appNamePage", title: "App Name", install: false) {
-        section {
-            paragraph rawHtml: true, bmPageCss() +
-                "<div class='bm-hint'>Rename how this app appears in your Hubitat Apps list. It updates when you return to the main page.</div>"
-            input "customAppName", "text", title: "App name", required: false
         }
     }
 }
@@ -3023,6 +3593,12 @@ def verificationPage() {
                         .sort { a, b -> a.displayName.trim().toLowerCase() <=> b.displayName.trim().toLowerCase() }
 
     dynamicPage(name: "verificationPage", title: "Verification", install: false) {
+        if (radioIssueText()) {
+            section {
+                paragraph rawHtml: true, bmPageCss() + "<div class='bm-msg bm-msg-warn'>${radioIssueText()} radio data couldn't be read, so those devices use basic verification. " +
+                    "If Hub Login Security is on, add your login under <b>Settings, General</b>.</div>"
+            }
+        }
         section {
             def statusRows = all.sort { x, y -> x.displayName.trim().toLowerCase() <=> y.displayName.trim().toLowerCase() }.collect { d ->
                 def hi  = healthInfo(d)
@@ -3107,8 +3683,13 @@ ${hubLinkScript()}
 // ============================================================
 def deviceManagePage(Map params = [:]) {
     def all = getAllMonitoredDevices().findAll { getProtocol(it) != "Unknown" }
-    int review = all.count { needsOverrideReview(it) }
-    int unassigned = all.count { !getDeviceLocation(it.id) }
+    // Still shown as an unsure type and not yet corrected by hand
+    int review = all.count { d ->
+        def po = settings["protocolOverride_${d.id}"]
+        isUnresolvableProtocol(getProtocol(d)) && !(po && po != "Auto-detect")
+    }
+    def rooms = getRoomOptions()
+    int unassigned = all.count { !(getDeviceLocation(it.id) in rooms) }
     dynamicPage(name: "deviceManagePage", title: "Device Management", install: false) {
         section(sectionClass: "bm-cards") {
             paragraph rawHtml: true, bmPageCss()
@@ -3122,7 +3703,7 @@ def deviceManagePage(Map params = [:]) {
         section {
             def notes = []
             if (unassigned) notes << "${unassigned} device${unassigned == 1 ? '' : 's'} without a location"
-            if (review)     notes << "${review} with a connection type to check"
+            if (review)     notes << "${review} showing as LAN, Hub Mesh, Virtual, or Hub Variable. Worth a check in Device actions with <b>Connection type unsure</b> on"
             if (notes) paragraph rawHtml: true, "<div class='bm-msg bm-msg-info'>${notes.join(' · ')}.</div>"
         }
     }
@@ -3241,6 +3822,7 @@ ${hi.note ? "<div class='bm-hint' style='margin:-6px 0 8px;'>${bmEsc(hi.note)}</
   <div class='bm-stat'><div class='bm-stat-label'>Usual check-in</div><div class='bm-stat-num'>${usual == "Learning" ? usual : "every " + usual}</div></div>
   <div class='bm-stat'><div class='bm-stat-label'>Verification</div><div class='bm-stat-num'>${verificationPill(device.id) ?: "<span class='bm-muted'>—</span>"}</div></div>
 </div>
+${zwRadioStatusHtml(device)}
 ${bmMsgHtml(msg)}
 ${hubLinkScript()}
 """
@@ -3309,9 +3891,43 @@ ${hubLinkScript()}
                 }
                 input "daReset", "button", title: "<i class='fa-solid fa-rotate-left' style='margin-right:6px;'></i>Reset history",
                       width: 4, styleClass: "bm-btn"
+                if (zwCanProbe(device)) {
+                    input "daRadioCheck", "button", title: "<i class='fa-solid fa-tower-broadcast' style='margin-right:6px;'></i>Check with hub radio",
+                          width: 4, styleClass: "bm-btn"
+                }
             }
         }
     }
+}
+
+/** On-demand hub radio check for the device open in Device actions. */
+private void runRadioCheck() {
+    def device = getAllMonitoredDevices().find { (it.id as String) == (state.daDeviceId as String) }
+    if (!device || !zwCanProbe(device)) return
+    def key = device.id as String
+    if ((atomicState.zwQueue ?: []).contains(key) || (atomicState.zwPending ?: [:]).containsKey(key)) {
+        state.daMessage = [tone: "warn", text: "<b>${bmEsc(device.displayName)}</b> is already being checked. Refresh in about a minute.".toString()]
+        return
+    }
+    zwEnqueue(device)
+    state.daMessage = [tone: "ok", text: "Checking <b>${bmEsc(device.displayName)}</b> with the hub radio. Refresh this page in about a minute for the result.".toString()]
+}
+
+private String zwRadioStatusHtml(device) {
+    if (!zwProbeable(device)) return ""
+    def key = device.id as String
+    def cap = state.deviceCapabilities?.get(key) ?: [:]
+    def txt
+    if ((atomicState.zwQueue ?: []).contains(key) || (atomicState.zwPending ?: [:]).containsKey(key)) {
+        txt = "🔄 Checking now. Refresh in about a minute."
+    } else if ((cap.zwMisses ?: 0) > 0) {
+        txt = "<span class='bm-c-red'>No answer on the last check (${Math.min(cap.zwMisses as int, ZW_MISS_LIMIT)} of ${ZW_MISS_LIMIT} in a row)</span>"
+    } else if (cap.zwConfirmedAt) {
+        txt = "<span class='bm-c-green'>Answered</span> ${formatTimeAgo(cap.zwConfirmedAt as Long)}"
+    } else {
+        txt = "Not checked yet"
+    }
+    return "<div class='bm-hint' style='margin:-2px 0 8px;'><b>Hub radio:</b> ${txt}</div>"
 }
 
 private void runDeviceAction() {
@@ -3535,7 +4151,7 @@ private List tipsTopics() {
         [id: "quiet", label: "Quiet devices", title: "Quiet: idle, not lost", group: "Health", icon: "pi-moon",
             body: "<p>A device that would be Fair but has confirmed it's reachable shows as <b>Quiet</b> and isn't counted as an issue.</p>" +
                 "<p><b>Verified reachable</b> means real confirmation: a check-in, a state event, or a Hue/Konnected bridge round-trip. " +
-                "<b>Responded to refresh, unconfirmed</b> means a Zigbee or Z-Wave refresh didn't fail, which isn't proof the device received it. " +
+                "<b>Responded to refresh, unconfirmed</b> means a refresh didn't fail but delivery couldn't be confirmed (when hub radio data isn't available). " +
                 "That provisional trust lasts up to 2x the offline threshold, then the device shows its real status for a full threshold before it can go Quiet again.</p>"],
         [id: "verify", label: "How verification works", title: "How verification works", group: "Verification", icon: "pi-check-circle",
             body: "<p>When a device drops to Poor or Offline, the app tries to confirm it's still reachable before alerting you.</p>",
@@ -3545,7 +4161,24 @@ private List tipsTopics() {
                 [title: "Hold at Fair", detail: "A pingable device entering Poor is held at Fair for one scan while it's checked."],
                 [title: "Resets on recovery", detail: "Back to Good or Excellent, verification starts fresh next time."]
             ],
-            warning: "<b>A Zigbee or Z-Wave refresh that succeeds isn't full proof.</b><br>Hubitat hands the command to the mesh without confirming delivery, so it's treated as provisional."],
+            warning: "<b>A refresh that succeeds isn't proof on its own.</b><br>Hubitat hands the command to the mesh without confirming delivery. " +
+                "Z-Wave and Zigbee devices are confirmed through the hub's radio data instead. See <b>Hub radio check</b>."],
+        [id: "zwave", label: "Hub radio check", title: "Hub radio check (Z-Wave and Zigbee)", group: "Verification", icon: "pi-wifi",
+            body: "<p>Many devices answer the hub without creating an event, because their state didn't change. Last Activity never moves, " +
+                "so they can look dead when they're fine. DHM reads the hub's own radio data instead, the same data behind <b>Z-Wave Details</b> and <b>Zigbee Details</b>, " +
+                "which records every message the hub actually hears, whatever driver the device uses.</p>" +
+                "<p><b>Mains devices</b> (Z-Wave, and Zigbee without a battery) are sent a refresh, then DHM checks whether the hub heard the answer. " +
+                "Checks go out about one per second so they never crowd out your normal commands.</p>" +
+                "<p><b>Battery devices</b> sleep, so they're never probed. Their own check-ins still count as activity (Zigbee messages always do), " +
+                "and a silent one reaches Offline through the offline timer.</p>",
+            checklist: [
+                [title: "Answered", detail: "Confirmed reachable and back to healthy."],
+                [title: "Missed once or twice (mains devices)", detail: "Shown as No answer. One miss can be a mesh hiccup."],
+                [title: "Missed 3 checks in a row (mains devices)", detail: "Offline, whatever timing says. It keeps being checked, so recovery is caught."],
+                [title: "Check any time", detail: "Device actions, Check with hub radio. Deep verification checks every unconfirmed device at once."]
+            ],
+            warning: "<b>Using Hub Login Security?</b><br>DHM needs your hub login to read radio data. " +
+                "Enter it under <b>Settings, General</b>. Without it, devices are still monitored but can't be confirmed through the hub radio."],
         [id: "bridges", label: "Hue and Konnected", title: "Hue and Konnected devices", group: "Verification", icon: "pi-sitemap",
             body: "<p>Add your <b>Hue Bridge</b> (or CoCoHue Bridge) and <b>Konnected Alarm Panel</b> to monitored devices. " +
                 "When a bulb or sensor goes Poor or Offline, the app refreshes the bridge or panel. That's a real network round-trip, so success confirms the device immediately, even if it has sat untouched for weeks.</p>"],
@@ -3916,4 +4549,3 @@ private String daStylesHtml() {
 </style>
 """
 }
-
