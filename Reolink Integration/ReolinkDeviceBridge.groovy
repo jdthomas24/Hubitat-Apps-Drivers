@@ -1,6 +1,6 @@
 /**
  * Reolink Device Bridge (Internal Parent Driver)
- * Version: 1.6.2
+ * Version: 1.6.3
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- ONE instance per SOURCE (Hub/NVR or standalone).
@@ -58,6 +58,22 @@
  *    restore; separate virtual child devices for the switch/buttons) were
  *    built, tested, and fully replaced by the above during development --
  *    neither exists in the code anymore.
+ *
+ * v1.6.3 -- Connection watchdog and logging rework:
+ *  - Fixes a 1.6.2 regression: the atomicState timestamp was overwritten by
+ *    this driver's own state saves (they share storage), so every connection
+ *    looked stale at the first keepalive (~25s) and reconnected forever.
+ *    Traffic time now lives in an in-memory map (LAST_REAL_TRAFFIC) that no
+ *    save can overwrite; a missing entry (reboot, driver save) counts as fresh.
+ *  - Stale threshold 90s -> 180s.
+ *  - Routine reconnects are silent. Warn once when a source goes offline (3rd
+ *    consecutive attempt), info when it's back, error on giving up, and warn
+ *    once if it reconnects more than 5 times in 10 minutes (flapping).
+ *  - The app pushes its log level here (setLogRank), so suppressed messages
+ *    never make the cross-device call to the app.
+ *  - Keepalive replies (cmd_id 93) handled quietly instead of as unrecognized.
+ *  - isEventConnectionAlive() lets the app restart a subscription whose
+ *    socket didn't survive a reboot or driver reload.
  *
  * v1.6.2 -- lastRealMessageAt moved from state to atomicState. Hubitat saves
  * state when each execution finishes, so a sendKeepalive() execution that
@@ -371,7 +387,88 @@ def receiveRecordingResult(String summary) {
 // existed since 1.4.4 but was found missing from this method entirely
 // during a real 5-day-silent production outage; see the v1.5.3 header
 // note and ParentApp.groovy's matching note for the full incident.
-@Field static final int STALE_CONNECTION_THRESHOLD_SEC = 90
+@Field static final int STALE_CONNECTION_THRESHOLD_SEC = 180
+
+// v1.6.3: last genuine inbound traffic per bridge, in memory only. Never
+// persisted, so no state/atomicState save can overwrite it with a stale copy.
+@Field static final java.util.concurrent.ConcurrentHashMap<String, Long> LAST_REAL_TRAFFIC =
+    new java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+private void markRealTraffic() {
+    LAST_REAL_TRAFFIC.put(device.id.toString(), now())
+}
+
+/** Millis since last real traffic; a missing entry is treated as fresh and stamped now. */
+private long msSinceRealTraffic() {
+    Long last = LAST_REAL_TRAFFIC.get(device.id.toString())
+    if (last == null) {
+        markRealTraffic()
+        return 0L
+    }
+    return now() - last
+}
+
+// v1.6.3: app log level, cached per bridge (0 Errors Only, 1 Normal, 2 Full).
+// Missing (reboot/driver save) = unknown, so messages forward and the app decides.
+@Field static final java.util.concurrent.ConcurrentHashMap<String, Integer> LOG_RANK =
+    new java.util.concurrent.ConcurrentHashMap<String, Integer>()
+
+void setLogRank(Integer rank) {
+    if (rank != null) LOG_RANK.put(device.id.toString(), rank)
+}
+
+private boolean wantLog(int tier) {
+    Integer rank = LOG_RANK.get(device.id.toString())
+    return rank == null || rank >= tier
+}
+
+private void logN(msg) { if (wantLog(1)) parent?.logNormal(msg) }
+private void logF(msg) { if (wantLog(2)) parent?.logFull(msg) }
+
+// v1.6.3: flapping detection, in memory. Warn once past FLAP_LIMIT reconnects
+// in FLAP_WINDOW_MS; cleared (with an info line) once the window is quiet.
+@Field static final int OFFLINE_WARN_ATTEMPT = 3
+@Field static final int FLAP_LIMIT = 5
+@Field static final long FLAP_WINDOW_MS = 600000L
+@Field static final java.util.concurrent.ConcurrentHashMap<String, List> RECONNECT_TIMES =
+    new java.util.concurrent.ConcurrentHashMap<String, List>()
+@Field static final java.util.concurrent.ConcurrentHashMap<String, Boolean> FLAP_WARNED =
+    new java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+private List recentReconnects() {
+    long n = now()
+    return (RECONNECT_TIMES.get(device.id.toString()) ?: []).findAll { n - (it as Long) < FLAP_WINDOW_MS }
+}
+
+private void noteReconnect() {
+    String id = device.id.toString()
+    List recent = recentReconnects()
+    recent << now()
+    RECONNECT_TIMES.put(id, recent)
+    if (recent.size() > FLAP_LIMIT && !FLAP_WARNED.containsKey(id)) {
+        FLAP_WARNED.put(id, true)
+        log.warn "Reolink Device Bridge (source ${state.sourceId}): event connection unstable, " +
+            "${recent.size()} reconnects in the last 10 minutes"
+    }
+}
+
+private void clearFlapIfCalm() {
+    String id = device.id.toString()
+    if (!FLAP_WARNED.containsKey(id)) return
+    List recent = recentReconnects()
+    RECONNECT_TIMES.put(id, recent)
+    if (!recent) {
+        FLAP_WARNED.remove(id)
+        log.info "Reolink Device Bridge (source ${state.sourceId}): event connection stable again"
+    }
+}
+
+/** For the app: true only with live evidence (subscribed and real traffic within the stale threshold). */
+def isEventConnectionAlive() {
+    if (state.stage != "SUBSCRIBED") return false
+    Long last = LAST_REAL_TRAFFIC.get(device.id.toString())
+    return last != null && (now() - last) <= (STALE_CONNECTION_THRESHOLD_SEC * 1000L)
+}
 
 @Field static final String LOGIN_XML =
     '<?xml version="1.0" encoding="UTF-8" ?><body><LoginUser version="1.1"><userName>%s</userName>' +
@@ -397,7 +494,8 @@ def startEventSubscription(boolean isReconnect = false) {
     unschedule("closeSocket")
     state.eventSubscriptionWanted = true
 
-    parent?.logNormal "Reolink Device Bridge (source ${state.sourceId}): ${isReconnect ? 'reconnecting' : 'starting'}"
+    String startMsg = "Reolink Device Bridge (source ${state.sourceId}): ${isReconnect ? 'reconnecting' : 'starting'}"
+    if (isReconnect) { logF(startMsg) } else { logN(startMsg) }
     if (!isReconnect) {
         state.reconnectAttempts = 0
         unschedule("reconnectEventSubscription")
@@ -412,7 +510,8 @@ def startEventSubscription(boolean isReconnect = false) {
     state.last145 = [:]
     // v1.5.3: reset on every (re)connect so a fresh connection never starts
     // out already looking stale to sendKeepalive()'s watchdog below.
-    atomicState.lastRealMessageAt = now()
+    markRealTraffic()
+    atomicState.remove("lastRealMessageAt")   // retired, see v1.6.3 note
     try {
         interfaces.rawSocket.connect(state.host, state.port as int, byteInterface: true)
     } catch (e) {
@@ -431,7 +530,7 @@ def stopEventSubscription() {
     unschedule("sendNonceRequest")
     unschedule("closeSocket")
 
-    parent?.logNormal "Reolink Device Bridge (source ${state.sourceId}): stopping event subscription"
+    logN "Reolink Device Bridge (source ${state.sourceId}): stopping event subscription"
     unschedule("sendKeepalive")
     unschedule("flowTimeoutCheck")
     unschedule("reconnectEventSubscription")
@@ -460,12 +559,13 @@ def socketStatus(String status) {
             // reconnect flow below almost always. scheduleReconnect()
             // itself escalates to log.warn/log.error if it actually takes
             // more than one attempt.
-            parent?.logNormal "Reolink Device Bridge (source ${state.sourceId}): connection lost, scheduling reconnect"
+            logF "Reolink Device Bridge (source ${state.sourceId}): connection lost, scheduling reconnect"
+            noteReconnect()
             sendEvent(name: "connectionStatus", value: "reconnecting")
             parent?.componentEventConnectionStatus(this, state.sourceId, "reconnecting")
             scheduleReconnect()
         } else if (state.stage && state.stage != "DONE") {
-            parent?.logNormal "Reolink Device Bridge (source ${state.sourceId}): socket closed/errored mid-handshake (stage was ${state.stage})"
+            logF "Reolink Device Bridge (source ${state.sourceId}): socket closed/errored mid-handshake (stage was ${state.stage})"
             sendEvent(name: "connectionStatus", value: "disconnected")
             parent?.componentEventConnectionStatus(this, state.sourceId, "disconnected")
         }
@@ -476,29 +576,26 @@ def socketStatus(String status) {
 @Field static final int MAX_RECONNECT_ATTEMPTS = 10
 
 /**
- * v1.5.3 refinement: a real escalation ladder instead of a flat log.warn
- * on every attempt. A single reconnect attempt is routine (transient
- * network blip, brief camera hiccup, an IP lease renewing) and stays
- * silent by default; only a SECOND consecutive attempt -- meaning the
- * first one didn't resolve it -- escalates to log.warn, and exhausting
- * every attempt (a real, actionable failure) is log.error, not log.warn,
- * since that's the one outcome here that genuinely needs attention.
+ * v1.6.3: attempts are silent; the 3rd consecutive attempt warns once that the
+ * source is offline (polling meanwhile), giving up is an error, and the next
+ * successful subscribe logs "back online".
  */
 private void scheduleReconnect() {
     int attempt = (state.reconnectAttempts ?: 0) + 1
     state.reconnectAttempts = attempt
     if (attempt > MAX_RECONNECT_ATTEMPTS) {
-        log.error "Reolink Device Bridge (source ${state.sourceId}): giving up after ${MAX_RECONNECT_ATTEMPTS} attempts -- falling back to polling"
+        log.error "Reolink Device Bridge (source ${state.sourceId}): event connection offline, giving up after ${MAX_RECONNECT_ATTEMPTS} attempts -- falling back to polling"
         sendEvent(name: "connectionStatus", value: "disconnected")
         parent?.componentEventConnectionStatus(this, state.sourceId, "disconnected")
         return
     }
     int delaySec = Math.min(300, 5 * (int) Math.pow(2, attempt - 1))
-    if (attempt == 1) {
-        parent?.logNormal "Reolink Device Bridge (source ${state.sourceId}): reconnect attempt ${attempt}/${MAX_RECONNECT_ATTEMPTS} in ${delaySec}s"
-    } else {
-        log.warn "Reolink Device Bridge (source ${state.sourceId}): reconnect attempt ${attempt}/${MAX_RECONNECT_ATTEMPTS} in ${delaySec}s"
+    if (attempt == OFFLINE_WARN_ATTEMPT) {
+        state.offlineWarned = true
+        log.warn "Reolink Device Bridge (source ${state.sourceId}): event connection offline after ${attempt - 1} " +
+            "failed reconnects, still retrying (polling meanwhile)"
     }
+    logF "Reolink Device Bridge (source ${state.sourceId}): reconnect attempt ${attempt}/${MAX_RECONNECT_ATTEMPTS} in ${delaySec}s"
     runIn(delaySec, "reconnectEventSubscription")
 }
 
@@ -519,7 +616,7 @@ def flowTimeoutCheck() {
         // v1.5.3 refinement: trigger-level event, same reasoning as
         // socketStatus() above -- silent by default, scheduleReconnect()
         // escalates if it doesn't resolve on the first attempt.
-        parent?.logNormal "Reolink Device Bridge (source ${state.sourceId}): timed out waiting for handshake response (stage ${state.stage}), scheduling reconnect"
+        logF "Reolink Device Bridge (source ${state.sourceId}): timed out waiting for handshake response (stage ${state.stage}), scheduling reconnect"
         try { interfaces.rawSocket.close() } catch (e) { }
         state.stage = null
         sendEvent(name: "connectionStatus", value: "reconnecting")
@@ -569,16 +666,16 @@ def sendKeepalive() {
         // an outbound send even though nothing real has come back in a
         // long time, so "the send succeeded" is not evidence the
         // connection is alive.
-        def lastReal = (atomicState.lastRealMessageAt ?: 0) as Long
-        if (now() - lastReal > (STALE_CONNECTION_THRESHOLD_SEC * 1000L)) {
+        if (msSinceRealTraffic() > (STALE_CONNECTION_THRESHOLD_SEC * 1000L)) {
             // v1.5.3 refinement: this is the TRIGGER for a reconnect, not
             // yet evidence of a real problem -- silent by default
             // (logNormal, not log.warn). scheduleReconnect() below is what
             // actually escalates to log.warn/log.error, based on whether
             // this resolves on the first attempt or needs more.
-            parent?.logNormal "Reolink Device Bridge (source ${state.sourceId}): no real traffic received in " +
+            logF "Reolink Device Bridge (source ${state.sourceId}): no real traffic received in " +
                 "${STALE_CONNECTION_THRESHOLD_SEC}s despite reporting connected, treating as a dead " +
                 "(likely half-open) connection and forcing a reconnect"
+            noteReconnect()
             unschedule("sendKeepalive")
             try { interfaces.rawSocket.close() } catch (e) { }
             state.stage = null
@@ -590,7 +687,8 @@ def sendKeepalive() {
         try {
             byte[] header = buildHeader1464(93, 0, HOST_CH_ID, nextMessId(), 0)
             sendRaw(header)
-            parent?.logFull "Reolink Device Bridge (source ${state.sourceId}): keepalive sent, connection healthy"
+            logF "Reolink Device Bridge (source ${state.sourceId}): keepalive sent, connection healthy"
+            clearFlapIfCalm()
         } catch (e) {
             log.warn "Reolink Device Bridge (source ${state.sourceId}): keepalive send failed: ${e.message}"
         }
@@ -614,19 +712,23 @@ def sendKeepalive() {
  */
 def isEventConnectionStale(Integer thresholdSec) {
     if (state.stage != "SUBSCRIBED") return false
-    def lastReal = (atomicState.lastRealMessageAt ?: 0) as Long
-    return (now() - lastReal) > (thresholdSec * 1000L)
+    return msSinceRealTraffic() > (thresholdSec * 1000L)
 }
 
 private void handlePushedEvent(int cmdId, String bodyText) {
+    // v1.6.3: keepalive replies are expected; processBuffer() already counted them as traffic.
+    if (cmdId == 93) {
+        logF "Reolink Device Bridge (source ${state.sourceId}): keepalive acknowledged (cmd_id 93)"
+        return
+    }
     if (!bodyText?.trim()) {
-        parent?.logFull "Reolink Device Bridge (source ${state.sourceId}): cmd_id ${cmdId} body empty/undecoded, skipping"
+        logF "Reolink Device Bridge (source ${state.sourceId}): cmd_id ${cmdId} body empty/undecoded, skipping"
         return
     }
     if (cmdId == 33) {
         def elements = findAllChannelElements(bodyText, "AlarmEvent")
         if (!elements) return
-        parent?.logFull "Reolink Device Bridge (source ${state.sourceId}): cmd_id 33 push parsed OK, channels present: ${elements.keySet().sort()}"
+        logF "Reolink Device Bridge (source ${state.sourceId}): cmd_id 33 push parsed OK, channels present: ${elements.keySet().sort()}"
         def last = state.last33 ?: [:]
         elements.each { chId, elem ->
             def status = elem?.status?.text()
@@ -640,7 +742,7 @@ private void handlePushedEvent(int cmdId, String bodyText) {
             // real report where a physical press never triggered push(1)
             // even though manually calling push() on the device page
             // worked fine.
-            parent?.logFull "Reolink Device Bridge (source ${state.sourceId}) ch ${chId}: cmd_id 33 raw event -- status='${status}', AItype='${aiType}'"
+            logF "Reolink Device Bridge (source ${state.sourceId}) ch ${chId}: cmd_id 33 raw event -- status='${status}', AItype='${aiType}'"
             def key = chId.toString()
             def prev = last[key]
             if (prev == null || prev.status != status || prev.aiType != aiType) {
@@ -667,7 +769,7 @@ private void handlePushedEvent(int cmdId, String bodyText) {
         // snippet) rather than dropped silently -- meaning if a doorbell
         // ring ever arrives under some OTHER cmd_id, it's discoverable
         // instead of vanishing without a trace.
-        parent?.logFull "Reolink Device Bridge (source ${state.sourceId}): unrecognized cmd_id ${cmdId} pushed " +
+        logF "Reolink Device Bridge (source ${state.sourceId}): unrecognized cmd_id ${cmdId} pushed " +
             "(not currently handled) -- body (first 300 chars): ${bodyText.take(300)}"
     }
 }
@@ -685,7 +787,7 @@ private Map findAllChannelElements(String xml, String elementName) {
         }
         return result
     } catch (e) {
-        parent?.logFull "Reolink Device Bridge (source ${state.sourceId}): failed to parse pushed event XML: ${e.message}"
+        logF "Reolink Device Bridge (source ${state.sourceId}): failed to parse pushed event XML: ${e.message}"
         return [:]
     }
 }
@@ -718,7 +820,7 @@ private void processBuffer() {
         def detail = "Chunk position ${chunkPos} (0 = first message in this TCP read, 1+ = Nth message " +
             "after successfully parsing ${chunkPos} earlier message(s) from the SAME read). Previous msg: " +
             "${state.lastMsg}. Failing buffer (first 240 hex chars): ${hex.take(240)}"
-        parent?.logFull "Reolink Device Bridge (source ${state.sourceId}): invalid magic header, dropping buffer " +
+        logF "Reolink Device Bridge (source ${state.sourceId}): invalid magic header, dropping buffer " +
             "(${recent.size()} in the last 60s). ${detail}"
 
         // Scans forward within the SAME buffer for the next real occurrence
@@ -739,7 +841,7 @@ private void processBuffer() {
         }
         int nextIdx = findNextMagicHeaderIndex(hex, 2)
         if (nextIdx > 0) {
-            parent?.logFull "Reolink Device Bridge (source ${state.sourceId}): resyncing -- found next magic header " +
+            logF "Reolink Device Bridge (source ${state.sourceId}): resyncing -- found next magic header " +
                 "${(nextIdx / 2) as Integer} bytes in, discarding only the leading garbage instead of the whole buffer"
             state.rxBufferHex = hex.substring(nextIdx)
             processBuffer()
@@ -788,7 +890,7 @@ private void processBuffer() {
     // a successfully-parsed message is genuine traffic, regardless of
     // cmd_id, so this is stamped here rather than only on cmd_id 33/145
     // pushes.
-    atomicState.lastRealMessageAt = now()
+    markRealTraffic()
 
     if (state.rxBufferHex?.length() >= 40) {
         processBuffer()
@@ -858,11 +960,20 @@ private void handleMessage(int cmdId, String bodyText) {
             sendSubscribe()
             break
         case "AWAITING_SUBSCRIBE":
+            def wasReconnect = (state.reconnectAttempts ?: 0) > 0
+            def wasOffline = state.offlineWarned == true
             state.stage = "SUBSCRIBED"
             state.reconnectAttempts = 0
+            state.remove("offlineWarned")
             unschedule("flowTimeoutCheck")
             runIn(25, "sendKeepalive")
-            parent?.logNormal "Reolink Device Bridge (source ${state.sourceId}): event subscription ACTIVE"
+            if (wasOffline) {
+                log.info "Reolink Device Bridge (source ${state.sourceId}): event connection back online"
+            } else if (wasReconnect) {
+                logF "Reolink Device Bridge (source ${state.sourceId}): event subscription ACTIVE (reconnected)"
+            } else {
+                logN "Reolink Device Bridge (source ${state.sourceId}): event subscription ACTIVE"
+            }
             sendEvent(name: "connectionStatus", value: "connected")
             parent?.componentEventConnectionStatus(this, state.sourceId, "connected")
             break
