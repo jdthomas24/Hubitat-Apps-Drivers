@@ -1,6 +1,6 @@
 {
     "packageName": "Device Health Monitor",
-    "releaseNotes": "v1.6.0 is a major UI refresh with phone-friendly pages, a Needs attention list, and one-stop Device and Bulk actions. Fixes device snoozes that never stuck, notification devices ignoring the notifications switch, Send Now reporting sent when nothing went out, and the portal's last scan time. If summaries stop arriving, check that Notifications is On.",
+    "releaseNotes": "v1.7.0 reads the hub's own Z-Wave and Zigbee radio data, so quiet devices that answer without creating events are no longer flagged Offline. Mains devices are probed and need 3 missed checks in a row for Offline. Adds a Check with hub radio button, a new General page, and a rebuilt Locations page where renaming a location keeps its devices. After updating, tap Done and run Deep verification once. Hub Login Security users: enter your login under Settings, General.v1.6.0 is a major UI refresh with phone-friendly pages, a Needs attention list, and one-stop Device and Bulk actions. Fixes device snoozes that never stuck, notification devices ignoring the notifications switch, Send Now reporting sent when nothing went out, and the portal's last scan time. If summaries stop arriving, check that Notifications is On.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Device%20Health%20Monitor",
     "communityLink": "https://community.hubitat.com/t/release-device-health-monitor/163229",
     "author": "jdthomas24",
