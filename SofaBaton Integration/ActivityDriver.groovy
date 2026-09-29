@@ -17,7 +17,10 @@
      -Webhook: spaces in Sofabaton URLs are encoded (raw spaces were rejected
       instantly and looked like 408s). Each resp.* read is wrapped separately,
       since AsyncResponse throws on empty fields.
-     -syncOn()/syncOff() are local state only, called by the Remote.
+     -X1S: bodyValue is what the Sofabaton IP control device sends. The Remote matches it
+  directly to turn this activity on.
+ -syncOn()/syncOff() are local state only, called by the Remote. Not declared as
+  commands on purpose: as buttons they'd change Hubitat's state without the hub.
  -Log level comes from the app via the Remote.
 */
 
@@ -37,13 +40,12 @@ metadata {
         attribute "onHub", "string"
         attribute "lastCallStatus", "string"
         attribute "lastCallTime", "string"
-
-        command "syncOn"
-        command "syncOff"
+        attribute "bodyValue", "string"
     }
     preferences {
         input name: "webhookUrlOn", type: "text", title: "Start Activity Webhook URL (X1S)", required: false
         input name: "webhookUrlOff", type: "text", title: "Stop Activity Webhook URL (X1S, optional)", required: false
+        input name: "bodyValue", type: "text", title: "Body Value (X1S, sent by the Sofabaton IP control device)", required: false
         input name: "sofabatonActivityId", type: "number", title: "Sofabaton Activity ID (X2, set automatically)", required: false
     }
 }
@@ -56,6 +58,7 @@ void updated() {
     if (sofabatonActivityId != null) {
         sendEvent(name: "sofabatonActivityId", value: sofabatonActivityId)
     }
+    if (bodyValue) sendEvent(name: "bodyValue", value: bodyValue.trim())
 }
 
 // ============================================================
