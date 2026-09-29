@@ -21,7 +21,9 @@
       No refreshInterval (bounced to mainPage); button presses re-render instead.
      -uninstalled() must delete the Bridge, or everything under it is orphaned.
      -Model, MAC, and X1S IP set the DNI, so they're not editable. Remove and re-add.
-     -UI follows HubitatAppUiTemplate (Reolink v1.6.1, UI design by gopher.ny).
+     -Log level is the only logging control. It cascades App -> Bridge -> Remotes -> Activities.
+ -Refresh and Add Hub pause 1.5s so the page redraws after the hub's list reply (~0.3s).
+ -UI follows HubitatAppUiTemplate (Reolink v1.6.1, UI design by gopher.ny).
 */
 
 import groovy.transform.Field
@@ -74,6 +76,14 @@ def uninstalled() {
 
 def initialize() {
     getBridge()
+    pushLogLevel()
+}
+
+// Sends the app's level to every Sofabaton device via the Bridge.
+private void pushLogLevel() {
+    String level = currentLogLevel()
+    getBridge()?.setLogLevel(level)
+    state.pushedLogLevel = level
 }
 
 private String bridgeDni() {
@@ -119,6 +129,7 @@ void revertLogLevel() {
     state.remove("fullLogArmed")
     if (currentLogLevel() == "Full") {
         app.updateSetting("logLevel", [value: "Errors Only", type: "enum"])
+        pushLogLevel()
         log.warn "${APP_NAME}: Full logging turned off after 30 minutes"
     }
 }
@@ -136,13 +147,16 @@ def mainPage() {
     clearActivitySettings()
     ["activitySaveRequested", "discoveryStarted", "findError"].each { state.remove(it) }
     armLogRevert()
+    if (state.pushedLogLevel != currentLogLevel()) pushLogLevel()
 
     def bridge = getBridge()
     def hubs = bridge?.getChildDevices() ?: []
     def x2Hubs = hubs.findAll { it.currentValue("hubModel") == "X2" }
     def x1sHubs = hubs.findAll { it.currentValue("hubModel") != "X2" }
-    int activityCount = (hubs.collect { (it.getChildDevices() ?: []).size() }.sum() ?: 0) as int
-    Map banner = bannerState(bridge, hubs, x2Hubs, activityCount)
+    List allActivities = hubs.collectMany { it.getChildDevices() ?: [] }
+    int removedCount = allActivities.count { it.currentValue("onHub") == "false" } as int
+    int activityCount = allActivities.size() - removedCount
+    Map banner = bannerState(bridge, hubs, x2Hubs, activityCount, removedCount)
 
     dynamicPage(name: "mainPage", install: true, uninstall: true) {
         section {
@@ -162,7 +176,8 @@ def mainPage() {
                     input name: "syncHub_${dni}", type: "button", title: "Refresh Activities", width: 4
                     input name: "removeHub_${dni}", type: "button", title: "Remove Hub", width: 4
                     activities.findAll { it.currentValue("onHub") == "false" }.each { act ->
-                        input name: "removeAct_${dni}_${act.deviceNetworkId}", type: "button", title: "Remove ${act.getLabel()}", width: 4
+                        input name: "removeAct_${dni}_${act.deviceNetworkId}", type: "button", title: "Remove ${act.getLabel()}", width: 4,
+                            backgroundColor: "#c62828", textColor: "white"
                     }
                 } else {
                     input name: "editHub_${dni}", type: "button", title: "Edit Hub", width: 6
@@ -202,8 +217,9 @@ def mainPage() {
 }
 
 // Green only when everything is confirmed. X2 needs a real reply from the hub.
-private Map bannerState(bridge, List hubs, List x2Hubs, int activityCount) {
-    String counts = "${countText(hubs.size(), 'hub')} &middot; ${countText(activityCount, 'activity', 'activities')}"
+private Map bannerState(bridge, List hubs, List x2Hubs, int activityCount, int removedCount) {
+    String counts = "${countText(hubs.size(), 'hub')} &middot; ${countText(activityCount, 'activity', 'activities')}" +
+        (removedCount ? " &middot; ${removedCount} removed from hub" : "")
     if (!hubs) {
         return [ok: false, title: "Setup required", summary: "Add a hub to get started. Tips &amp; Troubleshooting has the full walkthrough."]
     }
@@ -230,7 +246,8 @@ private String hubCardHtml(hub, List activities) {
     card << "<div style='border:1px solid #ccc;border-radius:10px;padding:12px 14px;margin:4px 0;background:#fafafa'>"
     String badge = x2 ? "#5f8b6f" : "#e8a33d"   // matches the Remote driver's pills
     card << "<div><span style='background:${badge};color:#fff;border-radius:8px;padding:2px 9px;font-size:0.9em;font-weight:bold'>${model}</span> "
-    card << "<span style='font-size:0.85em'>${hub.getLabel()}</span> "
+    card << "<a href='/device/edit/${hub.id}' target='_blank' class='sb-link' style='font-size:0.85em'>${hub.getLabel()}" +
+        "<i class='fa-regular fa-external-link' style='margin-left:5px;font-size:0.8em'></i></a> "
     card << "<span style='color:#888;font-size:0.8em'>${idShown}</span></div>"
     if (x2) {
         String seen = hub.currentValue("lastMqttMessage")
@@ -239,7 +256,7 @@ private String hubCardHtml(hub, List activities) {
     }
     if (!activities) {
         card << "<div style='margin-top:10px;color:#aaa;font-size:0.85em'>"
-        card << (x2 ? "No activities yet. They appear automatically once the hub replies." : "No activities yet. Tap Add an Activity.") << "</div>"
+        card << (x2 ? "Loading activities from the hub. Reload this page in a few seconds." : "No activities yet. Tap Add an Activity.") << "</div>"
     } else {
         card << "<div style='margin-top:10px;display:flex;flex-wrap:wrap;gap:8px'>"
         activities.each { act -> card << activityPillHtml(act, x2) }
@@ -249,20 +266,21 @@ private String hubCardHtml(hub, List activities) {
     return card.toString()
 }
 
-// Green dot = on. X2 shows its ID, pending state, and a flag if deleted on the hub.
+// Opens the device in a new tab. Green dot = on. X2 shows its ID, pending state, and a flag if deleted on the hub.
 private String activityPillHtml(act, boolean x2) {
     String sw = act.currentValue("switch")
     String status = act.currentValue("activityStatus")
     String dot = "<span style='display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:${sw == 'on' ? '#2e9e5b' : '#bbb'}'></span>"
     String extra = ""
     if (x2) {
-        extra += " <span style='background:#455a64;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em;font-weight:bold'>ID ${act.currentValue('sofabatonActivityId') ?: '?'}</span>"
+        extra += " <span style='margin-left:6px;background:#455a64;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em;font-weight:bold'>ID ${act.currentValue('sofabatonActivityId') ?: '?'}</span>"
         if (status in ["starting", "stopping"]) extra += " <span style='color:#b26a00;font-size:0.8em'>${status}...</span>"
         if (act.currentValue("onHub") == "false") extra += " <span style='background:#c62828;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>Not on hub</span>"
     } else {
         extra += " <span style='background:#e8a33d;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>Webhook</span>"
     }
-    return "<span style='display:inline-flex;align-items:center;background:#e3eaf3;border-radius:20px;padding:6px 14px;font-size:0.9em'>${dot}${act.getLabel()}${extra}</span>"
+    return "<a href='/device/edit/${act.id}' target='_blank' class='sb-pill' title='Open ${act.getLabel()?.replace("'", "&#39;")}'>${dot}${act.getLabel()}${extra}" +
+        "<i class='fa-regular fa-external-link' style='margin-left:8px;font-size:0.75em;color:#1565c0'></i></a>"
 }
 
 private String mqttStatusHtml(bridge, List x2Hubs) {
@@ -487,6 +505,7 @@ private void createMqttHub(String name, String mac, boolean builtIn, String host
         if (pass) hub.updateSetting("mqttPass", [value: pass, type: "password"])
     }
     hub.updated()
+    pauseExecution(1500)   // let the first list reply land before mainPage redraws
     logDbg "createMqttHub() done, DNI $dni"
 }
 
@@ -629,6 +648,7 @@ def appButtonHandler(String btn) {
     }
     if (btn.startsWith("syncHub_")) {
         bridge?.getChildDevice(btn - "syncHub_")?.requestActivityList()
+        pauseExecution(1500)   // let the reply land before the page redraws
         return
     }
     if (btn.startsWith("removeHub_")) {
@@ -727,7 +747,7 @@ private List tipsTopics() {
                 "<p>Turning off any activity powers off the hub, the same as the remote's Power Off key. Turning off an activity that's already off does nothing. " +
                 "To change activities, just turn on the new one.</p>"],
         [id: "x2missing", label: "X2 activities missing", title: "X2 activities missing or out of date", group: "Troubleshooting", icon: "pi-exclamation-triangle",
-            body: "<p>Tap <b>Refresh Activities</b> on the hub. If the banner says <b>Waiting for your X2</b>, the hub isn't replying: " +
+            body: "<p>Activity lists refresh automatically every 3 hours. For an immediate update, tap <b>Refresh Activities</b> on the hub. If the banner says <b>Waiting for your X2</b>, the hub isn't replying: " +
                 "recheck X2 setup step 2, then run <b>Force Reconnect</b> on the Bridge device.</p>" +
                 "<p>An activity deleted in the Sofabaton app shows <b>Not on hub</b>, with a Remove button on the main page. It's never deleted automatically, so your rules don't break unexpectedly.</p>"],
         [id: "traffic", label: "What creates MQTT traffic", title: "What creates MQTT traffic", group: "Troubleshooting", icon: "pi-info-circle",
@@ -744,10 +764,11 @@ private List tipsTopics() {
                 "<p>X2 activities come from the hub, so remove them in the Sofabaton app first. Then tap Refresh Activities and use the Remove button that appears.</p>"],
 
         [id: "logging", label: "Log levels", title: "Log levels", group: "Logging", icon: "pi-file",
-            body: "<p>" + logLevelPill("Errors Only") + " Default. Warnings and errors only.</p>" +
-                "<p>" + logLevelPill("Normal") + " Errors plus hubs and activities added or changed.</p>" +
-                "<p>" + logLevelPill("Full") + " Everything. Use while troubleshooting. Turns itself off after 30 minutes.</p>" +
-                "<p>Each device also has its own debug logging toggle on its Preferences tab.</p>"]
+            body: "<p>The <b>Log level</b> on the main page is the only logging setting. It applies to this app and every Sofabaton device.</p>" +
+                "<p>" + logLevelPill("Errors Only") + " Default. Warnings and errors only.</p>" +
+                "<p>" + logLevelPill("Normal") + " Errors, plus activities turning on and off, and hubs or activities added or removed.</p>" +
+                "<p>" + logLevelPill("Full") + " Everything, including raw MQTT traffic. Use while troubleshooting. Turns itself off after 30 minutes.</p>" +
+                "<p>Logs appear under each device's name on Hubitat's <b>Logs</b> page. <b>View logs</b> in the banner shows this app only.</p>"]
     ]
 }
 
@@ -777,10 +798,11 @@ private String supportLinkHtml(String url, String iconClass, String title, Strin
 <a href='${url}' target='_blank' rel='noopener noreferrer'
    class='flex align-items-center gap-3 border-1 border-gray-200 border-round px-3 py-2 text-color no-underline'>
   <i class='${iconClass} text-blue-700 text-xl flex-shrink-0'></i>
-  <span class='min-w-0'>
+  <span class='min-w-0 flex-1'>
     <span class='block text-blue-700 font-semibold'>${title}</span>
     <span class='block text-color-secondary mt-1' style='font-size:14px;'>${subtitle}</span>
   </span>
+  <i class='fa-regular fa-external-link text-blue-700 flex-shrink-0'></i>
 </a>
 """
 }
@@ -796,6 +818,11 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
   .app-main-settings { float: right; width: 38%; border-left: 1px solid #e0e0e0; padding-left: 8px; box-sizing: border-box; }
   .app-main-content > .mdl-grid, .app-main-settings > .mdl-grid { padding: 4px 0 !important; }
   .app-main-support { clear: both; }
+  a.sb-pill { display: inline-flex; align-items: center; background: #e3eaf3; border-radius: 20px; padding: 6px 14px;
+    font-size: 0.9em; color: inherit; text-decoration: none; cursor: pointer; transition: background 0.15s; }
+  a.sb-pill:hover { background: #cfdcec; }
+  a.sb-link { color: #1565c0; text-decoration: none; }
+  a.sb-link:hover { text-decoration: underline; }
   .app-main-support button.hrefElem[name^='_action_href_tips'] { height: 61.5px; padding-bottom: 13.5px; box-sizing: border-box; }
   @media (max-width: 1000px) {
     .app-main-content, .app-main-settings { float: none; width: 100%; border-left: 0; padding-left: 0; }
@@ -829,10 +856,10 @@ private String loggingDetailsPopupHtml() {
     String details = """
 <div class='text-left text-color' style='max-width:520px;line-height:1.45;'>
   <div class='text-xl font-bold mb-1'>Logging levels</div>
-  <div class='text-color-secondary text-base mb-3'>Choose how much activity appears in the app logs.</div>
+  <div class='text-color-secondary text-base mb-3'>One setting for the app and every Sofabaton device.</div>
   ${logLevelDetailHtml("Errors Only", "Warnings and errors only.", current)}
-  ${logLevelDetailHtml("Normal", "Errors, plus hubs and activities added or changed.", current)}
-  ${logLevelDetailHtml("Full", "Everything. Use while troubleshooting. Turns off after 30 minutes.", current)}
+  ${logLevelDetailHtml("Normal", "Errors, plus activities turning on and off, and hubs or activities added or removed.", current)}
+  ${logLevelDetailHtml("Full", "Everything, including raw MQTT traffic. Use while troubleshooting. Turns off after 30 minutes.", current)}
 </div>
 """
     String js = groovy.json.JsonOutput.toJson(details)
