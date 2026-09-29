@@ -19,6 +19,8 @@
       Commands must be wrapped in "data" or the hub silently ignores them.
       Any off confirms as activity_id 255 (hub-wide off).
      -The hub is single-threaded: 200ms pause after every publish.
+ -The hub doesn't announce activity list changes, so lists refresh every 3 hours.
+ -Log level comes from the app and cascades Bridge -> Remotes -> Activities.
      -Unknown MACs seen on activity_control_up are kept for Add Hub's "Find My X2".
      -connectToBuiltInBroker may not fire mqttClientStatus, so a 3s check subscribes if needed.
      -Connection state comes from interfaces.mqtt.isConnected(). A state flag raced.
@@ -42,8 +44,7 @@ metadata {
         command "refreshAllActivities"
     }
     preferences {
-        input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: false
-        input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
+        input name: "loggingNote", type: "paragraph", element: "paragraph", title: "Logging", description: "Set in the Sofabaton Integration app (Log level). It applies to every Sofabaton device."
     }
 }
 
@@ -52,15 +53,23 @@ void installed() {
 }
 
 void updated() {
-    if (logEnable) runIn(1800, "logsOff")
     ["mqttConnected", "mqttUrl", "learnActive", "learnMac", "learnResult"].each { state.remove(it) }
     atomicState.remove("mqttUrl")
 }
 
-void logsOff() {
-    log.warn "Sofabaton Bridge: debug logging disabled..."
-    device.updateSetting("logEnable", [value: "false", type: "bool"])
+// ============================================================
+// Logging. Level is set by the app and cascades to children.
+// ============================================================
+
+void setLogLevel(String level) {
+    state.logLevel = level
+    getChildDevices()?.each { child ->
+        try { child.setLogLevel(level) } catch (e) { }
+    }
 }
+
+private boolean logNormal() { return state.logLevel in ["Normal", "Full"] }
+private boolean logFull() { return state.logLevel == "Full" }
 
 void uninstalled() {
     try { interfaces.mqtt.disconnect() } catch (e) { }
@@ -82,7 +91,9 @@ void uninstalled() {
 def createRemoteDevice(String dni, String label) {
     def existing = getChildDevice(dni)
     if (existing) return existing
-    return addChildDevice("jdthomas24", "Sofabaton Remote", dni, [label: label, isComponent: false])
+    def child = addChildDevice("jdthomas24", "Sofabaton Remote", dni, [label: label, isComponent: false])
+    child?.setLogLevel(state.logLevel)
+    return child
 }
 
 void removeRemoteDevice(String dni) {
@@ -116,7 +127,7 @@ void ensureMqttConnected(Boolean builtIn, String host = null, String port = null
     }
     String target = builtIn ? "built-in" : "tcp://${host}:${port ?: '1883'}"
     if (mqttUp() && atomicState.mqttTarget == target) {
-        if (logEnable) log.debug "Sofabaton Bridge: MQTT already connected to $target"
+        if (logFull()) log.debug "Sofabaton Bridge: MQTT already connected to $target"
         return
     }
     if (mqttUp()) {
@@ -157,7 +168,7 @@ void mqttClientStatus(String message) {
         onConnected()
         return
     }
-    if (logEnable) log.debug "Sofabaton Bridge: MQTT status: $message"
+    if (logFull()) log.debug "Sofabaton Bridge: MQTT status: $message"
 }
 
 // Fallback for connectToBuiltInBroker if no status callback arrived.
@@ -170,12 +181,13 @@ private void onConnected() {
     try {
         interfaces.mqtt.subscribe("activity/+/activity_control_up")
         interfaces.mqtt.subscribe("activity/+/list")
-        if (txtEnable) log.info "Sofabaton Bridge: MQTT connected and subscribed"
+        if (logNormal()) log.info "Sofabaton Bridge: MQTT connected and subscribed"
     } catch (e) {
         log.error "Sofabaton Bridge: MQTT subscribe failed: ${e.message}"
         return
     }
     runIn(1, "refreshAllActivities")
+    runEvery3Hours("refreshAllActivities")   // hub doesn't announce list changes
 }
 
 private boolean mqttUp() {
@@ -202,7 +214,7 @@ void forceReconnectMqtt() {
 def checkBuiltInBroker() {
     try {
         boolean running = MQTTHelper.isBuiltInBrokerRunning()
-        if (logEnable) log.debug "Sofabaton Bridge: isBuiltInBrokerRunning() = $running"
+        if (logFull()) log.debug "Sofabaton Bridge: isBuiltInBrokerRunning() = $running"
         sendEvent(name: "brokerRunning", value: running.toString())
         return running
     } catch (e) {
@@ -224,7 +236,7 @@ private boolean publishJson(String topic, Map payload) {
     String json = JsonOutput.toJson(payload)
     try {
         interfaces.mqtt.publish(topic, json)
-        if (logEnable) log.debug "Sofabaton Bridge: published $json to $topic"
+        if (logFull()) log.debug "Sofabaton Bridge: published $json to $topic"
         pauseExecution(200)
         return true
     } catch (e) {
@@ -234,13 +246,13 @@ private boolean publishJson(String topic, Map payload) {
 }
 
 boolean publishMqttActivityControl(String mac, Integer activityId, String desiredState) {
-    if (txtEnable) log.info "Sofabaton Bridge: sending activity $activityId $desiredState to $mac"
+    if (logNormal()) log.info "Sofabaton Bridge: sending activity $activityId $desiredState to $mac"
     return publishJson("activity/${mac}/activity_control_down", [data: [activity_id: activityId, state: desiredState]])
 }
 
 boolean requestActivityList(String mac) {
     if (!mqttUp()) return false   // onConnected() requests every hub's list
-    if (logEnable) log.debug "Sofabaton Bridge: requesting activity list from $mac"
+    if (logFull()) log.debug "Sofabaton Bridge: requesting activity list from $mac"
     return publishJson("activity/${mac}/list_request", [data: "activity_list"])
 }
 
@@ -255,7 +267,7 @@ void refreshAllActivities() {
 void parse(String description) {
     try {
         def msg = interfaces.mqtt.parseMessage(description)
-        if (logEnable) log.debug "Sofabaton Bridge: MQTT topic=${msg.topic}, payload=${msg.payload}"
+        if (logFull()) log.debug "Sofabaton Bridge: MQTT topic=${msg.topic}, payload=${msg.payload}"
         def parts = msg.topic.split("/")
         if (parts.length != 3 || parts[0] != "activity") return
         String mac = parts[1].toUpperCase()
@@ -275,7 +287,7 @@ void parse(String description) {
             List items = (json.data instanceof List ? json.data : []).collect {
                 [activity_id: it.activity_id as Integer, activity_name: it.activity_name?.toString()?.trim(), state: it.state?.toString()]
             }
-            if (txtEnable) log.info "Sofabaton Bridge: received ${items.size()} activities from ${hub.displayName}"
+            if (logNormal()) log.info "Sofabaton Bridge: received ${items.size()} activities from ${hub.displayName}"
             hub.receiveActivityList(items)
         }
     } catch (e) {
@@ -300,7 +312,7 @@ List getDiscoveredMacs() {
 
 private void rememberMac(String mac) {
     Map seen = state.discoveredMacs ?: [:]
-    if (!seen[mac] && txtEnable) log.info "Sofabaton Bridge: found X2 hub $mac"
+    if (!seen[mac] && logNormal()) log.info "Sofabaton Bridge: found X2 hub $mac"
     seen[mac] = now()
     if (seen.size() > 5) seen = seen.sort { a, b -> b.value <=> a.value }.take(5)
     state.discoveredMacs = seen
