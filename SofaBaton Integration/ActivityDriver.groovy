@@ -18,6 +18,7 @@
       instantly and looked like 408s). Each resp.* read is wrapped separately,
       since AsyncResponse throws on empty fields.
      -syncOn()/syncOff() are local state only, called by the Remote.
+ -Log level comes from the app via the Remote.
 */
 
 import groovy.transform.Field
@@ -44,8 +45,6 @@ metadata {
         input name: "webhookUrlOn", type: "text", title: "Start Activity Webhook URL (X1S)", required: false
         input name: "webhookUrlOff", type: "text", title: "Stop Activity Webhook URL (X1S, optional)", required: false
         input name: "sofabatonActivityId", type: "number", title: "Sofabaton Activity ID (X2, set automatically)", required: false
-        input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: false
-        input name: "txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
     }
 }
 
@@ -54,16 +53,21 @@ void installed() {
 }
 
 void updated() {
-    if (logEnable) runIn(1800, "logsOff")
     if (sofabatonActivityId != null) {
         sendEvent(name: "sofabatonActivityId", value: sofabatonActivityId)
     }
 }
 
-void logsOff() {
-    log.warn "$device.label: debug logging disabled..."
-    device.updateSetting("logEnable", [value: "false", type: "bool"])
+// ============================================================
+// Logging. Level is set by the app via the parent Remote.
+// ============================================================
+
+void setLogLevel(String level) {
+    state.logLevel = level
 }
+
+private boolean logNormal() { return state.logLevel in ["Normal", "Full"] }
+private boolean logFull() { return state.logLevel == "Full" }
 
 // ============================================================
 // Commands
@@ -84,7 +88,7 @@ void on() {
 void off() {
     if (isX2()) {
         if (device.currentValue("switch") == "off" && !pending()) {
-            if (txtEnable) log.info "$device.label: already off, nothing sent"
+            if (logNormal()) log.info "$device.label: already off, nothing sent"
             return
         }
         sendMqtt("off")
@@ -120,14 +124,14 @@ private void sendMqtt(String desired) {
         return
     }
     Integer id = sofabatonActivityId as Integer
-    if (logEnable) log.debug "$device.label: requesting activityId=$id state=$desired via ${parent.displayName}"
+    if (logFull()) log.debug "$device.label: requesting activityId=$id state=$desired via ${parent.displayName}"
     boolean sent = parent.componentPublishActivityControl(device, id, desired) ?: false
     sendEvent(name: "lastCallTime", value: new Date().toString())
     if (!sent) {
         sendEvent(name: "lastCallStatus", value: "failed (MQTT not connected)")
         return
     }
-    if (txtEnable) log.info "$device.label: ${desired == 'on' ? 'starting' : 'stopping'}, waiting for the hub to confirm"
+    if (logNormal()) log.info "$device.label: ${desired == 'on' ? 'starting' : 'stopping'}, waiting for the hub to confirm"
     sendEvent(name: "activityStatus", value: desired == "on" ? "starting" : "stopping")
     sendEvent(name: "lastCallStatus", value: "sent, waiting for hub")
     runIn(CONFIRM_TIMEOUT, "confirmTimeout")
@@ -153,8 +157,8 @@ void setHubInfo(String name, Boolean present) {
 
 private void sendWebhookCall(String url, String intendedState, Integer attempt) {
     String safeUrl = url?.trim()?.replace(" ", "%20")
-    if (safeUrl != url && logEnable) log.debug "$device.label: encoded webhook URL: $safeUrl"
-    if (txtEnable) log.info "$device.label: calling Sofabaton webhook (attempt $attempt) to set $intendedState"
+    if (safeUrl != url && logFull()) log.debug "$device.label: encoded webhook URL: $safeUrl"
+    if (logNormal()) log.info "$device.label: calling Sofabaton webhook (attempt $attempt) to set $intendedState"
     asynchttpGet("handleWebhookResponse", [uri: safeUrl, timeout: 20], [intendedState: intendedState, attempt: attempt, url: safeUrl])
 }
 
@@ -167,7 +171,7 @@ void handleWebhookResponse(resp, data) {
     try { bodyText = resp?.getData() ?: "none" } catch (e) { }
     boolean ok = (status != null && status >= 200 && status < 300)
     if (ok) {
-        if (txtEnable) log.info "$device.label: Sofabaton webhook call succeeded (${status})"
+        if (logNormal()) log.info "$device.label: Sofabaton webhook call succeeded (${status})"
         sendEvent(name: "switch", value: data.intendedState)
         sendEvent(name: "activityStatus", value: data.intendedState)
         sendEvent(name: "lastCallStatus", value: "success (${status})")
@@ -192,7 +196,7 @@ void retryWebhookCall(data) {
 void syncOn() {
     boolean wasPending = pending()
     unschedule("confirmTimeout")
-    if (device.currentValue("switch") != "on" && txtEnable) log.info "$device.label: now on"
+    if (device.currentValue("switch") != "on" && logNormal()) log.info "$device.label: now on"
     sendEvent(name: "switch", value: "on")
     sendEvent(name: "activityStatus", value: "on")
     if (wasPending) sendEvent(name: "lastCallStatus", value: "confirmed by hub")
@@ -201,7 +205,7 @@ void syncOn() {
 void syncOff() {
     boolean wasPending = pending()
     unschedule("confirmTimeout")
-    if (device.currentValue("switch") != "off" && txtEnable) log.info "$device.label: now off"
+    if (device.currentValue("switch") != "off" && logNormal()) log.info "$device.label: now off"
     sendEvent(name: "switch", value: "off")
     sendEvent(name: "activityStatus", value: "off")
     if (wasPending) sendEvent(name: "lastCallStatus", value: "confirmed by hub")
