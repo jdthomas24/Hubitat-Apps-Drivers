@@ -10,6 +10,7 @@
     Notes:
      -One Sofabaton activity as a Switch. sofabatonActivityId set = X2 over local
       MQTT (created automatically from the hub's list). Otherwise cloud webhook (X1S).
+      X1S without a webhook is "follow only": state syncs from the hub, on/off just warn.
      -X2 commands confirm in ~8-10s, after the hub's start/stop sequence. activityStatus
       shows starting/stopping until then; switch flips only on confirmation.
       No confirmation within 20s triggers a resync from the hub's activity list.
@@ -85,7 +86,7 @@ void on() {
         sendWebhookCall(webhookUrlOn, "on", 1)
         return
     }
-    log.error "$device.label: no webhook URL or Sofabaton Activity ID configured, cannot start this activity"
+    log.warn "$device.label: follow only (no webhook URL), Hubitat can't start this activity. Add one in the app to enable control."
 }
 
 void off() {
@@ -102,7 +103,7 @@ void off() {
         return
     }
     if (!webhookUrlOn) {
-        log.error "$device.label: no webhook URL or Sofabaton Activity ID configured, cannot stop this activity"
+        log.warn "$device.label: follow only (no webhook URL), Hubitat can't stop this activity. Add one in the app to enable control."
         return
     }
     log.warn "$device.label: no Stop Activity Webhook URL configured, setting local state only"
