@@ -8,29 +8,22 @@
     originated by Mike Maxwell (mike.maxwell).
 
     Notes:
-     -Grouping anchor. The app creates one Bridge; each hub is a Remote child,
-      and activities nest under their Remote.
-     -X1S needs nothing here beyond nesting. Its HTTP listener lives in the Remote driver.
-     -X2: all hubs share one MQTT connection. Wildcard subscriptions route
-      messages to Remote children by MAC (their DNI).
-     -Payload {"activity_id":<id>,"state":"on"/"off"}. activity_id 255 = hub-wide Power Off.
-     -Subscribes to both _up and _down until real delivery confirms which carries
-      state (hardware showed _up; yomonpet/ha-sofabaton-hub documents _down).
-     -KNOWN ISSUE: interfaces.mqtt connects and subscribes, but parse() never
-      receives messages (platform bug, minimal repro sent to gopher.ny).
-      Publishing to activity_control_down is also unconfirmed.
-     -Exact per-MAC topics were tested and also received nothing, ruling out
-      wildcards. Reverted, since exact topics also missed hubs added after connect.
-     -forceReconnectMqtt exists because ensureMqttConnected skips same-URL
-      reconnects, so a silently failed subscribe never retried. Commands need a
-      command "..." declaration to show as buttons.
-     -MQTTHelper needs a platform build that includes it. Older builds fail with
-      "unable to resolve class", and the sandbox blocks Class.forName as a workaround.
-     -Connection state comes from interfaces.mqtt.isConnected(), not a state flag.
-      A hand-kept state.mqttConnected raced: Force Reconnect's execution saved its
-      "false" after the connect callback had already saved "true".
-     -Remotes must clear their Activity children before deletion, or Hubitat
-      can leave orphans that block re-adding the same DNI.
+     -Grouping anchor: one Bridge, one Remote child per hub, Activities under each Remote.
+     -X2: one shared MQTT connection for all hubs, routed to Remotes by MAC (their DNI).
+      Requires Hubitat 2.5.2.126+ (MQTT delivery fix and connectToBuiltInBroker).
+     -Topics (from yomonpet/ha-sofabaton-hub source, confirmed on hardware 2026-09-29):
+        activity/{mac}/activity_control_up    hub state   {"activity_id":101,"state":"on"}
+        activity/{mac}/activity_control_down  control     {"data":{"activity_id":101,"state":"on"}}
+        activity/{mac}/list_request           request     {"data":"activity_list"}
+        activity/{mac}/list                   response    {"data":[{activity_id,state,activity_name}],"activity_count":n}
+      Commands must be wrapped in "data" or the hub silently ignores them.
+      Any off confirms as activity_id 255 (hub-wide off).
+     -The hub is single-threaded: 200ms pause after every publish.
+     -Unknown MACs seen on activity_control_up are kept for Add Hub's "Find My X2".
+     -connectToBuiltInBroker may not fire mqttClientStatus, so a 3s check subscribes if needed.
+     -Connection state comes from interfaces.mqtt.isConnected(). A state flag raced.
+     -Remotes must clear their Activity children before deletion, or Hubitat can
+      orphan them and block re-adding the same DNI.
 */
 
 import groovy.json.JsonSlurper
@@ -46,6 +39,7 @@ metadata {
         attribute "brokerRunning", "string"
         command "forceReconnectMqtt"
         command "checkBuiltInBroker"
+        command "refreshAllActivities"
     }
     preferences {
         input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: false
@@ -57,11 +51,10 @@ void installed() {
     log.info "Sofabaton Integration Bridge installed"
 }
 
-// MQTT connects on demand via ensureMqttConnected(), called by X2 Remote children.
 void updated() {
     if (logEnable) runIn(1800, "logsOff")
-    state.remove("mqttConnected")   // retired, see Notes
-    state.remove("mqttUrl")         // moved to atomicState
+    ["mqttConnected", "mqttUrl", "learnActive", "learnMac", "learnResult"].each { state.remove(it) }
+    atomicState.remove("mqttUrl")
 }
 
 void logsOff() {
@@ -107,26 +100,49 @@ void removeRemoteDevice(String dni) {
     }
 }
 
+private List x2Hubs() {
+    return getChildDevices()?.findAll { it.currentValue("hubModel") == "X2" } ?: []
+}
+
 // ============================================================
-// X2 MQTT
+// X2 MQTT connection
 // ============================================================
 
-// Idempotent. Only reconnects if the broker URL changed. Wildcard subscriptions
-// cover hubs added later, so no resubscribe is needed per hub.
-void ensureMqttConnected(String host, String port, String user = null, String pass = null) {
-    String url = "tcp://${host}:${port}"
-    if (mqttUp() && atomicState.mqttUrl == url) {
-        if (logEnable) log.debug "Sofabaton Bridge: MQTT already connected to $url"
+// Idempotent: reconnects only when the target broker changes.
+void ensureMqttConnected(Boolean builtIn, String host = null, String port = null, String user = null, String pass = null) {
+    if (!builtIn && !host) {
+        log.error "Sofabaton Bridge: external broker selected but no host set"
         return
     }
+    String target = builtIn ? "built-in" : "tcp://${host}:${port ?: '1883'}"
+    if (mqttUp() && atomicState.mqttTarget == target) {
+        if (logEnable) log.debug "Sofabaton Bridge: MQTT already connected to $target"
+        return
+    }
+    if (mqttUp()) {
+        try { interfaces.mqtt.disconnect() } catch (e) { }
+    }
+    atomicState.mqttTarget = target
+    sendEvent(name: "mqttStatus", value: "connecting")
+    String clientId = "sofabaton-hubitat-${device.id}"
     try {
-        if (mqttUp()) {
-            try { interfaces.mqtt.disconnect() } catch (e) { }
+        if (builtIn) {
+            if (checkBuiltInBroker() == false) {
+                log.error "Sofabaton Bridge: Hubitat's built-in MQTT broker isn't running. Enable it in MQTT Import Integration."
+                sendEvent(name: "mqttStatus", value: "broker off")
+                return
+            }
+            if (!interfaces.mqtt.connectToBuiltInBroker(clientId)) {
+                log.error "Sofabaton Bridge: connectToBuiltInBroker returned false"
+                sendEvent(name: "mqttStatus", value: "connect failed")
+                return
+            }
+            runIn(3, "verifyConnected")
+        } else {
+            interfaces.mqtt.connect(target, clientId, user ?: null, pass ?: null)
         }
-        atomicState.mqttUrl = url
-        interfaces.mqtt.connect(url, "sofabaton-hubitat-${device.id}", user ?: null, pass ?: null)
     } catch (e) {
-        log.error "Sofabaton Bridge: MQTT connection to $url failed: ${e.message}"
+        log.error "Sofabaton Bridge: MQTT connect to $target failed: ${e.message}${builtIn ? ' (the built-in broker option needs Hubitat 2.5.2.126 or newer)' : ''}"
         sendEvent(name: "mqttStatus", value: "connect failed")
     }
 }
@@ -138,40 +154,51 @@ void mqttClientStatus(String message) {
         return
     }
     if (message.contains("Connection succeeded")) {
-        log.info "Sofabaton Bridge: MQTT connected"
-        sendEvent(name: "mqttStatus", value: "connected")
-        try {
-            interfaces.mqtt.subscribe("activity/+/activity_control_up")
-            interfaces.mqtt.subscribe("activity/+/activity_control_down")
-            if (txtEnable) log.info "Sofabaton Bridge: MQTT subscribed"
-        } catch (e) {
-            log.error "Sofabaton Bridge: MQTT subscribe failed: ${e.message}"
-        }
+        onConnected()
         return
     }
     if (logEnable) log.debug "Sofabaton Bridge: MQTT status: $message"
 }
 
-// Live connection check. Replaces the old state.mqttConnected flag.
+// Fallback for connectToBuiltInBroker if no status callback arrived.
+void verifyConnected() {
+    if (mqttUp() && device.currentValue("mqttStatus") != "connected") onConnected()
+}
+
+private void onConnected() {
+    sendEvent(name: "mqttStatus", value: "connected")
+    try {
+        interfaces.mqtt.subscribe("activity/+/activity_control_up")
+        interfaces.mqtt.subscribe("activity/+/list")
+        if (txtEnable) log.info "Sofabaton Bridge: MQTT connected and subscribed"
+    } catch (e) {
+        log.error "Sofabaton Bridge: MQTT subscribe failed: ${e.message}"
+        return
+    }
+    runIn(1, "refreshAllActivities")
+}
+
 private boolean mqttUp() {
     try { return interfaces.mqtt.isConnected() } catch (e) { return false }
 }
 
-// Full disconnect/reconnect/resubscribe. An X2 Remote resupplies broker credentials.
 void forceReconnectMqtt() {
     log.info "Sofabaton Bridge: forcing MQTT reconnect"
+    String target = atomicState.mqttTarget
     try { interfaces.mqtt.disconnect() } catch (e) { }
-    atomicState.remove("mqttUrl")
+    atomicState.remove("mqttTarget")
     sendEvent(name: "mqttStatus", value: "reconnecting")
-    def x2Hub = getChildDevices()?.find { it.currentValue("hubModel") == "X2" }
-    if (x2Hub) {
-        x2Hub.updated()
+    List hubs = x2Hubs()
+    if (hubs) {
+        hubs[0].updated()   // resupplies broker settings and reconnects
+    } else if (target == "built-in") {
+        ensureMqttConnected(true)
     } else {
-        log.warn "Sofabaton Bridge: no X2 hub found to resupply broker credentials"
+        log.warn "Sofabaton Bridge: no X2 hub found to resupply broker details"
     }
 }
 
-// Built-in broker only. Returns null if the check fails. Called by the app's MQTT card.
+// Returns null if the check fails. Called by the app's MQTT card.
 def checkBuiltInBroker() {
     try {
         boolean running = MQTTHelper.isBuiltInBrokerRunning()
@@ -185,84 +212,96 @@ def checkBuiltInBroker() {
     }
 }
 
+// ============================================================
+// Publishing
+// ============================================================
+
+private boolean publishJson(String topic, Map payload) {
+    if (!mqttUp()) {
+        log.warn "Sofabaton Bridge: MQTT not connected, can't publish to $topic"
+        return false
+    }
+    String json = JsonOutput.toJson(payload)
+    try {
+        interfaces.mqtt.publish(topic, json)
+        if (logEnable) log.debug "Sofabaton Bridge: published $json to $topic"
+        pauseExecution(200)
+        return true
+    } catch (e) {
+        log.error "Sofabaton Bridge: MQTT publish to $topic failed: ${e.message}"
+        return false
+    }
+}
+
+boolean publishMqttActivityControl(String mac, Integer activityId, String desiredState) {
+    if (txtEnable) log.info "Sofabaton Bridge: sending activity $activityId $desiredState to $mac"
+    return publishJson("activity/${mac}/activity_control_down", [data: [activity_id: activityId, state: desiredState]])
+}
+
+boolean requestActivityList(String mac) {
+    if (!mqttUp()) return false   // onConnected() requests every hub's list
+    if (logEnable) log.debug "Sofabaton Bridge: requesting activity list from $mac"
+    return publishJson("activity/${mac}/list_request", [data: "activity_list"])
+}
+
+void refreshAllActivities() {
+    x2Hubs().each { requestActivityList(it.deviceNetworkId) }
+}
+
+// ============================================================
+// Receiving
+// ============================================================
+
 void parse(String description) {
     try {
         def msg = interfaces.mqtt.parseMessage(description)
-        if (logEnable) log.debug "Sofabaton Bridge: RAW MQTT topic=${msg.topic}, payload=${msg.payload}"
+        if (logEnable) log.debug "Sofabaton Bridge: MQTT topic=${msg.topic}, payload=${msg.payload}"
         def parts = msg.topic.split("/")
-        if (parts.length < 3 || parts[0] != "activity" || !(parts[2] in ["activity_control_up", "activity_control_down"])) {
-            if (logEnable) log.debug "Sofabaton Bridge: ignoring topic ${msg.topic}"
-            return
-        }
-        // Tells us which direction carries state once delivery works.
-        if (logEnable) log.debug "Sofabaton Bridge: message arrived on '${parts[2]}'"
-        String mac = parts[1]
+        if (parts.length != 3 || parts[0] != "activity") return
+        String mac = parts[1].toUpperCase()
+        String leaf = parts[2]
         def json = new JsonSlurper().parseText(msg.payload)
-        Integer activityId = json.activity_id as Integer
-        String activityState = json.state as String
 
         def hub = getChildDevice(mac)
         if (!hub) {
-            if (logEnable) log.debug "Sofabaton Bridge: no Remote matches MAC $mac"
+            if (leaf == "activity_control_up") rememberMac(mac)
             return
         }
-        // Any real message proves the hub is talking. Drives "last message" in the app.
         hub.markMqttMessageSeen()
 
-        if (state.learnActive && mac == state.learnMac && activityState == "on" && activityId != 255) {
-            state.learnResult = activityId
-            state.learnActive = false
-            if (txtEnable) log.info "Sofabaton Bridge: learn mode captured activity_id $activityId for MAC $mac"
+        if (leaf == "activity_control_up") {
+            hub.receiveMqttActivityUpdate(json.activity_id as Integer, json.state as String)
+        } else if (leaf == "list") {
+            List items = (json.data instanceof List ? json.data : []).collect {
+                [activity_id: it.activity_id as Integer, activity_name: it.activity_name?.toString()?.trim(), state: it.state?.toString()]
+            }
+            if (txtEnable) log.info "Sofabaton Bridge: received ${items.size()} activities from ${hub.displayName}"
+            hub.receiveActivityList(items)
         }
-
-        hub.receiveMqttActivityUpdate(activityId, activityState)
     } catch (e) {
         log.error "Sofabaton Bridge: failed to parse MQTT message: ${e.message}"
     }
 }
 
-// Called via an X2 Remote on behalf of an Activity. Only the hub-wide Power Off (255)
-// shape is confirmed; starting a specific activity this way is unverified.
-void publishMqttActivityControl(String mac, Integer activityId, String desiredState) {
-    if (logEnable) log.debug "Sofabaton Bridge: publish requested mac=$mac, activityId=$activityId, state=$desiredState, connected=${mqttUp()}, url=${atomicState.mqttUrl}"
-    if (!mqttUp()) {
-        log.error "Sofabaton Bridge: cannot publish, MQTT is not connected"
-        return
-    }
-    String topic = "activity/${mac}/activity_control_down"
-    String payload = JsonOutput.toJson([activity_id: activityId, state: desiredState])
-    try {
-        interfaces.mqtt.publish(topic, payload)
-        if (txtEnable) log.info "Sofabaton Bridge: published $payload to $topic"
-    } catch (e) {
-        log.error "Sofabaton Bridge: MQTT publish failed: ${e.message}"
-    }
-}
-
 // ============================================================
-// X2 Activity learn mode (Add Activity helper)
-// Captures the next "on" message for one MAC, so a press on another hub's
-// remote isn't picked up by mistake. The app reads it on the next page load.
+// Find My X2 (Add Hub helper)
 // ============================================================
 
-void startActivityLearn(String mac) {
-    state.learnActive = true
-    state.learnMac = mac
-    state.remove("learnResult")
-    if (logEnable) log.debug "Sofabaton Bridge: learn mode started for MAC $mac"
+// Connects if nothing is connected yet, so a first hub can be found.
+void startDiscovery(Boolean builtIn, String host = null, String port = null, String user = null, String pass = null) {
+    if (mqttUp()) return
+    ensureMqttConnected(builtIn, host, port, user, pass)
 }
 
-void cancelActivityLearn() {
-    state.learnActive = false
-    state.remove("learnMac")
-    state.remove("learnResult")
-    if (logEnable) log.debug "Sofabaton Bridge: learn mode cancelled"
+List getDiscoveredMacs() {
+    Set known = (getChildDevices()*.deviceNetworkId ?: []) as Set
+    return ((state.discoveredMacs ?: [:]).keySet().findAll { !(it in known) }) as List
 }
 
-def getActivityLearnResult() {
-    return state.learnResult
-}
-
-void clearActivityLearnResult() {
-    state.remove("learnResult")
+private void rememberMac(String mac) {
+    Map seen = state.discoveredMacs ?: [:]
+    if (!seen[mac] && txtEnable) log.info "Sofabaton Bridge: found X2 hub $mac"
+    seen[mac] = now()
+    if (seen.size() > 5) seen = seen.sort { a, b -> b.value <=> a.value }.take(5)
+    state.discoveredMacs = seen
 }
