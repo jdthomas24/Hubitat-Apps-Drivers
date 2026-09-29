@@ -588,26 +588,37 @@ def addActivityPage() {
             if (editingActivity) {
                 paragraph "Hub: <b>${selectedHub?.getLabel() ?: editingHubDni}</b> <span class='text-color-secondary'>(remove and re-add to move it)</span>"
             } else {
-                input name: "newActivityHub", type: "enum", title: "Which Hub?", options: x1sHubs.collectEntries { [(it.deviceNetworkId): it.getLabel()] }, submitOnChange: true
+                input name: "newActivityHub", type: "enum", title: "<b>Hub</b>", options: x1sHubs.collectEntries { [(it.deviceNetworkId): it.getLabel()] }, submitOnChange: true
             }
-            input name: "newActivityName", type: "text", title: "Activity Name (e.g. Watch TV)", submitOnChange: true
+            input name: "newActivityName", type: "text", title: "<b>Activity Name</b> (e.g. Watch TV)", submitOnChange: true
         }
         if (selectedHub) {
-            section("Body Value") {
-                paragraph "<span class='text-color-secondary' style='font-size:14px;'>What the Sofabaton IP control device sends when this activity starts. " +
-                    "Filled in from the name. Copy it into the Sofabaton app exactly (X1S setup, step 1).</span>"
-                input name: "newActivityBody", type: "text", title: "Body Value", submitOnChange: true
-                if (body) paragraph rawHtml: true, "<div style='font-size:14px'>In the Sofabaton app, set the body to: <code style='background:#eef2f6;padding:2px 8px;border-radius:6px;font-size:15px'>${body}</code></div>"
+            section {
+                paragraph rawHtml: true, groupHeaderHtml("HUB &rarr; HUBITAT", "#26897a",
+                    "Sent by the Sofabaton IP control device when this activity starts. Filled in from the name.")
+                input name: "newActivityBody", type: "text", title: "<b>Body Value</b>", submitOnChange: true
+                if (body) paragraph rawHtml: true, "<div style='font-size:14px'>In the Sofabaton app, set the body to " +
+                    "<code style='background:#eef2f6;padding:2px 8px;border-radius:6px;font-size:15px'>${body}</code> " +
+                    "<span class='text-color-secondary'>(X1S setup, step 3)</span></div>"
             }
-            section("Webhook") {
-                input name: "newActivityUrlOn", type: "text", title: "Start Activity Webhook URL"
-                input name: "newActivityUrlOff", type: "text", title: "Stop Activity Webhook URL (optional, unconfirmed feature)", required: false
+            section {
+                paragraph rawHtml: true, groupHeaderHtml("HUBITAT &rarr; HUB", "#e8a33d",
+                    "Lets Hubitat start and stop this activity. From <b>Turn on API</b> in the Sofabaton app (X1S setup, step 1).")
+                input name: "newActivityUrlOn", type: "text", title: "<b>Start Webhook URL</b>"
+                input name: "newActivityUrlOff", type: "text", title: "<b>Stop Webhook URL</b> (optional)", required: false
             }
         }
         section {
             input name: "saveActivityBtn", type: "button", title: editingActivity ? "Save Changes" : "Add This Activity"
         }
     }
+}
+
+// Small colored pill plus one line of help, used as a group header on the Activity page.
+private String groupHeaderHtml(String pill, String color, String help) {
+    "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap'>" +
+        "<span style='background:${color};color:#fff;border-radius:8px;padding:2px 10px;font-size:0.75em;font-weight:bold;letter-spacing:0.03em'>${pill}</span>" +
+        "<span class='text-color-secondary' style='font-size:14px'>${help}</span></div>"
 }
 
 private void clearActivitySettings() {
