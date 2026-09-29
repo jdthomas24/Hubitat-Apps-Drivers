@@ -23,7 +23,8 @@
      -Driver preferences can't show/hide by model and render in declaration order,
       so the X2 pill sits on the MAC field's description. Titles can't take HTML.
      -mqttHost/Port/User are attributes so the app can prefill Edit Hub. Never the password.
-     -removeAllActivityDevices() must run before the Bridge deletes this device,
+     -Log level comes from the app via the Bridge and cascades to Activities.
+ -removeAllActivityDevices() must run before the Bridge deletes this device,
       or Hubitat can leave an orphan that blocks re-adding the same DNI.
 */
 
@@ -79,27 +80,16 @@ metadata {
             input name:"btnLabel8", type:"text", title:"8:", description:"Button 8 label", required:false
             input name:"btnLabel9", type:"text", title:"9:", description:"Button 9 label", required:false
             input name:"btnLabel10", type:"text", title:"10:", description:"Button 10 label", required:false
-            input name:"logEnable", type: "bool", title: "Enable debug logging", defaultValue: false
-            input name:"txtEnable", type: "bool", title: "Enable descriptionText logging", defaultValue: true
         }
     }
 }
 
-void logsOff(){
-    log.warn "debug logging disabled..."
-    device.updateSetting("logEnable",[value:"false",type:"bool"])
-}
-
 void installed(){
-    log.info "installed..."
     updated()
 }
 
 void updated(){
-    log.info "updated..."
-    log.warn "debug logging is: ${logEnable == true}"
-    log.warn "description logging is: ${txtEnable == true}"
-    if (logEnable) runIn(1800,logsOff)
+    if (logFull()) log.debug "$device.label: updated"
     sendEvent(name:"numberOfButtons", value:20)
     if (hubModel) sendEvent(name: "hubModel", value: hubModel)
 
@@ -173,10 +163,10 @@ private void validateUserButtons() {
 // X1S local HTTP. Order: on/off, button number, user slot match.
 void parse(String description) {
     def msg = parseLanMessage(description)
-    if (logEnable) log.debug "$device.label received header: $msg.header, body: $msg.body"
+    if (logFull()) log.debug "$device.label received header: $msg.header, body: $msg.body"
     def data = msg.body?.trim()
     if (!data) {
-        if (logEnable) log.debug "$device.label empty body received, ignoring"
+        if (logFull()) log.debug "$device.label empty body received, ignoring"
         return
     }
     if (data.equalsIgnoreCase("on")) {
@@ -201,7 +191,7 @@ void parse(String description) {
 
 // pushed event for PushableButton, plus raw/label attributes for rules. Drives Activity sync.
 private void firePushed(Integer btn, String lbl, String raw) {
-    if (txtEnable) log.info "$device.label Button $btn${lbl ? ' (' + lbl + ')' : ''} Pushed"
+    if (logNormal()) log.info "$device.label Button $btn${lbl ? ' (' + lbl + ')' : ''} Pushed"
     sendEvent(name:"pushed", value:btn, isStateChange: true, descriptionText:"$device.label button $btn was pushed")
     sendEvent(name:"lastButtonValue", value:raw, isStateChange: true)
     sendEvent(name:"lastButtonLabel", value:(lbl ?: raw), isStateChange: true)
@@ -262,12 +252,12 @@ void push(data) {
 }
 
 void on() {
-    if (txtEnable) log.info "$device.label Switch On"
+    if (logNormal()) log.info "$device.label Switch On"
     sendEvent(name:"switch", value:"on")
 }
 
 void off() {
-    if (txtEnable) log.info "$device.label Switch Off"
+    if (logNormal()) log.info "$device.label Switch Off"
     sendEvent(name:"switch", value:"off")
 }
 
@@ -283,6 +273,20 @@ String ipToHex(String ipAddress) {
     }
     return quad.collect { Integer.toHexString(it.toInteger()).padLeft(2,"0").toUpperCase() }.join()
 }
+
+// ============================================================
+// Logging. Level is set by the app and cascades to children.
+// ============================================================
+
+void setLogLevel(String level) {
+    state.logLevel = level
+    getChildDevices()?.each { child ->
+        try { child.setLogLevel(level) } catch (e) { }
+    }
+}
+
+private boolean logNormal() { return state.logLevel in ["Normal", "Full"] }
+private boolean logFull() { return state.logLevel == "Full" }
 
 // Called by the Bridge on every message for this MAC.
 void markMqttMessageSeen() {
@@ -304,6 +308,7 @@ def createActivityDevice(String name, String urlOn = null, String urlOff = null,
     if (existing) return existing
     def child = addChildDevice("jdthomas24", "Sofabaton Activity", dni, [label: name])
     if (child) {
+        child.setLogLevel(state.logLevel)
         if (urlOn) child.updateSetting("webhookUrlOn", [value: urlOn, type: "text"])
         if (urlOff) child.updateSetting("webhookUrlOff", [value: urlOff, type: "text"])
         if (sofabatonActivityId != null) child.updateSetting("sofabatonActivityId", [value: sofabatonActivityId, type: "number"])
@@ -343,7 +348,7 @@ private void handleActivityStateSync(String activityKey) {
 
     def matched = children.find { it.getLabel()?.equalsIgnoreCase(activityKey) }
     if (!matched) {
-        if (logEnable) log.debug "$device.label: no Activity matches '$activityKey', skipping state sync"
+        if (logFull()) log.debug "$device.label: no Activity matches '$activityKey', skipping state sync"
         return
     }
     children.findAll { it.deviceNetworkId != matched.deviceNetworkId && it.currentValue("switch") == "on" }.each {
@@ -376,10 +381,11 @@ void receiveActivityList(List items) {
         if (!child) {
             try {
                 child = addChildDevice("jdthomas24", "Sofabaton Activity", "${device.deviceNetworkId}-activity-${id}", [label: name, isComponent: false])
+                child.setLogLevel(state.logLevel)
                 child.updateSetting("sofabatonActivityId", [value: id, type: "number"])
                 child.updated()
                 created++
-                if (txtEnable) log.info "$device.label: added activity '$name' (ID $id)"
+                if (logNormal()) log.info "$device.label: added activity '$name' (ID $id)"
             } catch (e) {
                 log.error "$device.label: failed to create activity '$name' (ID $id): ${e.message}"
                 return
@@ -393,7 +399,7 @@ void receiveActivityList(List items) {
         it.setHubInfo(null, false)
     }
     sendEvent(name: "lastActivitySync", value: new Date().format("yyyy-MM-dd h:mm:ss a"))
-    if (logEnable) log.debug "$device.label: activity list synced, ${items.size()} on hub, $created new"
+    if (logFull()) log.debug "$device.label: activity list synced, ${items.size()} on hub, $created new"
 }
 
 void receiveMqttActivityUpdate(Integer activityId, String activityState) {
@@ -401,14 +407,14 @@ void receiveMqttActivityUpdate(Integer activityId, String activityState) {
     if (!children) return
 
     if (activityId == 255) {
-        if (txtEnable) log.info "$device.label: hub powered off, turning off all activities"
+        if (logNormal()) log.info "$device.label: hub powered off, turning off all activities"
         children.each { it.syncOff() }
         return
     }
 
     def matched = children.find { (it.currentValue("sofabatonActivityId") as Integer) == activityId }
     if (!matched) {
-        if (logEnable) log.debug "$device.label: unknown activity ID $activityId, refreshing list"
+        if (logFull()) log.debug "$device.label: unknown activity ID $activityId, refreshing list"
         requestActivityList()
         return
     }
@@ -427,7 +433,6 @@ boolean componentPublishActivityControl(childDevice, Integer activityId, String 
         log.error "$device.label: cannot send MQTT activity control, hub is not X2 or has no MAC-based DNI"
         return false
     }
-    if (logEnable) log.debug "$device.label: forwarding to Bridge mac=${device.deviceNetworkId}, activityId=$activityId, state=$desiredState"
+    if (logFull()) log.debug "$device.label: forwarding to Bridge mac=${device.deviceNetworkId}, activityId=$activityId, state=$desiredState"
     return parent?.publishMqttActivityControl(device.deviceNetworkId, activityId, desiredState) ?: false
 }
-
