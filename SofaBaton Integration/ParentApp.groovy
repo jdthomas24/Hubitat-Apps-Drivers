@@ -15,6 +15,8 @@
       hub's list; Add an Activity is X1S only. "Find My X2" reads MACs the Bridge
       has seen, so users never need MQTT Explorer.
      -Add/Edit pages save ONLY on an explicit Save click (state.*SaveRequested).
+  Hubitat's Done is hidden there (it left without saving). Cancel and Save sit together at
+  the bottom; Save is gray until required fields are filled, green when ready.
       Edit/Remove use buttons + state, not hrefs with params (Hubitat drops
       params across same-page hrefs).
      -No required:true on Add page inputs (browser validation blocked Cancel).
@@ -34,6 +36,9 @@ import groovy.transform.Field
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
+
+// Add/Edit pages: Hubitat's Done would leave without saving, so only Cancel and Save are shown.
+@Field static final String HIDE_DONE_CSS = "<style>#fieldsetAppButtons { display: none !important; }</style>"
 
 @Field static final String HUBITAT_PILL = "<span style='background:#1976d2;color:#fff;border-radius:8px;padding:1px 9px;font-size:0.75em;font-weight:bold'>HUBITAT</span>"
 @Field static final String SOFABATON_PILL = "<span style='background:#7c4dff;color:#fff;border-radius:8px;padding:1px 9px;font-size:0.75em;font-weight:bold'>SOFABATON APP</span>"
@@ -281,6 +286,7 @@ private String activityPillHtml(act, boolean x2) {
         String body = act.currentValue("bodyValue")
         extra += body ? " <span style='margin-left:6px;background:#455a64;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em;font-family:monospace'>${body}</span>" :
             " <span style='margin-left:6px;background:#b26a00;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>No body value</span>"
+        if (!act.getSetting("webhookUrlOn")) extra += " <span style='margin-left:6px;background:#90a4ae;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>Follow only</span>"
     }
     return "<a href='/device/edit/${act.id}' target='_blank' class='sb-pill' title='Open ${act.getLabel()?.replace("'", "&#39;")}'>${dot}${act.getLabel()}${extra}" +
         "<i class='fa-regular fa-external-link' style='margin-left:8px;font-size:0.75em;color:#1565c0'></i></a>"
@@ -374,16 +380,14 @@ def addHubPage(params = [:]) {
 
     String editModel = editingHub?.currentValue("hubModel")
     boolean showX2 = (!editingHub && newHubModel == "X2") || editModel == "X2"
+    boolean hubReady = editingHub ?
+        (newHubName && (editModel == "X1S" || builtIn || newHubMqttHost)) as boolean :
+        (newHubName && ((newHubModel == "X1S" && newHubIp) || (newHubModel == "X2" && pickedMac && (builtIn || newHubMqttHost)))) as boolean
 
     dynamicPage(name: "addHubPage", title: editingHub ? "Edit ${editingHub.getLabel()}" : "Add a Sofabaton Hub", install: false, uninstall: false) {
         section {
-            input name: "cancelHubBtn", type: "button", title: "&larr; Cancel and go back"
-        }
-        if (saveError) {
-            section { paragraph "<b style='color:#c00'>${saveError}</b>" }
-        }
-        section {
-            input name: "newHubName", type: "text", title: "Hub Name (e.g. Living Room)"
+            paragraph rawHtml: true, HIDE_DONE_CSS
+            input name: "newHubName", type: "text", title: "Hub Name (e.g. Living Room)", submitOnChange: true
             if (editingHub) {
                 paragraph "Model: <b>${editModel}</b> <span class='text-color-secondary'>(remove and re-add to change)</span>"
             } else {
@@ -392,7 +396,7 @@ def addHubPage(params = [:]) {
         }
         if (!editingHub && newHubModel == "X1S") {
             section {
-                input name: "newHubIp", type: "text", title: "Hub IP Address (set a DHCP reservation first)"
+                input name: "newHubIp", type: "text", title: "Hub IP Address (set a DHCP reservation first)", submitOnChange: true
             }
         }
         if (editModel == "X1S") {
@@ -408,7 +412,7 @@ def addHubPage(params = [:]) {
                 if (builtIn) {
                     paragraph "<span class='text-color-secondary' style='font-size:14px;'>Hubitat connects to its own broker automatically. No login needed here.</span>"
                 } else {
-                    input name: "newHubMqttHost", type: "text", title: "Broker Host/IP"
+                    input name: "newHubMqttHost", type: "text", title: "Broker Host/IP", submitOnChange: true
                     input name: "newHubMqttPort", type: "text", title: "Broker Port", defaultValue: "1883", required: false
                     input name: "newHubMqttUser", type: "text", title: "Broker Username (blank if none)", required: false
                     input name: "newHubMqttPass", type: "password", title: "Broker Password (blank if none${editingHub ? ', or to keep the current one' : ''})", required: false
@@ -431,12 +435,13 @@ def addHubPage(params = [:]) {
                     } else if (state.discoveryStarted) {
                         paragraph "<span style='color:#b26a00'>Nothing yet. Volume and channel presses don't count, it has to be an activity change.</span>"
                     }
-                    input name: "newHubMac", type: "text", title: "Or enter the MAC manually (optional)", required: false
+                    input name: "newHubMac", type: "text", title: "Or enter the MAC manually (optional)", required: false, submitOnChange: true
                 }
             }
         }
         section {
-            input name: "saveHubBtn", type: "button", title: editingHub ? "Save Changes" : "Add This Hub"
+            if (saveError) paragraph "<b style='color:#c00'>${saveError}</b>"
+            formButtons("cancelHubBtn", "saveHubBtn", editingHub ? "Save Changes" : "Add This Hub", hubReady)
         }
     }
 }
@@ -557,34 +562,34 @@ def addActivityPage() {
         it.deviceNetworkId != editingActivity?.deviceNetworkId && body && it.currentValue("bodyValue")?.equalsIgnoreCase(body)
     }
 
+    List missing = []
+    if (!editingActivity && !newActivityHub) missing << "Sofabaton Hub"
+    if (!newActivityName) missing << "Activity Name"
+    if (!body) missing << "Body Value"
+
     String saveError = null
     if (state.activitySaveRequested) {
         state.remove("activitySaveRequested")
         if (clash) {
             saveError = "Body value '${body}' is already used by ${clash.getLabel()}. Pick a different one."
-        } else if (editingActivity && newActivityName && newActivityUrlOn && body) {
+        } else if (missing) {
+            saveError = "Still needed: ${missing.join(', ')}."
+        } else if (editingActivity) {
             updateExistingActivity(editingActivity, newActivityName, newActivityUrlOn, newActivityUrlOff, body)
             clearActivitySettings()
             state.remove("editingActivityKey")
             state.remove("editActivityPrefilled")
             return mainPage()
-        } else if (!editingActivity && newActivityHub && newActivityName && newActivityUrlOn && body) {
+        } else {
             createActivity(newActivityHub, newActivityName, newActivityUrlOn, newActivityUrlOff, body)
             clearActivitySettings()
             return mainPage()
-        } else {
-            saveError = "Please fill in all required fields before saving."
         }
     }
 
     dynamicPage(name: "addActivityPage", title: editingActivity ? "Edit ${editingActivity.getLabel()}" : "Add an X1S Activity", install: false, uninstall: false) {
         section {
-            input name: "cancelActivityBtn", type: "button", title: "&larr; Cancel and go back"
-        }
-        if (saveError) {
-            section { paragraph "<b style='color:#c00'>${saveError}</b>" }
-        }
-        section {
+            paragraph rawHtml: true, HIDE_DONE_CSS
             if (editingActivity) {
                 paragraph "Hub: <b>${selectedHub?.getLabel() ?: editingHubDni}</b> <span class='text-color-secondary'>(remove and re-add to move it)</span>"
             } else {
@@ -603,15 +608,26 @@ def addActivityPage() {
             }
             section {
                 paragraph rawHtml: true, groupHeaderHtml("HUBITAT &rarr; SOFABATON", "#e8a33d",
-                    "Lets Hubitat start and stop this activity. From <b>Turn on API</b> in the Sofabaton app (X1S setup, step 1).")
-                input name: "newActivityUrlOn", type: "text", title: "<b>Start Webhook URL</b>"
+                    "Optional. Lets Hubitat start and stop this activity. From <b>Turn on API</b> in the Sofabaton app (X1S setup, step 1). " +
+                    "Leave blank if Hubitat only needs to follow the activity.")
+                input name: "newActivityUrlOn", type: "text", title: "<b>Start Webhook URL</b> (optional)", submitOnChange: true
                 input name: "newActivityUrlOff", type: "text", title: "<b>Stop Webhook URL</b> (optional)", required: false
             }
         }
         section {
-            input name: "saveActivityBtn", type: "button", title: editingActivity ? "Save Changes" : "Add This Activity"
+            if (saveError) paragraph "<b style='color:#c00'>${saveError}</b>"
+            boolean activityReady = (!missing && !clash) as boolean
+            formButtons("cancelActivityBtn", "saveActivityBtn", editingActivity ? "Save Changes" : "Add This Activity", activityReady)
         }
     }
+}
+
+// Cancel and Save side by side at the bottom of Add/Edit pages. Save is gray until the
+// required fields are filled; pressing it anyway just shows what's missing.
+private void formButtons(String cancelName, String saveName, String saveTitle, boolean ready) {
+    input name: cancelName, type: "button", title: "Cancel", width: 3
+    input name: saveName, type: "button", title: saveTitle, width: 3,
+        backgroundColor: ready ? "#2e7d32" : "#bdbdbd", textColor: "white"
 }
 
 // Small colored pill plus one line of help, used as a group header on the Activity page.
@@ -757,13 +773,14 @@ private List tipsTopics() {
                     "Names you set in Hubitat are never overwritten."),
             warning: "<b>Find My X2 needs an activity change.</b><br>Volume, channel, and other button presses never touch the network, so they won't show up."],
 
-        [id: "x1swebhook", label: "1. Get the webhook URL", title: "Get the activity's webhook URL", group: "X1S setup", icon: "pi-link",
+        [id: "x1swebhook", label: "1. Webhook URL (optional)", title: "Get the activity's webhook URL (optional)", group: "X1S setup", icon: "pi-link",
             body: "<p>${SOFABATON_PILL}<br>Open the activity, turn on <b>Turn on API</b> (just <b>API</b> in some app versions), and copy the webhook URL, " +
                 "a long <code>https://app1.sofabaton.com/...</code> link. Some versions give separate start and stop URLs, others just one.</p>" +
-                "<p>This is how Hubitat starts and stops the activity. Repeat for each activity you want in Hubitat.</p>"],
+                "<p>This is how Hubitat starts and stops the activity. Skip it if Hubitat only needs to know which activity is running, " +
+                "for example to dim lights when a movie starts. Those activities show <b>Follow only</b> on the main page.</p>"],
         [id: "x1sadd", label: "2. Add hub and activities", title: "Add the X1S hub and its activities", group: "X1S setup", icon: "pi-plus-circle",
             body: "<p>${HUBITAT_PILL}<br><b>Add a Hub</b> &rarr; Model X1S &rarr; enter the hub's static IP.</p>" +
-                "<p>${HUBITAT_PILL}<br><b>Add an Activity</b> &rarr; pick the hub, name it, and paste the webhook URL from step 1. " +
+                "<p>${HUBITAT_PILL}<br><b>Add an Activity</b> &rarr; pick the hub, name it, and paste the webhook URL from step 1 if you got one. " +
                 "A space in the URL is normal, it's encoded automatically.</p>" +
                 "<p>Note the <b>Body Value</b> it suggests, e.g. <code>watchappletv</code>. You'll need it in step 3. Tap <b>Done</b> on the main page when finished.</p>"],
         [id: "x1sreport", label: "3. Report activity changes", title: "Let the X1S report activity changes", group: "X1S setup", icon: "pi-mobile",
