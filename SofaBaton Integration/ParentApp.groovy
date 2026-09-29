@@ -275,9 +275,11 @@ private String activityPillHtml(act, boolean x2) {
     if (x2) {
         extra += " <span style='margin-left:6px;background:#455a64;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em;font-weight:bold'>ID ${act.currentValue('sofabatonActivityId') ?: '?'}</span>"
         if (status in ["starting", "stopping"]) extra += " <span style='color:#b26a00;font-size:0.8em'>${status}...</span>"
-        if (act.currentValue("onHub") == "false") extra += " <span style='background:#c62828;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>Not on hub</span>"
+        if (act.currentValue("onHub") == "false") extra += " <span style='margin-left:6px;background:#c62828;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>Not on hub</span>"
     } else {
-        extra += " <span style='background:#e8a33d;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>Webhook</span>"
+        String body = act.currentValue("bodyValue")
+        extra += body ? " <span style='margin-left:6px;background:#455a64;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em;font-family:monospace'>${body}</span>" :
+            " <span style='margin-left:6px;background:#b26a00;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>No body value</span>"
     }
     return "<a href='/device/edit/${act.id}' target='_blank' class='sb-pill' title='Open ${act.getLabel()?.replace("'", "&#39;")}'>${dot}${act.getLabel()}${extra}" +
         "<i class='fa-regular fa-external-link' style='margin-left:8px;font-size:0.75em;color:#1565c0'></i></a>"
@@ -539,22 +541,34 @@ def addActivityPage() {
         app.updateSetting("newActivityName", [value: editingActivity.getLabel(), type: "text"])
         app.updateSetting("newActivityUrlOn", [value: editingActivity.getSetting("webhookUrlOn") ?: "", type: "text"])
         app.updateSetting("newActivityUrlOff", [value: editingActivity.getSetting("webhookUrlOff") ?: "", type: "text"])
+        app.updateSetting("newActivityBody", [value: editingActivity.currentValue("bodyValue") ?: "", type: "text"])
         state.editActivityPrefilled = true
     }
 
     def selectedHub = newActivityHub ? bridge?.getChildDevice(newActivityHub) : null
 
+    // Suggest a body value from the name until the user sets one.
+    if (newActivityName && !newActivityBody) {
+        app.updateSetting("newActivityBody", [value: suggestBody(newActivityName), type: "text"])
+    }
+    String body = (settings.newActivityBody ?: "").trim()
+    def clash = selectedHub?.getChildDevices()?.find {
+        it.deviceNetworkId != editingActivity?.deviceNetworkId && body && it.currentValue("bodyValue")?.equalsIgnoreCase(body)
+    }
+
     String saveError = null
     if (state.activitySaveRequested) {
         state.remove("activitySaveRequested")
-        if (editingActivity && newActivityName && newActivityUrlOn) {
-            updateExistingActivity(editingActivity, newActivityName, newActivityUrlOn, newActivityUrlOff)
+        if (clash) {
+            saveError = "Body value '${body}' is already used by ${clash.getLabel()}. Pick a different one."
+        } else if (editingActivity && newActivityName && newActivityUrlOn && body) {
+            updateExistingActivity(editingActivity, newActivityName, newActivityUrlOn, newActivityUrlOff, body)
             clearActivitySettings()
             state.remove("editingActivityKey")
             state.remove("editActivityPrefilled")
             return mainPage()
-        } else if (!editingActivity && newActivityHub && newActivityName && newActivityUrlOn) {
-            createActivity(newActivityHub, newActivityName, newActivityUrlOn, newActivityUrlOff)
+        } else if (!editingActivity && newActivityHub && newActivityName && newActivityUrlOn && body) {
+            createActivity(newActivityHub, newActivityName, newActivityUrlOn, newActivityUrlOff, body)
             clearActivitySettings()
             return mainPage()
         } else {
@@ -575,10 +589,16 @@ def addActivityPage() {
             } else {
                 input name: "newActivityHub", type: "enum", title: "Which Hub?", options: x1sHubs.collectEntries { [(it.deviceNetworkId): it.getLabel()] }, submitOnChange: true
             }
-            input name: "newActivityName", type: "text", title: "Activity Name. Must exactly match the button's Description, see Tips."
+            input name: "newActivityName", type: "text", title: "Activity Name (e.g. Watch TV)", submitOnChange: true
         }
         if (selectedHub) {
-            section {
+            section("Body Value") {
+                paragraph "<span class='text-color-secondary' style='font-size:14px;'>What the Sofabaton IP control device sends when this activity starts. " +
+                    "Filled in from the name. Copy it into the Sofabaton app exactly (X1S setup, step 1).</span>"
+                input name: "newActivityBody", type: "text", title: "Body Value", submitOnChange: true
+                if (body) paragraph rawHtml: true, "<div style='font-size:14px'>In the Sofabaton app, set the body to: <code style='background:#eef2f6;padding:2px 8px;border-radius:6px;font-size:15px'>${body}</code></div>"
+            }
+            section("Webhook") {
                 input name: "newActivityUrlOn", type: "text", title: "Start Activity Webhook URL"
                 input name: "newActivityUrlOff", type: "text", title: "Stop Activity Webhook URL (optional, unconfirmed feature)", required: false
             }
@@ -590,28 +610,34 @@ def addActivityPage() {
 }
 
 private void clearActivitySettings() {
-    ["newActivityHub", "newActivityName", "newActivityUrlOn", "newActivityUrlOff"].each {
+    ["newActivityHub", "newActivityName", "newActivityUrlOn", "newActivityUrlOff", "newActivityBody"].each {
         app.removeSetting(it)
     }
 }
 
-private void createActivity(String hubDni, String name, String urlOn, String urlOff) {
+// "Watch Apple TV" -> "watchappletv". Letters and numbers only, so it's easy to type in the Sofabaton app.
+private String suggestBody(String name) {
+    return (name ?: "").toLowerCase().replaceAll(/[^a-z0-9]/, "")
+}
+
+private void createActivity(String hubDni, String name, String urlOn, String urlOff, String body) {
     def hub = getBridge()?.getChildDevice(hubDni)
     if (!hub) {
         logErr "cannot add activity '$name': hub not found"
         return
     }
-    if (!hub.createActivityDevice(name, urlOn, urlOff, null)) {
+    if (!hub.createActivityDevice(name, urlOn, urlOff, null, body)) {
         logErr "failed to create Activity device '$name'"
     } else {
         logInfo "added activity '$name'"
     }
 }
 
-private void updateExistingActivity(def activity, String name, String urlOn, String urlOff) {
+private void updateExistingActivity(def activity, String name, String urlOn, String urlOff, String body) {
     activity.setLabel(name)
     activity.updateSetting("webhookUrlOn", [value: urlOn ?: "", type: "text"])
     activity.updateSetting("webhookUrlOff", [value: urlOff ?: "", type: "text"])
+    activity.updateSetting("bodyValue", [value: body, type: "text"])
     activity.updated()
 }
 
@@ -719,26 +745,30 @@ private List tipsTopics() {
                     "Names you set in Hubitat are never overwritten."),
             warning: "<b>Find My X2 needs an activity change.</b><br>Volume, channel, and other button presses never touch the network, so they won't show up."],
 
-        [id: "x1slocal", label: "1. Local IP control", title: "Set up local IP control", group: "X1S setup", icon: "pi-mobile",
+        [id: "x1swebhook", label: "1. Get the webhook URL", title: "Get the activity's webhook URL", group: "X1S setup", icon: "pi-link",
+            body: "<p>${SOFABATON_PILL}<br>Open the activity, turn on <b>Turn on API</b> (just <b>API</b> in some app versions), and copy the webhook URL, " +
+                "a long <code>https://app1.sofabaton.com/...</code> link. Some versions give separate start and stop URLs, others just one.</p>" +
+                "<p>This is how Hubitat starts and stops the activity. Repeat for each activity you want in Hubitat.</p>"],
+        [id: "x1sadd", label: "2. Add hub and activities", title: "Add the X1S hub and its activities", group: "X1S setup", icon: "pi-plus-circle",
             body: "<p>${HUBITAT_PILL}<br><b>Add a Hub</b> &rarr; Model X1S &rarr; enter the hub's static IP.</p>" +
-                "<p>${SOFABATON_PILL}<br><b>Devices &rarr; Add Device &rarr; Wi-Fi &rarr; Create a virtual device for IP control</b>. " +
-                "URL <code>http://${location.hub.localIP}:39501/</code>, method PUT. Create one per activity. Read <b>Buttons and name matching</b> before choosing a body value.</p>"],
-        [id: "x1swebhook", label: "2. Webhook commands", title: "Add webhook commands", group: "X1S setup", icon: "pi-link",
-            body: "<p>${SOFABATON_PILL}<br>On the activity, turn on <b>Turn on API</b> (just <b>API</b> in some app versions) and copy the webhook URL, " +
-                "a long <code>https://app1.sofabaton.com/...</code> link. Some versions give separate on and off URLs, others just one. " +
-                "This is separate from step 1. IP control only reports to Hubitat, the webhook sends commands.</p>" +
-                "<p>${HUBITAT_PILL}<br><b>Add an Activity</b> &rarr; name it to exactly match the button's Description &rarr; paste the Start URL, " +
-                "and the Stop URL only if you got a separate one. A space in the URL is normal, it's encoded automatically.</p>" +
-                "<p>${HUBITAT_PILL}<br>Tap <b>Done</b> on the main page when finished.</p>"],
-        [id: "x1smatch", label: "3. Buttons and name matching", title: "Buttons and name matching", group: "X1S setup", icon: "pi-th-large",
-            body: "<p><b>Buttons 1-10</b> fire when the remote sends a plain number. <b>Buttons 11-20</b> are user-definable slots on the Remote device's Preferences tab, " +
-                "entered as <code>matchString|Description</code>. Most setups should use 11-20, e.g. <code>watchAppleTV</code> instead of remembering that 7 means Apple TV.</p>" +
-                "<p>Hubitat knows an activity changed by matching the slot's Description against the Activity Name here, exactly, including capitalization and spacing.</p>" +
+                "<p>${HUBITAT_PILL}<br><b>Add an Activity</b> &rarr; pick the hub, name it, and paste the webhook URL from step 1. " +
+                "A space in the URL is normal, it's encoded automatically.</p>" +
+                "<p>Note the <b>Body Value</b> it suggests, e.g. <code>watchappletv</code>. You'll need it in step 3. Tap <b>Done</b> on the main page when finished.</p>"],
+        [id: "x1sreport", label: "3. Report activity changes", title: "Let the X1S report activity changes", group: "X1S setup", icon: "pi-mobile",
+            body: "<p>${SOFABATON_PILL}<br><b>Devices &rarr; Add Device &rarr; Wi-Fi &rarr; Create a virtual device for IP control</b>. " +
+                "URL <code>http://${location.hub.localIP}:39501/</code>, method <b>PUT</b>, body = the activity's Body Value.</p>" +
+                "<p>${SOFABATON_PILL}<br>Add that command to the activity's start sequence, so the hub tells Hubitat whenever the activity starts. Repeat for each activity.</p>" +
                 exampleBoxHtml("<b>Example, an Apple TV activity:</b><br>" +
-                    "&bull; Body value in the Sofabaton app: <code>appleTV</code><br>" +
-                    "&bull; User 1 (11) on the Remote device: <code>appleTV|Apple TV</code><br>" +
-                    "&bull; Activity Name here: <code>Apple TV</code>"),
-            warning: "If these don't line up exactly, the remote still controls your gear. Hubitat just won't know the activity changed."],
+                    "&bull; Activity name in Hubitat: <code>Watch Apple TV</code><br>" +
+                    "&bull; Body Value (shown on its pill on the main page): <code>watchappletv</code><br>" +
+                    "&bull; IP control body in the Sofabaton app: <code>watchappletv</code>"),
+            warning: "The body must match the Body Value exactly. If it doesn't, the remote still controls your gear, Hubitat just won't know the activity changed."],
+        [id: "x1smatch", label: "4. Button events (optional)", title: "Button events (optional)", group: "X1S setup", icon: "pi-th-large",
+            body: "<p>Activities sync from their Body Value alone. Button slots are only for rules that react to a button press.</p>" +
+                "<p><b>Buttons 1-10</b> fire when the remote sends a plain number. <b>Buttons 11-20</b> are slots on the hub device's Preferences tab, " +
+                "entered as <code>matchString|Description</code>.</p>" +
+                exampleBoxHtml("<b>Example:</b> a body of <code>lightsdim</code> and User 1 (11) set to <code>lightsdim|Dim Lights</code> " +
+                    "fires button 11 on the hub device, which a rule can use.")],
 
         [id: "x2timing", label: "X2 commands and timing", title: "X2 commands and timing", group: "Troubleshooting", icon: "pi-clock",
             body: "<p>The hub confirms a command only after its start or stop sequence finishes, usually <b>8 to 10 seconds</b>. " +
