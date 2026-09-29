@@ -11,8 +11,9 @@
      -Fork of dJOS's driver, renamed "Sofabaton Remote". Created by the app as a
       child of the Bridge.
      -X1S: DNI = ipToHex(ip) so Hubitat's listener (port 39501) routes each hub's
-      PUT here. Body = a number 1-20, a user slot matchString, or on/off.
-      Activity sync matches the fired button's label to an Activity child's name.
+      PUT here. Body = an activity's bodyValue (preferred, set in the app), a number
+      1-20, a user slot matchString, or on/off. Button slots are optional, kept for
+      rules and older setups; a slot label matching an activity name still syncs it.
      -X2: DNI = bare uppercase MAC (matches the MQTT topic). No listener; the Bridge
       calls receiveMqttActivityUpdate() and receiveActivityList(). Activities are
       created from the hub's list, DNI <MAC>-activity-<id>. Existing children are
@@ -58,7 +59,7 @@ metadata {
             input name: "mqttPort", type: "text", title: "External Broker Port (X2, external broker only)", defaultValue: "1883"
             input name: "mqttUser", type: "text", title: "External Broker Username (X2, external broker only)"
             input name: "mqttPass", type: "password", title: "External Broker Password (X2, external broker only)"
-            input name: "userInfo", type: "paragraph", element: "paragraph", title: "User Definable Buttons (X1S only)", description: "<span style='background:#e8a33d;color:#fff;border-radius:10px;padding:2px 10px;font-size:0.85em;font-weight:bold'>X1S</span><br>matchString|Description, e.g. watchTV|Watch TV. Fires buttons 11-20. A Description matching an Activity's name keeps that Activity in sync."
+            input name: "userInfo", type: "paragraph", element: "paragraph", title: "User Definable Buttons (X1S only)", description: "<span style='background:#e8a33d;color:#fff;border-radius:10px;padding:2px 10px;font-size:0.85em;font-weight:bold'>X1S</span><br><b>Optional.</b> Activities sync from their Body Value, set in the app. These slots only add button events for rules. Format: matchString|Description, fires buttons 11-20."
             input name:"usrBtn1", type:"text", title:"User 1 (11):", description:"matchString|Description", required:false
             input name:"usrBtn2", type:"text", title:"User 2 (12):", description:"matchString|Description", required:false
             input name:"usrBtn3", type:"text", title:"User 3 (13):", description:"matchString|Description", required:false
@@ -160,7 +161,7 @@ private void validateUserButtons() {
     }
 }
 
-// X1S local HTTP. Order: on/off, button number, user slot match.
+// X1S local HTTP. Order: on/off, activity body value, button number, user slot match.
 void parse(String description) {
     def msg = parseLanMessage(description)
     if (logFull()) log.debug "$device.label received header: $msg.header, body: $msg.body"
@@ -174,6 +175,15 @@ void parse(String description) {
         return
     } else if (data.equalsIgnoreCase("off")) {
         sendEvent(name:"switch", value:"off")
+        return
+    }
+    def act = activityChildren().find { it.currentValue("bodyValue")?.equalsIgnoreCase(data) }
+    if (act) {
+        if (logNormal()) log.info "$device.label: '$data' received, ${act.getLabel()} is now active"
+        sendEvent(name:"lastButtonValue", value:data, isStateChange: true)
+        sendEvent(name:"lastButtonLabel", value:act.getLabel(), isStateChange: true)
+        activityChildren().findAll { it.deviceNetworkId != act.deviceNetworkId && it.currentValue("switch") == "on" }.each { it.syncOff() }
+        act.syncOn()
         return
     }
     Integer btn = toButtonNumber(data)
@@ -302,7 +312,7 @@ private List activityChildren() {
 }
 
 // X1S: created by the app with webhook URLs.
-def createActivityDevice(String name, String urlOn = null, String urlOff = null, Integer sofabatonActivityId = null) {
+def createActivityDevice(String name, String urlOn = null, String urlOff = null, Integer sofabatonActivityId = null, String bodyValue = null) {
     String dni = "${device.deviceNetworkId}-activity-${name.replaceAll(/[^A-Za-z0-9]/, '')}"
     def existing = getChildDevice(dni)
     if (existing) return existing
@@ -312,6 +322,7 @@ def createActivityDevice(String name, String urlOn = null, String urlOff = null,
         if (urlOn) child.updateSetting("webhookUrlOn", [value: urlOn, type: "text"])
         if (urlOff) child.updateSetting("webhookUrlOff", [value: urlOff, type: "text"])
         if (sofabatonActivityId != null) child.updateSetting("sofabatonActivityId", [value: sofabatonActivityId, type: "number"])
+        if (bodyValue) child.updateSetting("bodyValue", [value: bodyValue, type: "text"])
         child.updated()
     }
     return child
