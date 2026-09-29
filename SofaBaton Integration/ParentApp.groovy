@@ -588,13 +588,13 @@ def addActivityPage() {
             if (editingActivity) {
                 paragraph "Hub: <b>${selectedHub?.getLabel() ?: editingHubDni}</b> <span class='text-color-secondary'>(remove and re-add to move it)</span>"
             } else {
-                input name: "newActivityHub", type: "enum", title: "<b>Hub</b>", options: x1sHubs.collectEntries { [(it.deviceNetworkId): it.getLabel()] }, submitOnChange: true
+                input name: "newActivityHub", type: "enum", title: "<b>Sofabaton Hub</b>", options: x1sHubs.collectEntries { [(it.deviceNetworkId): it.getLabel()] }, submitOnChange: true
             }
             input name: "newActivityName", type: "text", title: "<b>Activity Name</b> (e.g. Watch TV)", submitOnChange: true
         }
         if (selectedHub) {
             section {
-                paragraph rawHtml: true, groupHeaderHtml("HUB &rarr; HUBITAT", "#26897a",
+                paragraph rawHtml: true, groupHeaderHtml("SOFABATON &rarr; HUBITAT", "#26897a",
                     "Sent by the Sofabaton IP control device when this activity starts. Filled in from the name.")
                 input name: "newActivityBody", type: "text", title: "<b>Body Value</b>", submitOnChange: true
                 if (body) paragraph rawHtml: true, "<div style='font-size:14px'>In the Sofabaton app, set the body to " +
@@ -602,7 +602,7 @@ def addActivityPage() {
                     "<span class='text-color-secondary'>(X1S setup, step 3)</span></div>"
             }
             section {
-                paragraph rawHtml: true, groupHeaderHtml("HUBITAT &rarr; HUB", "#e8a33d",
+                paragraph rawHtml: true, groupHeaderHtml("HUBITAT &rarr; SOFABATON", "#e8a33d",
                     "Lets Hubitat start and stop this activity. From <b>Turn on API</b> in the Sofabaton app (X1S setup, step 1).")
                 input name: "newActivityUrlOn", type: "text", title: "<b>Start Webhook URL</b>"
                 input name: "newActivityUrlOff", type: "text", title: "<b>Stop Webhook URL</b> (optional)", required: false
