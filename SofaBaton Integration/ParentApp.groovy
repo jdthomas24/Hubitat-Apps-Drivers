@@ -171,23 +171,24 @@ def mainPage() {
                 String dni = hub.deviceNetworkId
                 def activities = hub.getChildDevices() ?: []
                 paragraph rawHtml: true, hubCardHtml(hub, activities)
+                // Hubitat can't put inputs inside HTML, so these sit tight under the card (see sb-hub-btn CSS).
                 if (hub.currentValue("hubModel") == "X2") {
-                    input name: "editHub_${dni}", type: "button", title: "Edit Hub", width: 4
-                    input name: "syncHub_${dni}", type: "button", title: "Refresh Activities", width: 4
-                    input name: "removeHub_${dni}", type: "button", title: "Remove Hub", width: 4
+                    input name: "editHub_${dni}", type: "button", title: "Edit Hub", width: 3
+                    input name: "syncHub_${dni}", type: "button", title: "Refresh Activities", width: 3
+                    input name: "removeHub_${dni}", type: "button", title: "Remove Hub", width: 3
                     activities.findAll { it.currentValue("onHub") == "false" }.each { act ->
-                        input name: "removeAct_${dni}_${act.deviceNetworkId}", type: "button", title: "Remove ${act.getLabel()}", width: 4,
+                        input name: "removeAct_${dni}_${act.deviceNetworkId}", type: "button", title: "Remove ${act.getLabel()}", width: 3,
                             backgroundColor: "#c62828", textColor: "white"
                     }
                 } else {
-                    input name: "editHub_${dni}", type: "button", title: "Edit Hub", width: 6
-                    input name: "removeHub_${dni}", type: "button", title: "Remove Hub", width: 6
+                    input name: "editHub_${dni}", type: "button", title: "Edit Hub", width: 3
+                    input name: "removeHub_${dni}", type: "button", title: "Remove Hub", width: 3
                     activities.each { act ->
                         input name: "editAct_${dni}_${act.deviceNetworkId}", type: "button", title: "Edit ${act.getLabel()}", width: 3
                         input name: "removeAct_${dni}_${act.deviceNetworkId}", type: "button", title: "Remove ${act.getLabel()}", width: 3
                     }
                 }
-                paragraph "<div style='margin-bottom:6px'></div>"
+                paragraph rawHtml: true, "<div class='sb-hub-end'></div>"
             }
             href name: "toAddHub", title: "Add a Hub", description: "X1S or X2", page: "addHubPage", width: 12, style: "margin:8px;"
             if (x1sHubs) {
@@ -243,7 +244,7 @@ private String hubCardHtml(hub, List activities) {
     boolean x2 = model == "X2"
     String idShown = x2 ? (hub.currentValue("remoteMac") ?: "no MAC set") : (hub.currentValue("remoteIp") ?: "no IP set")
     StringBuilder card = new StringBuilder()
-    card << "<div style='border:1px solid #ccc;border-radius:10px;padding:12px 14px;margin:4px 0;background:#fafafa'>"
+    card << "<div style='border:1px solid #ccc;border-radius:10px;padding:12px 14px;margin:4px 0 0;background:#fafafa'>"
     String badge = x2 ? "#5f8b6f" : "#e8a33d"   // matches the Remote driver's pills
     card << "<div><span style='background:${badge};color:#fff;border-radius:8px;padding:2px 9px;font-size:0.9em;font-weight:bold'>${model}</span> "
     card << "<a href='/device/edit/${hub.id}' target='_blank' class='sb-link' style='font-size:0.85em'>${hub.getLabel()}" +
@@ -852,6 +853,12 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
     font-size: 0.9em; color: inherit; text-decoration: none; cursor: pointer; transition: background 0.15s; }
   a.sb-pill:hover { background: #cfdcec; }
   a.sb-link { color: #1565c0; text-decoration: none; }
+  .app-main-content :is([name*='editHub_'],[name*='syncHub_'],[name*='removeHub_'],[name*='editAct_'],[name*='removeAct_'],
+    [id*='editHub_'],[id*='syncHub_'],[id*='removeHub_'],[id*='editAct_'],[id*='removeAct_']) {
+    font-size: 13px !important; padding: 3px 12px !important; min-height: 0 !important; height: auto !important;
+    line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid #d0d7de !important;
+    white-space: nowrap; }
+  .sb-hub-end { border-bottom: 1px solid #e0e0e0; margin: 4px 0 18px; }
   a.sb-link:hover { text-decoration: underline; }
   .app-main-support button.hrefElem[name^='_action_href_tips'] { height: 61.5px; padding-bottom: 13.5px; box-sizing: border-box; }
   @media (max-width: 1000px) {
