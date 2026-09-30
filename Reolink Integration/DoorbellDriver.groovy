@@ -8,7 +8,7 @@
  *
  * v1.6.5 -- Same changes as the camera driver: RTSP validation queued through
  * the app and retried on timeout, lastMotionTime/lastMotionType, the new
- * "batteryWiredMode" summary attribute (replaces batteryMode; wired/battery kept in the
+ * "batteryWired" summary attribute (replaces batteryMode; wired/battery kept in the
  * powerMode data value), chargingStatus "plugged_in", and no battery values
  * on wired devices.
  * v1.6.0 -- Added RTSPStream support (same hub video stream service and
@@ -51,7 +51,7 @@ metadata {
         attribute "cpuUsage", "number"
         attribute "streamSubscribers", "number"
         // v1.6.5: one-line power summary, replaces batteryMode (sorts right after Battery).
-        attribute "batteryWiredMode", "string"
+        attribute "batteryWired", "string"
         attribute "chargingStatus", "enum", ["unknown", "not_charging", "charging", "plugged_in"]
         attribute "sleepStatus", "enum", ["awake", "asleep", "unknown"]
         // Whether the most recent state update came from an event push or a poll.
@@ -247,6 +247,7 @@ def receiveBatteryMode(String mode) {
     updatePowerSummary()
     safeDelete("batteryMode")
     safeDelete("power")
+    safeDelete("batteryWiredMode")
     if (mode == "wired") clearBatteryInfo()
 }
 /** Called by the app after GetBatteryInfo. Same charge/adapter mapping as CameraDriver.groovy. */
@@ -275,7 +276,7 @@ def clearBatteryInfo() {
 private void safeDelete(String name) {
     try { device.deleteCurrentState(name) } catch (e) { /* not present or not supported */ }
 }
-/** v1.6.5: builds the one-line batteryWiredMode attribute. Values passed in win over currentValue (same-execution lag). */
+/** v1.6.5: builds the one-line batteryWired attribute. Values passed in win over currentValue (same-execution lag). */
 private void updatePowerSummary(pct = null, String charging = null) {
     String mode = device.getDataValue("powerMode")
     String text
@@ -292,7 +293,7 @@ private void updatePowerSummary(pct = null, String charging = null) {
     } else {
         text = "Unknown"
     }
-    sendIfChanged("batteryWiredMode", text)
+    sendIfChanged("batteryWired", text)
 }
 /**
  * Required by PushableButton (the capability doesn't implement push()).
@@ -312,7 +313,7 @@ def parseReolinkState(aiState, mdState, String source = "poll") {
     sendIfChanged("sleepStatus", "awake")
     sendIfChanged("lastUpdateSource", source)
     // v1.6.5: self-heal if the power line was never written.
-    if (device.getDataValue("powerMode") && device.currentValue("batteryWiredMode") == null) updatePowerSummary()
+    if (device.getDataValue("powerMode") && device.currentValue("batteryWired") == null) updatePowerSummary()
     // TODO confirm the visitor/doorbell-press field name in your firmware's GetAiState/GetMdState payload
     def visitorPressed = aiState?.visitor?.alarm_state == 1
     if (visitorPressed) {
