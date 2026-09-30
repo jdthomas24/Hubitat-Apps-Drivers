@@ -787,11 +787,18 @@ private String exampleBoxHtml(String content) {
 private List tipsTopics() {
     [
         [id: "start", label: "Before you begin", title: "Before you begin", group: "Getting started", icon: "pi-sitemap",
-            body: "<p>This integration supports two Sofabaton hubs, the <b>X1S</b> and the <b>X2</b>. They set up differently, so find yours in the sidebar.</p>" +
+            body: "<p>Find your hub below, then follow its setup in the sidebar.</p>" +
+                "<table style='width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px'>" +
+                "<tr style='background:#f5f7fa'><th style='text-align:left;padding:8px'>Hub</th><th style='text-align:left;padding:8px'>Hubitat knows the activity</th>" +
+                "<th style='text-align:left;padding:8px'>Hubitat starts/stops it</th><th style='text-align:left;padding:8px'>Activities</th></tr>" +
+                "<tr style='border-top:1px solid #e0e0e0'><td style='padding:8px'><b>X2</b></td><td style='padding:8px'>Yes, local</td><td style='padding:8px'>Yes, local</td><td style='padding:8px'>Added automatically</td></tr>" +
+                "<tr style='border-top:1px solid #e0e0e0'><td style='padding:8px'><b>X1S</b></td><td style='padding:8px'>Yes, local</td><td style='padding:8px'>Optional, through Sofabaton's cloud</td><td style='padding:8px'>Added by you</td></tr>" +
+                "<tr style='border-top:1px solid #e0e0e0'><td style='padding:8px'><b>X1</b></td><td style='padding:8px' colspan='3'>Not supported. See Common questions.</td></tr>" +
+                "</table>" +
                 "<p>Setup moves back and forth between two apps, so each step is tagged:</p>" +
                 "<p>${HUBITAT_PILL}<br>This Hubitat app or a device page.</p>" +
                 "<p>${SOFABATON_PILL}<br>The Sofabaton mobile app.</p>",
-            checklist: [[title: "Know your model", detail: "It's printed on the hub, or shown in the Sofabaton app under the hub's settings. X2 uses local MQTT, X1S uses local HTTP plus a cloud webhook. The original X1 isn't supported."],
+            checklist: [[title: "Know your model", detail: "It's printed on the hub, or shown in the Sofabaton app under the hub's settings."],
                         [title: "X2: Hubitat 2.5.2.126 or newer", detail: "Earlier versions can't receive MQTT messages. Check Settings &rarr; Hub Details."],
                         [title: "X2: Hubitat's MQTT broker", detail: "Enabled through MQTT Import Integration. See X2 setup, step 1."],
                         [title: "X1S: a static IP", detail: "Set a DHCP reservation on your router. If the IP changes later, the integration stops working with no error."]]],
@@ -852,10 +859,14 @@ private List tipsTopics() {
         [id: "traffic", label: "What creates MQTT traffic", title: "What creates MQTT traffic", group: "Troubleshooting", icon: "pi-info-circle",
             body: "<p>From the remote, only activity-level changes: starting or switching an activity, or Power Off. Button presses within an activity " +
                 "(volume, channel, play/pause) never touch the network. This integration reacts to activities, not individual button presses.</p>" +
-                "<p>X1S never uses MQTT. It reports over local HTTP and takes commands through the cloud webhook.</p>"],
+                "<p>X1S never uses MQTT. It reports over local HTTP, and takes commands through Sofabaton's cloud webhook if you added one.</p>"],
         [id: "faq", label: "Common questions", title: "Common questions", group: "Troubleshooting", icon: "pi-question-circle",
-            body: "<p><b>Can I rename an X2 activity?</b><br>Yes, on its device page. Hubitat keeps your name, and the Sofabaton name is kept in the sofabatonName attribute.</p>" +
-                "<p><b>Where does an X1S webhook URL go?</b><br>The Activity's Start or Stop Webhook URL fields, when adding it or later through Edit.</p>" +
+            body: "<p><b>Why isn't the original X1 supported?</b><br>The X1 can only send its IP control messages to port 8060, and Hubitat only listens on port 39501, " +
+                "so an X1 can't report to Hubitat directly. The X1S and X2 don't have this limit.</p>" +
+                "<p><b>Do I need the X1S webhook?</b><br>No. Without it, Hubitat still knows which activity is running (<b>Follow only</b>). " +
+                "Add it if you also want Hubitat to start and stop activities.</p>" +
+                "<p><b>Can I rename an X2 activity?</b><br>Yes, on its device page. Hubitat keeps your name, and the Sofabaton name is kept in the sofabatonName attribute.</p>" +
+                "<p><b>Where does an X1S webhook URL go?</b><br>The activity's Start and Stop Webhook URL fields, when adding it or later through Edit.</p>" +
                 "<p><b>Can I change a hub's model, MAC, or IP?</b><br>No, those set the device ID. Remove the hub and add it again.</p>"],
 
         [id: "removal", label: "Removing hubs", title: "Remove hubs and activities safely", group: "Devices", icon: "pi-trash",
@@ -878,7 +889,7 @@ private List tipsTopics() {
 private void helpAndSupportSection() {
     section(title: "<b>Help & Support</b>", sectionClass: "app-main-support") {
         href name: "tips", title: "<i class='pi pi-info-circle' aria-hidden='true'></i>Tips & Troubleshooting",
-            page: "tipsPage", description: "Setup guide for X1S and X2", width: 4, style: "margin:8px;"
+            page: "tipsPage", description: "Setup guides for X2 and X1S", width: 4, style: "margin:8px;"
         paragraph rawHtml: true, supportLinkHtml(COMMUNITY_URL, "pi pi-comments",
             "Hubitat Community Thread", "Questions, feedback, and release notes"), width: 4
         paragraph rawHtml: true, supportLinkHtml(COFFEE_URL, "fa-solid fa-mug-hot",
@@ -1121,4 +1132,3 @@ private String tipsCardCss() {
   button.hrefElem[name^='_action_href_tips']::before { color: #1565c0; }
 """
 }
-
