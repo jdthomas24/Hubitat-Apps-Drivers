@@ -46,13 +46,15 @@ import groovy.transform.Field
     display: inline-block !important; padding: 8px 20px !important; margin: 4px 12px 4px 0 !important;
     border: 1px solid transparent !important; border-radius: 4px !important; box-shadow: none !important;
     font-size: 15px !important; font-weight: 600 !important; text-align: center !important; line-height: 1.4 !important;
-    cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+    cursor: pointer; transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.15s; }
   button.hrefElem[name^='_action_href_sbCancel'] { background: #f1f3f5 !important; border-color: #d0d7de !important; }
-  button.hrefElem[name^='_action_href_sbCancel']:hover { background: #e2e6ea !important; }
+  button.hrefElem[name^='_action_href_sbCancel']:hover { background: #eaf2fc !important; border-color: #1565c0 !important; }
+  button.hrefElem[name^='_action_href_sbCancel']:hover span { color: #1565c0 !important; }
   button.hrefElem[name^='_action_href_sbSave'] { background: #bdbdbd !important; border-color: #bdbdbd !important; }
-  button.hrefElem[name^='_action_href_sbSave']:hover { background: #a8a8a8 !important; }
+  button.hrefElem[name^='_action_href_sbSave']:not([name*='Ready']) { cursor: not-allowed !important; }
   button.hrefElem[name*='Ready'] { background: #2e7d32 !important; border-color: #2e7d32 !important; }
-  button.hrefElem[name*='Ready']:hover { background: #256b29 !important; }
+  button.hrefElem[name*='Ready']:hover { background: #1b5e20 !important; border-color: #1b5e20 !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.25) !important; transform: translateY(-1px); }
   button.hrefElem[name^='_action_href_sbCancel']::before, button.hrefElem[name^='_action_href_sbSave']::before,
   button.hrefElem[name^='_action_href_sbCancel']::after, button.hrefElem[name^='_action_href_sbSave']::after { display: none !important; }
   button.hrefElem[name^='_action_href_sbCancel'] span { color: #333 !important; font-size: 15px !important; }
