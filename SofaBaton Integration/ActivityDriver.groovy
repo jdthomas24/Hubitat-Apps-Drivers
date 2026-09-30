@@ -32,7 +32,7 @@ def version() { return "1.0.0" }
 @Field static final Integer CONFIRM_TIMEOUT = 20
 
 metadata {
-    definition (name: "Sofabaton Activity", namespace: "jdthomas24", author: "Jason Thomas") {
+    definition (name: "Sofabaton Activity", namespace: "jdthomas24", author: "Jason Thomas", importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/SofaBaton%20Integration/ActivityDriver.groovy") {
         capability "Actuator"
         capability "Switch"
         attribute "activityStatus", "string"
