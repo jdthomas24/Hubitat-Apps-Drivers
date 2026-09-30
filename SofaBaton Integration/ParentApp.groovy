@@ -16,7 +16,8 @@
       has seen, so users never need MQTT Explorer.
      -Add/Edit pages save ONLY on an explicit Save click (state.*SaveRequested).
   Hubitat's Done is hidden there (it left without saving). Cancel and Save sit together at
-  the bottom; Save is gray until required fields are filled, green when ready.
+  the bottom as links to mainPage (so a browser reload stays on the main page), with a
+  one-time token so a reload can't re-submit. Save is gray until required fields are filled.
       Edit/Remove use buttons + state, not hrefs with params (Hubitat drops
       params across same-page hrefs).
      -No required:true on Add page inputs (browser validation blocked Cancel).
@@ -38,7 +39,17 @@ import groovy.transform.Field
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 
 // Add/Edit pages: Hubitat's Done would leave without saving, so only Cancel and Save are shown.
-@Field static final String HIDE_DONE_CSS = "<style>#fieldsetAppButtons { display: none !important; }</style>"
+@Field static final String HIDE_DONE_CSS = """<style>
+  #fieldsetAppButtons { display: none !important; }
+  button.hrefElem[name^='_action_href_sbCancel'], button.hrefElem[name^='_action_href_sbSave'] {
+    min-height: 0 !important; height: auto !important; padding: 8px 18px !important; border-radius: 4px !important;
+    box-shadow: none !important; font-size: 15px !important; font-weight: 600; text-align: center; }
+  button.hrefElem[name^='_action_href_sbCancel']::before, button.hrefElem[name^='_action_href_sbSave']::before,
+  button.hrefElem[name^='_action_href_sbCancel']::after, button.hrefElem[name^='_action_href_sbSave']::after { display: none !important; }
+  button.hrefElem[name^='_action_href_sbCancel'] span, button.hrefElem[name^='_action_href_sbSave'] span { color: inherit !important; }
+  button.hrefElem[name^='_action_href_sbCancel'] .state-incomplete-text, button.hrefElem[name^='_action_href_sbSave'] .state-incomplete-text,
+  button.hrefElem[name^='_action_href_sbCancel'] .state-complete-text, button.hrefElem[name^='_action_href_sbSave'] .state-complete-text { display: none !important; }
+</style>"""
 
 @Field static final String HUBITAT_PILL = "<span style='background:#1976d2;color:#fff;border-radius:8px;padding:1px 9px;font-size:0.75em;font-weight:bold'>HUBITAT</span>"
 @Field static final String SOFABATON_PILL = "<span style='background:#7c4dff;color:#fff;border-radius:8px;padding:1px 9px;font-size:0.75em;font-weight:bold'>SOFABATON APP</span>"
@@ -143,7 +154,18 @@ void revertLogLevel() {
 // Main page
 // ============================================================================
 
-def mainPage() {
+def mainPage(params = null) {
+    // Save/Cancel on Add/Edit pages are links to mainPage, so the browser URL ends up here
+    // and a reload stays on the main page. The token stops a reload from re-submitting.
+    if (params?.formAction && params?.token && params.token == state.formToken) {
+        state.remove("formToken")
+        switch (params.formAction) {
+            case "saveHub": state.hubSaveRequested = true; return addHubPage()
+            case "cancelHub": state.hubPageCancelled = true; return addHubPage()
+            case "saveActivity": state.activitySaveRequested = true; return addActivityPage()
+            case "cancelActivity": state.activityPageCancelled = true; return addActivityPage()
+        }
+    }
     if (state.editingHubDni) return addHubPage()
     if (state.editingActivityKey) return addActivityPage()
 
@@ -441,7 +463,7 @@ def addHubPage(params = [:]) {
         }
         section {
             if (saveError) paragraph "<b style='color:#c00'>${saveError}</b>"
-            formButtons("cancelHubBtn", "saveHubBtn", editingHub ? "Save Changes" : "Add This Hub", hubReady)
+            formButtons("Hub", editingHub ? "Save Changes" : "Add This Hub", hubReady)
         }
     }
 }
@@ -617,17 +639,22 @@ def addActivityPage() {
         section {
             if (saveError) paragraph "<b style='color:#c00'>${saveError}</b>"
             boolean activityReady = (!missing && !clash) as boolean
-            formButtons("cancelActivityBtn", "saveActivityBtn", editingActivity ? "Save Changes" : "Add This Activity", activityReady)
+            formButtons("Activity", editingActivity ? "Save Changes" : "Add This Activity", activityReady)
         }
     }
 }
 
-// Cancel and Save side by side at the bottom of Add/Edit pages. Save is gray until the
-// required fields are filled; pressing it anyway just shows what's missing.
-private void formButtons(String cancelName, String saveName, String saveTitle, boolean ready) {
-    input name: cancelName, type: "button", title: "Cancel", width: 3
-    input name: saveName, type: "button", title: saveTitle, width: 3,
-        backgroundColor: ready ? "#2e7d32" : "#bdbdbd", textColor: "white"
+// Cancel and Save side by side at the bottom of Add/Edit pages, as links to mainPage styled
+// as buttons (see HIDE_DONE_CSS). Save is gray until required fields are filled; pressing it
+// anyway just shows what's missing.
+private void formButtons(String kind, String saveTitle, boolean ready) {
+    if (!state.formToken) state.formToken = now().toString()
+    href name: "sbCancel${kind}", title: "Cancel", description: "", page: "mainPage",
+        params: [formAction: "cancel${kind}", token: state.formToken], width: 3,
+        style: "background:#f5f5f5;color:#333;border:1px solid #d0d7de;"
+    href name: "sbSave${kind}", title: saveTitle, description: "", page: "mainPage",
+        params: [formAction: "save${kind}", token: state.formToken], width: 3,
+        style: "background:${ready ? '#2e7d32' : '#bdbdbd'};color:#fff;border:1px solid ${ready ? '#2e7d32' : '#bdbdbd'};"
 }
 
 // Small colored pill plus one line of help, used as a group header on the Activity page.
