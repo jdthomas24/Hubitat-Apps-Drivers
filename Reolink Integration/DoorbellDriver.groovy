@@ -7,40 +7,19 @@
  * ring, separate from AI person/motion detection.
  *
  * v1.6.5 -- Same changes as the camera driver: RTSP validation queued through
- * the app and retried on timeout, lastMotionTime/lastMotionType, and
- * clearBatteryInfo() for wired devices wrongly marked battery.
- * v1.6.0 -- Added RTSPStream support using the same hub video stream service
- * and parent-managed source settings as the camera driver.
- * v1.5.1 -- No functional change to this driver (version kept in sync with
- * the rest of the release); the actual fix was six missing passthrough
- * methods in ReolinkStandaloneDevices.groovy -- see that file's header for
- * details.
- * v1.5.0 -- NVR recording-control support: excludeFromRecordingPresets
- * preference (below) is read directly by the app (ch.getSetting(...), same
- * technique already used for batteryCheckEnabled etc.) inside
- * componentLoadPreset() -- when true, no preset will ever write a new
- * schedule to this device, regardless of what that preset specifies. This
- * is the primary intended use case (excluding a battery-class WiFi
- * doorbell from a preset meant for wired channels) -- see ParentApp.groovy
- * for the enforcement side and the Recording Presets page's 🔒 display.
- * Also added checkRecordingSchedule() -- a diagnostic-only command that
- * reads and logs this channel's current NVR recording schedule without
- * changing anything (requires Full logging to see the result).
- * v1.4.2 -- HOTFIX: bare paragraph("text") calls in preferences are App-DSL
- * only and don't exist on a driver's compiled script -- caused a fatal
- * "No signature of method: Script1.paragraph()" on save/update, blocking the
- * 1.4.1 update entirely (same bug as CameraDriver.groovy). Fixed via
- * input(type: "paragraph").
- * v1.4.1 -- Added chargingStatus attribute (charging/not_charging/unknown)
- * from GetBatteryInfo's Battery.chargeStatus, same confirmed field as the
- * camera driver. batteryMode self-heal was app-side only, no change needed
- * here.
- * v1.3.9 -- Added Battery capability so a battery-powered doorbell can show
- * a percentage and get pulled into the app's auto battery-check scheduler
- * (keyed off hasCapability("Battery"), no app-side change needed for that
- * part). Added receiveBatteryInfo() with the confirmed nested
- * Battery.batteryPercent field, and receiveBatteryMode() (called once at
- * device creation).
+ * the app and retried on timeout, lastMotionTime/lastMotionType, the new
+ * "power" summary attribute (replaces batteryMode; wired/battery kept in the
+ * powerMode data value), chargingStatus "plugged_in", and no battery values
+ * on wired devices.
+ * v1.6.0 -- Added RTSPStream support (same hub video stream service and
+ * parent-managed source settings as the camera driver).
+ * v1.5.0 -- excludeFromRecordingPresets lock and checkRecordingSchedule()
+ * diagnostic (see CameraDriver.groovy). Primary use: keeping a battery WiFi
+ * doorbell out of a preset meant for wired channels.
+ * v1.4.2 -- HOTFIX: driver preferences use input(type: "paragraph").
+ * v1.4.1 -- Added chargingStatus attribute.
+ * v1.3.9 -- Added Battery capability, so a battery doorbell shows a % and
+ * joins the app's auto battery-check scheduler.
  * Full history prior to 1.3.9 is in GitHub commit history.
  */
 metadata {
@@ -49,9 +28,6 @@ metadata {
         capability "PushableButton"
         capability "Refresh"
         capability "Sensor"
-        // v1.3.9: added so a battery-powered doorbell can show a % and get
-        // pulled into the app's auto battery-check scheduler, which keys
-        // off hasCapability("Battery") rather than device type.
         capability "Battery"
         capability "ImageUrl"
 
@@ -74,13 +50,11 @@ metadata {
         attribute "height", "number"
         attribute "cpuUsage", "number"
         attribute "streamSubscribers", "number"
-        attribute "batteryMode", "enum", ["wired", "battery", "unknown"]
-        // Both "charging" and "not_charging" confirmed against real
-        // hardware -- see CameraDriver.groovy's matching attribute comment.
-        attribute "chargingStatus", "enum", ["unknown", "not_charging", "charging"]
+        // v1.6.5: one-line power summary, replaces batteryMode.
+        attribute "power", "string"
+        attribute "chargingStatus", "enum", ["unknown", "not_charging", "charging", "plugged_in"]
         attribute "sleepStatus", "enum", ["awake", "asleep", "unknown"]
-        // Tracks whether the most recent state update came from the
-        // real-time event push path or the plain polling fallback.
+        // Whether the most recent state update came from an event push or a poll.
         attribute "lastUpdateSource", "enum", ["event", "poll"]
         attribute "supportedFeatures", "string"
         command "takeSnapshot"
@@ -91,11 +65,7 @@ metadata {
         command "setSnapshotInterval", [[name: "seconds", type: "NUMBER"]]
     }
     preferences {
-        // v1.4.2 follow-up: reordered so each paragraph header is the FIRST
-        // of its own 3-item row in this 3-column grid -- see
-        // CameraDriver.groovy's matching preferences comment for why
-        // (input(type: "paragraph") doesn't span the full row on a driver
-        // the way App-DSL paragraph() does).
+        // Each header is the FIRST of its own 3-item row (see CameraDriver.groovy).
         input name: "battChkHdr", type: "paragraph", title: "<b>Scheduled battery check</b>"
         input name: "batteryCheckEnabled", type: "bool", title: "Enable auto battery check", defaultValue: false,
             description: "Battery devices only, OFF by default. When ON, auto-checks and updates battery level " +
@@ -120,8 +90,7 @@ metadata {
                 "own refresh rate does NOT make the image any fresher than this -- it just re-displays whatever " +
                 "was last cached at this interval. Kept separate from poll interval so motion/visitor detection " +
                 "can stay fast without forcing a full image download that often."
-        // Permanent, per-device lock -- see CameraDriver.groovy's matching
-        // preference for the full comment. Same behavior here.
+        // Permanent per-device lock, same behavior as the camera driver.
         input name: "excludeFromRecordingPresets", type: "bool",
             title: "🔒 Exclude this device from ALL recording presets", defaultValue: false,
             description: "When ON, loading ANY preset will never write a new recording schedule to this " +
@@ -265,62 +234,72 @@ def setSnapshotInterval(seconds) {
 def checkAbilities() {
     parent?.componentCheckAbilities(this, device.deviceNetworkId)
 }
-/**
- * Diagnostic only: reads and logs this channel's current NVR recording
- * schedule, never writes anything. Requires the app's Log level set to
- * Full to see the result (same as any other logNormal/logFull-routed
- * message).
- */
+/** Diagnostic only: reads and logs this channel's current NVR recording schedule (Full logging). */
 def checkRecordingSchedule() {
     parent?.componentCheckRecordingSchedule(this, device.deviceNetworkId)
 }
 def checkBattery() {
     parent?.componentCheckBattery(this, device.deviceNetworkId)
 }
-/**
- * v1.3.9: battery% reads the confirmed nested reolink_aio field
- * Battery.batteryPercent first, same fix already validated on the camera
- * driver, with flat fallbacks kept for firmware variants that return it
- * unnested. chargingStatus (v1.4.1) reads Battery.chargeStatus -- see
- * CameraDriver.groovy's matching comment for the confirmed hardware detail.
- * v1.6.5: ignored entirely on a wired device.
- */
+/** Called by the app with "battery" or "wired". See CameraDriver.groovy's matching note. */
+def receiveBatteryMode(String mode) {
+    device.updateDataValue("powerMode", mode)
+    device.deleteCurrentState("batteryMode")
+    if (mode == "wired") clearBatteryInfo()
+    updatePowerSummary()
+}
+/** Called by the app after GetBatteryInfo. Same charge/adapter mapping as CameraDriver.groovy. */
 def receiveBatteryInfo(battInfo) {
-    if (device.currentValue("batteryMode") == "wired") return
+    if (device.getDataValue("powerMode") == "wired") return
     def pct = battInfo?.Battery?.batteryPercent ?: battInfo?.batteryPercent ?: battInfo?.batteryPercentage
     if (pct != null) sendEvent(name: "battery", value: pct)
 
-    def chargeStatus = battInfo?.Battery?.chargeStatus
-    def chargingLabel = (chargeStatus == 1) ? "charging" : (chargeStatus == 0) ? "not_charging" : "unknown"
-    if (chargeStatus != null) sendEvent(name: "chargingStatus", value: chargingLabel)
+    def charge = battInfo?.Battery?.chargeStatus
+    def adapter = battInfo?.Battery?.adapterStatus
+    String label = null
+    if (charge != null) {
+        label = (charge as Integer) != 0 ? "charging" :
+            (adapter != null && (adapter as Integer) != 0) ? "plugged_in" : "not_charging"
+        sendEvent(name: "chargingStatus", value: label)
+    }
+    updatePowerSummary(pct, label)
 }
-/** v1.6.5: removes battery values from a wired device that was wrongly marked battery. */
+/** v1.6.5: removes battery values from a wired device. */
 def clearBatteryInfo() {
     device.deleteCurrentState("battery")
     device.deleteCurrentState("chargingStatus")
 }
+/** v1.6.5: builds the one-line power attribute. Values passed in win over currentValue (same-execution lag). */
+private void updatePowerSummary(pct = null, String charging = null) {
+    String mode = device.getDataValue("powerMode")
+    String text
+    if (mode == "wired") {
+        text = "Wired"
+    } else if (mode == "battery") {
+        def p = pct != null ? pct : device.currentValue("battery")
+        String c = charging ?: device.currentValue("chargingStatus")
+        List parts = ["Battery"]
+        if (p != null) parts << "${p}%"
+        if (c == "charging") parts << "charging"
+        else if (c == "plugged_in") parts << "plugged in"
+        text = parts.join(", ")
+    } else {
+        text = "Unknown"
+    }
+    sendIfChanged("power", text)
+}
 /**
- * Required by the PushableButton capability -- declaring the capability adds
- * the Push command/attributes to the device page, but does NOT auto-implement
- * this method; without it, clicking Push (or any app/rule calling push())
- * throws MissingMethodException. Untyped buttonNumber parameter deliberately
- * -- Hubitat's own Commands-tab test UI can pass this as a String rather than
- * a Number, and a typed/coerced parameter would reject that.
+ * Required by PushableButton (the capability doesn't implement push()).
+ * Untyped param: the Commands-tab test UI can pass a String.
  */
 def push(buttonNumber) {
     sendEvent(name: "pushed", value: buttonNumber, isStateChange: true)
 }
-/**
- * Called by the app after GetAbility, both at discovery/creation time and on
- * a manual checkAbilities command. Informational only -- see the app's Tips
- * page ("Supported Features") for what this does and doesn't mean. Does NOT
- * hide or disable any command on this device; Hubitat has no way to do that
- * for an individual device instance.
- */
+/** Called by the app after GetAbility. Informational only. */
 def receiveSupportedFeatures(List features) {
     sendEvent(name: "supportedFeatures", value: features ? features.join(", ") : "None detected")
 }
-/** Called by the app after either a poll or a real-time event push -- see CameraDriver.groovy's matching note. */
+/** Called by the app after a poll or a real-time event push. */
 def parseReolinkState(aiState, mdState, String source = "poll") {
     boolean wasActive = anyMotionActive()
     List<String> activeTypes = []
@@ -361,24 +340,15 @@ private void updateLastMotion(boolean wasActive, List<String> activeTypes) {
         sendEvent(name: "lastMotionTime", value: new Date().format("yyyy-MM-dd h:mm:ss a", location?.timeZone ?: TimeZone.getDefault()))
     }
 }
-/** See camera driver for why this exists -- cuts redundant sendEvent() calls to reduce load on lower-spec hubs. */
+/** Only sends when the value changed, to avoid needless events and hub load. */
 private void sendIfChanged(String name, value) {
     if (device.currentValue(name)?.toString() != value?.toString()) {
         sendEvent(name: name, value: value)
     }
 }
-/** Called by the app when a poll gets no response -- see camera driver for the reasoning. */
+/** Called by the app when a poll gets no response (see camera driver). */
 def markAsleep() {
     sendIfChanged("sleepStatus", "asleep")
-}
-/**
- * v1.3.9: called once by the app at device creation time with the discovery-
- * time battery probe result -- see CameraDriver.groovy's matching note.
- * v1.4.1: the app's scheduler can also call this later to backfill a device
- * that ended up without batteryMode set -- no change needed here either way.
- */
-def receiveBatteryMode(String mode) {
-    sendEvent(name: "batteryMode", value: mode)
 }
 def receiveSnapshotUrl(url) {
     sendEvent(name: "snapshotUrl", value: url)
