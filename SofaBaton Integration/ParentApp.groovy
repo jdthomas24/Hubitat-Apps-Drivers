@@ -7,32 +7,41 @@
     push-command building blocks originated by Mike Maxwell (mike.maxwell).
 
     Notes:
-     -Setup only. Runtime (HTTP listener, MQTT, webhooks, state sync) lives in
+     -Setup only. Runtime (HTTP listener, MQTT, webhooks, state sync, buttons) lives in
       the Bridge, Remote, and Activity drivers.
      -Device tree: Bridge -> one Remote per hub -> one Activity per activity.
       X1S keyed by IP (ipToHex DNI), X2 keyed by bare uppercase MAC.
      -X2 needs Hubitat 2.5.2.126+. Activities are created automatically from the
       hub's list; Add an Activity is X1S only. "Find My X2" reads MACs the Bridge
       has seen, so users never need MQTT Explorer.
+     -Activity labels default to "<Hub label>-<Activity>" so they group in device pickers.
+      The main page calls applyActivityLabels() on each hub (a no-op after the first run);
+      renaming a hub relabels its default-named activities. Pills show the short name.
+     -X2 remote buttons: the Remote learns the Hubitat Control device from the first press.
+      Edit Hub can set it manually. Button Actions maps each button to switches (Toggle/On/Off);
+      the app subscribes to the hub's pushed events. Group toggle: any on -> all off, else all on.
+      Button events still fire on the hub device for Rule Machine or Button Controller.
      -Add/Edit pages save ONLY on an explicit Save click (state.*SaveRequested).
-  Hubitat's Done is hidden there (it left without saving). Cancel and Save sit together at
-  the bottom as links to mainPage (so a browser reload stays on the main page), with a
-  one-time token so a reload can't re-submit. Save is gray until required fields are filled.
-      Edit/Remove use buttons + state, not hrefs with params (Hubitat drops
+      Hubitat's Done is hidden there (it left without saving). Cancel and Save sit together at
+      the bottom as links to mainPage (so a browser reload stays on the main page), with a
+      one-time token so a reload can't re-submit. Save is gray until required fields are filled.
+     -Edit/Remove use buttons + state, not hrefs with params (Hubitat drops
       params across same-page hrefs).
      -No required:true on Add page inputs (browser validation blocked Cancel).
       No refreshInterval (bounced to mainPage); button presses re-render instead.
      -uninstalled() must delete the Bridge, or everything under it is orphaned.
      -Model, MAC, and X1S IP set the DNI, so they're not editable. Remove and re-add.
      -Log level is the only logging control. It cascades App -> Bridge -> Remotes -> Activities.
- -Refresh and Add Hub pause 1.5s so the page redraws after the hub's list reply (~0.3s).
- -UI follows HubitatAppUiTemplate (Reolink v1.6.1, UI design by gopher.ny).
+      Every driver sends its log lines back up to childLog(), so all Sofabaton logging appears
+      under this app, labeled [Bridge], [hub], or [activity]. View logs shows everything.
+     -Refresh and Add Hub pause 1.5s so the page redraws after the hub's list reply (~0.3s).
+     -UI follows HubitatAppUiTemplate (Reolink v1.6.1, UI design by gopher.ny).
 */
 
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Sofabaton Integration"
-@Field static final String APP_VERSION = "1.0.0"
+@Field static final String APP_VERSION = "1.1.0"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com"   // TODO: release thread
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
@@ -85,6 +94,7 @@ preferences {
     page(name: "mainPage")
     page(name: "addHubPage")
     page(name: "addActivityPage")
+    page(name: "buttonActionsPage")
     page(name: "tipsPage")
 }
 
@@ -107,6 +117,7 @@ def uninstalled() {
 def initialize() {
     getBridge()
     pushLogLevel()
+    subscribeButtons()
 }
 
 // Sends the app's level to every Sofabaton device via the Bridge.
@@ -142,6 +153,17 @@ private void logErr(String msg) { log.error "${APP_NAME}: ${msg}" }
 private void logWarn(String msg) { log.warn "${APP_NAME}: ${msg}" }
 private void logInfo(String msg) { if (currentLogLevel() != "Errors Only") log.info "${APP_NAME}: ${msg}" }
 private void logDbg(String msg) { if (currentLogLevel() == "Full") log.debug "${APP_NAME}: ${msg}" }
+
+// Called by the Bridge for every driver log line. Drivers already filter by level.
+void childLog(String level, String source, String msg) {
+    String line = "${APP_NAME} [${source}]: ${msg}"
+    switch (level) {
+        case "error": log.error line; break
+        case "warn": log.warn line; break
+        case "info": log.info line; break
+        default: log.debug line
+    }
+}
 
 // Full logging reverts to Errors Only after 30 minutes.
 private void armLogRevert() {
@@ -192,6 +214,8 @@ def mainPage(params = null) {
 
     def bridge = getBridge()
     def hubs = bridge?.getChildDevices() ?: []
+    hubs.each { h -> try { h.applyActivityLabels() } catch (e) { } }   // one-time label migration per hub
+    subscribeButtons()   // picks up changes made on Button Actions
     def x2Hubs = hubs.findAll { it.currentValue("hubModel") == "X2" }
     def x1sHubs = hubs.findAll { it.currentValue("hubModel") != "X2" }
     List allActivities = hubs.collectMany { it.getChildDevices() ?: [] }
@@ -210,23 +234,25 @@ def mainPage(params = null) {
             }
             hubs.each { hub ->
                 String dni = hub.deviceNetworkId
+                String hubLabel = hub.getLabel()
                 def activities = hub.getChildDevices() ?: []
                 paragraph rawHtml: true, hubCardHtml(hub, activities)
                 // Hubitat can't put inputs inside HTML, so these sit tight under the card (see sb-hub-btn CSS).
                 if (hub.currentValue("hubModel") == "X2") {
                     input name: "editHub_${dni}", type: "button", title: "Edit Hub", width: 3
                     input name: "syncHub_${dni}", type: "button", title: "Refresh Activities", width: 3
+                    href name: "btnActs_${dni}", title: "Button Actions", description: "", page: "buttonActionsPage", params: [hub: dni], width: 3
                     input name: "removeHub_${dni}", type: "button", title: "Remove Hub", width: 3
                     activities.findAll { it.currentValue("onHub") == "false" }.each { act ->
-                        input name: "removeAct_${dni}_${act.deviceNetworkId}", type: "button", title: "Remove ${act.getLabel()}", width: 3,
+                        input name: "removeAct_${dni}_${act.deviceNetworkId}", type: "button", title: "Remove ${shortName(act, hubLabel)}", width: 3,
                             backgroundColor: "#c62828", textColor: "white"
                     }
                 } else {
                     input name: "editHub_${dni}", type: "button", title: "Edit Hub", width: 3
                     input name: "removeHub_${dni}", type: "button", title: "Remove Hub", width: 3
                     activities.each { act ->
-                        input name: "editAct_${dni}_${act.deviceNetworkId}", type: "button", title: "Edit ${act.getLabel()}", width: 3
-                        input name: "removeAct_${dni}_${act.deviceNetworkId}", type: "button", title: "Remove ${act.getLabel()}", width: 3
+                        input name: "editAct_${dni}_${act.deviceNetworkId}", type: "button", title: "Edit ${shortName(act, hubLabel)}", width: 3
+                        input name: "removeAct_${dni}_${act.deviceNetworkId}", type: "button", title: "Remove ${shortName(act, hubLabel)}", width: 3
                     }
                 }
                 paragraph rawHtml: true, "<div class='sb-hub-end'></div>"
@@ -258,6 +284,13 @@ def mainPage(params = null) {
     }
 }
 
+// Activity name without the "<Hub label>-" prefix, for pills and buttons.
+private String shortName(act, String hubLabel) {
+    String label = act.getLabel() ?: act.displayName
+    String prefix = hubLabel ? "${hubLabel}-".toString() : null
+    return (prefix && label?.startsWith(prefix) && label.length() > prefix.length()) ? label.substring(prefix.length()) : label
+}
+
 // Green only when everything is confirmed. X2 needs a real reply from the hub.
 private Map bannerState(bridge, List hubs, List x2Hubs, int activityCount, int removedCount) {
     String counts = "${countText(hubs.size(), 'hub')} &middot; ${countText(activityCount, 'activity', 'activities')}" +
@@ -283,12 +316,13 @@ private Map bannerState(bridge, List hubs, List x2Hubs, int activityCount, int r
 private String hubCardHtml(hub, List activities) {
     String model = hub.currentValue("hubModel") ?: "unknown"
     boolean x2 = model == "X2"
+    String hubLabel = hub.getLabel()
     String idShown = x2 ? (hub.currentValue("remoteMac") ?: "no MAC set") : (hub.currentValue("remoteIp") ?: "no IP set")
     StringBuilder card = new StringBuilder()
     card << "<div style='border:1px solid #ccc;border-radius:10px;padding:12px 14px;margin:4px 0 0;background:#fafafa'>"
     String badge = x2 ? "#5f8b6f" : "#e8a33d"   // matches the Remote driver's pills
     card << "<div><span style='background:${badge};color:#fff;border-radius:8px;padding:2px 9px;font-size:0.9em;font-weight:bold'>${model}</span> "
-    card << "<a href='/device/edit/${hub.id}' target='_blank' class='sb-link' style='font-size:0.85em'>${hub.getLabel()}" +
+    card << "<a href='/device/edit/${hub.id}' target='_blank' class='sb-link' style='font-size:0.85em'>${hubLabel}" +
         "<i class='fa-regular fa-external-link' style='margin-left:5px;font-size:0.8em'></i></a> "
     card << "<span style='color:#888;font-size:0.8em'>${idShown}</span></div>"
     if (x2) {
@@ -301,15 +335,16 @@ private String hubCardHtml(hub, List activities) {
         card << (x2 ? "Loading activities from the hub. Reload this page in a few seconds." : "No activities yet. Tap Add an Activity.") << "</div>"
     } else {
         card << "<div style='margin-top:10px;display:flex;flex-wrap:wrap;gap:8px'>"
-        activities.each { act -> card << activityPillHtml(act, x2) }
+        activities.each { act -> card << activityPillHtml(act, x2, hubLabel) }
         card << "</div>"
     }
+    if (x2) card << buttonMapHtml(hub)
     card << "</div>"
     return card.toString()
 }
 
 // Opens the device in a new tab. Green dot = on. X2 shows its ID, pending state, and a flag if deleted on the hub.
-private String activityPillHtml(act, boolean x2) {
+private String activityPillHtml(act, boolean x2, String hubLabel) {
     String sw = act.currentValue("switch")
     String status = act.currentValue("activityStatus")
     String dot = "<span style='display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:${sw == 'on' ? '#2e9e5b' : '#bbb'}'></span>"
@@ -324,8 +359,41 @@ private String activityPillHtml(act, boolean x2) {
             " <span style='margin-left:6px;background:#b26a00;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>No body value</span>"
         if (!act.getSetting("webhookUrlOn")) extra += " <span style='margin-left:6px;background:#90a4ae;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>Follow only</span>"
     }
-    return "<a href='/device/edit/${act.id}' target='_blank' class='sb-pill' title='Open ${act.getLabel()?.replace("'", "&#39;")}'>${dot}${act.getLabel()}${extra}" +
+    return "<a href='/device/edit/${act.id}' target='_blank' class='sb-pill' title='Open ${act.getLabel()?.replace("'", "&#39;")}'>${dot}${shortName(act, hubLabel)}${extra}" +
         "<i class='fa-regular fa-external-link' style='margin-left:8px;font-size:0.75em;color:#1565c0'></i></a>"
+}
+
+// X2 remote buttons: which device they come from and the number-to-name map.
+private String buttonMapHtml(hub) {
+    Map btns = [:]
+    Integer devId = null
+    Map devs = [:]
+    try {
+        btns = hub.getButtonMap() ?: [:]
+        devId = hub.getButtonDeviceId()
+        devs = hub.getHubDevices() ?: [:]
+    } catch (e) { }
+    StringBuilder out = new StringBuilder("<div style='margin-top:12px;font-size:0.85em'>")
+    if (devId == null) {
+        out << "<span style='color:#888'>Remote buttons: not set up. Press a Hubitat Control button on the remote (Tips, X2 setup step 4).</span>"
+    } else {
+        String devName = devs[devId.toString()] ?: "device ${devId}"
+        out << "<span style='font-weight:600;color:#555'>Remote buttons</span> <span style='color:#888'>from ${devName}</span>"
+        if (!btns) {
+            out << "<div style='margin-top:4px;color:#aaa'>Loading button names from the hub. Tap Refresh Activities if they don't appear.</div>"
+        } else {
+            out << "<div style='margin-top:6px;display:flex;flex-wrap:wrap;gap:6px'>"
+            String dni = hub.deviceNetworkId
+            btns.sort { a, b -> (a.key as Integer) <=> (b.key as Integer) }.each { k, v ->
+                String assigned = buttonAssignmentText(dni, k.toString())
+                out << "<span style='background:#eef2f6;border-radius:10px;padding:2px 10px'><b>${k}</b> &middot; ${v}" +
+                    (assigned ? " <span style='color:#1565c0'>&rarr; ${assigned}</span>" : " <span style='color:#aaa'>(not assigned)</span>") + "</span>"
+            }
+            out << "</div>"
+        }
+    }
+    out << "</div>"
+    return out.toString()
 }
 
 private String mqttStatusHtml(bridge, List x2Hubs) {
@@ -356,6 +424,92 @@ private String mqttStatusHtml(bridge, List x2Hubs) {
 }
 
 // ============================================================================
+// Button Actions (X2 remote buttons -> switches)
+// ============================================================================
+
+private List buttonDevices(String dni, String btn) {
+    return (settings["btnDev_${dni}_${btn}"] ?: []).findAll { it != null }
+}
+
+private String buttonAction(String dni, String btn) {
+    return settings["btnAct_${dni}_${btn}"] ?: "toggle"
+}
+
+// "Lamp, Fan (toggle)" or "Lamp +2 more (on)". Empty if nothing is assigned.
+private String buttonAssignmentText(String dni, String btn) {
+    List devs = buttonDevices(dni, btn)
+    if (!devs) return ""
+    String names = devs.size() <= 2 ? devs*.displayName.join(", ") : "${devs[0].displayName} +${devs.size() - 1} more"
+    return "${names} (${buttonAction(dni, btn)})"
+}
+
+def buttonActionsPage(params = null) {
+    if (params?.hub) state.buttonActionsHub = params.hub
+    String dni = state.buttonActionsHub
+    def hub = dni ? getBridge()?.getChildDevice(dni) : null
+    Map btns = [:]
+    try { btns = hub?.getButtonMap() ?: [:] } catch (e) { }
+    dynamicPage(name: "buttonActionsPage", title: hub ? "Button Actions: ${hub.getLabel()}" : "Button Actions", install: false, uninstall: false) {
+        if (!hub) {
+            section { paragraph "Hub not found. Go back and pick a hub again." }
+            return
+        }
+        if (!btns) {
+            section {
+                paragraph rawHtml: true, warningMessageHtml("<b>No buttons yet.</b> Set up the Hubitat Control remote in the Sofabaton app " +
+                    "(Tips, X2 setup step 4), then press one of its buttons once. The buttons appear here automatically.")
+            }
+            return
+        }
+        section {
+            paragraph "<span class='text-color-secondary' style='font-size:14px;'>Pick what each remote button controls. " +
+                "<b>Toggle</b> works as a group: if any are on, all turn off, otherwise all turn on. " +
+                "For a Room Lighting scene, pick its activator device. Button events still fire on the hub device for Rule Machine or Button Controller.</span>"
+        }
+        btns.sort { a, b -> (a.key as Integer) <=> (b.key as Integer) }.each { k, v ->
+            section("Button ${k}: ${v}") {
+                input "btnDev_${dni}_${k}", "capability.switch", title: "Devices", multiple: true, required: false, submitOnChange: true, width: 8
+                input "btnAct_${dni}_${k}", "enum", title: "Action", options: [toggle: "Toggle", on: "Turn on", off: "Turn off"],
+                    defaultValue: "toggle", required: false, submitOnChange: true, width: 4
+            }
+        }
+    }
+}
+
+// Subscribes only to hubs with at least one assigned button.
+private void subscribeButtons() {
+    unsubscribe()
+    (getBridge()?.getChildDevices() ?: []).each { hub ->
+        String prefix = "btnDev_${hub.deviceNetworkId}_".toString()
+        if (settings.keySet().any { it.startsWith(prefix) && settings[it] }) subscribe(hub, "pushed", "hubButtonHandler")
+    }
+}
+
+def hubButtonHandler(evt) {
+    def hub = evt.device
+    String dni = hub.deviceNetworkId
+    String btn = evt.value?.toString()
+    List devs = buttonDevices(dni, btn)
+    if (!devs) return
+    String action = buttonAction(dni, btn)
+    if (action == "toggle") action = devs.any { it.currentValue("switch") == "on" } ? "off" : "on"
+    devs.each { d ->
+        try {
+            if (action == "on") d.on() else d.off()
+        } catch (e) {
+            logErr "button ${btn} on ${hub.getLabel()}: couldn't turn ${action} ${d.displayName}: ${e.message}"
+        }
+    }
+    logInfo "${hub.getLabel()} button ${btn}: turned ${action} ${devs*.displayName.join(', ')}"
+}
+
+private void clearButtonSettings(String dni) {
+    settings.keySet().findAll { it.startsWith("btnDev_${dni}_".toString()) || it.startsWith("btnAct_${dni}_".toString()) }.toList().each {
+        app.removeSetting(it)
+    }
+}
+
+// ============================================================================
 // Add / Edit Hub
 // ============================================================================
 
@@ -382,6 +536,9 @@ def addHubPage(params = [:]) {
             app.updateSetting("newHubMqttHost", [value: editingHub.currentValue("mqttHost") ?: "", type: "text"])
             app.updateSetting("newHubMqttPort", [value: editingHub.currentValue("mqttPort") ?: "1883", type: "text"])
             app.updateSetting("newHubMqttUser", [value: editingHub.currentValue("mqttUser") ?: "", type: "text"])
+            Integer bd = null
+            try { bd = editingHub.getButtonDeviceId() } catch (e) { }
+            app.updateSetting("newHubButtonDev", [value: bd != null ? bd.toString() : "auto", type: "enum"])
         }
         state.editHubPrefilled = true
     }
@@ -404,7 +561,7 @@ def addHubPage(params = [:]) {
             return mainPage()
         } else if (editingHub && newHubName && (editingHub.currentValue("hubModel") == "X1S" || builtIn || newHubMqttHost)) {
             logInfo "updating hub '${editingDni}'"
-            updateExistingHub(editingHub, newHubName, builtIn, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass)
+            updateExistingHub(editingHub, newHubName, builtIn, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass, newHubButtonDev)
             clearHubSettings()
             state.remove("editingHubDni")
             state.remove("editHubPrefilled")
@@ -424,6 +581,7 @@ def addHubPage(params = [:]) {
         section {
             paragraph rawHtml: true, HIDE_DONE_CSS
             input name: "newHubName", type: "text", title: "Hub Name (e.g. Living Room)", submitOnChange: true
+            paragraph "<span class='text-color-secondary' style='font-size:14px;'>Activities are named after the hub, e.g. <b>Living Room-Watch TV</b>, so they group together in device pickers.</span>"
             if (editingHub) {
                 paragraph "Model: <b>${editModel}</b> <span class='text-color-secondary'>(remove and re-add to change)</span>"
             } else {
@@ -459,6 +617,15 @@ def addHubPage(params = [:]) {
                 section {
                     paragraph "MAC ID: <b>${editingHub.deviceNetworkId}</b> <span class='text-color-secondary'>(remove and re-add to change)</span>"
                 }
+                section("Remote buttons") {
+                    Map devs = [:]
+                    try { devs = editingHub.getHubDevices() ?: [:] } catch (e) { }
+                    Map opts = [auto: "Auto (learn from the first button press)"]
+                    devs.each { k, v -> opts[k.toString()] = "${v} (ID ${k})".toString() }
+                    input name: "newHubButtonDev", type: "enum", title: "Hubitat Control device", options: opts, submitOnChange: true
+                    paragraph "<span class='text-color-secondary' style='font-size:14px;'>The Home Assistant Remote you made in the Sofabaton app for Hubitat buttons (Tips, X2 setup step 4). " +
+                        "Leave on Auto unless the wrong device was learned.</span>"
+                }
             } else {
                 section("Find your X2") {
                     paragraph "<span class='text-color-secondary' style='font-size:14px;'>1. Tap <b>${state.discoveryStarted ? 'Check Again' : 'Find My X2'}</b>. " +
@@ -484,15 +651,22 @@ def addHubPage(params = [:]) {
 
 private void clearHubSettings() {
     ["newHubName", "newHubModel", "newHubIp", "newHubMac", "newHubMacPick", "newHubBuiltIn",
-     "newHubMqttHost", "newHubMqttPort", "newHubMqttUser", "newHubMqttPass"].each {
+     "newHubMqttHost", "newHubMqttPort", "newHubMqttUser", "newHubMqttPass", "newHubButtonDev"].each {
         app.removeSetting(it)
     }
 }
 
-// Password only overwritten when a new one is typed.
-private void updateExistingHub(def hub, String name, boolean builtIn, String mqttHost, String mqttPort, String mqttUser, String mqttPass) {
+// Password only overwritten when a new one is typed. A rename relabels default-named activities.
+private void updateExistingHub(def hub, String name, boolean builtIn, String mqttHost, String mqttPort, String mqttUser, String mqttPass, String buttonDev = null) {
+    String oldLabel = hub.getLabel()
     hub.setLabel(name)
+    if (oldLabel && oldLabel != name) {
+        try { hub.applyActivityLabels(oldLabel, name) } catch (e) { logErr "failed to relabel activities after renaming '${oldLabel}': ${e.message}" }
+    }
     if (hub.currentValue("hubModel") == "X2") {
+        if (buttonDev) {
+            try { hub.setButtonDevice(buttonDev == "auto" ? null : (buttonDev as Integer)) } catch (e) { logErr "failed to set the Hubitat Control device: ${e.message}" }
+        }
         hub.updateSetting("useBuiltInBroker", [value: builtIn, type: "bool"])
         if (!builtIn) {
             hub.updateSetting("mqttHost", [value: mqttHost, type: "text"])
@@ -570,17 +744,19 @@ def addActivityPage() {
     // state.editingActivityKey = "<hubDni>|<actDni>", set by the Edit button.
     String editingHubDni = null
     def editingActivity = null
+    def editingHub = null
     if (state.editingActivityKey) {
         def keyParts = state.editingActivityKey.split(/\|/, 2)
         if (keyParts.length == 2) {
             editingHubDni = keyParts[0]
-            editingActivity = bridge?.getChildDevice(editingHubDni)?.getChildDevice(keyParts[1])
+            editingHub = bridge?.getChildDevice(editingHubDni)
+            editingActivity = editingHub?.getChildDevice(keyParts[1])
         }
     }
 
     if (editingActivity && !state.editActivityPrefilled) {
         app.updateSetting("newActivityHub", [value: editingHubDni, type: "enum"])
-        app.updateSetting("newActivityName", [value: editingActivity.getLabel(), type: "text"])
+        app.updateSetting("newActivityName", [value: editingActivity.currentValue("sofabatonName") ?: shortName(editingActivity, editingHub?.getLabel()), type: "text"])
         app.updateSetting("newActivityUrlOn", [value: editingActivity.getSetting("webhookUrlOn") ?: "", type: "text"])
         app.updateSetting("newActivityUrlOff", [value: editingActivity.getSetting("webhookUrlOff") ?: "", type: "text"])
         app.updateSetting("newActivityBody", [value: editingActivity.currentValue("bodyValue") ?: "", type: "text"])
@@ -611,7 +787,7 @@ def addActivityPage() {
         } else if (missing) {
             saveError = "Still needed: ${missing.join(', ')}."
         } else if (editingActivity) {
-            updateExistingActivity(editingActivity, newActivityName, newActivityUrlOn, newActivityUrlOff, body)
+            updateExistingActivity(editingActivity, editingHub, newActivityName, newActivityUrlOn, newActivityUrlOff, body)
             clearActivitySettings()
             state.remove("editingActivityKey")
             state.remove("editActivityPrefilled")
@@ -632,6 +808,9 @@ def addActivityPage() {
                 input name: "newActivityHub", type: "enum", title: "<b>Sofabaton Hub</b>", options: x1sHubs.collectEntries { [(it.deviceNetworkId): it.getLabel()] }, submitOnChange: true
             }
             input name: "newActivityName", type: "text", title: "<b>Activity Name</b> (e.g. Watch TV)", submitOnChange: true
+            if (selectedHub && newActivityName) {
+                paragraph "<span class='text-color-secondary' style='font-size:14px;'>Device name: <b>${selectedHub.getLabel()}-${newActivityName}</b></span>"
+            }
         }
         if (selectedHub) {
             section {
@@ -701,8 +880,9 @@ private void createActivity(String hubDni, String name, String urlOn, String url
     }
 }
 
-private void updateExistingActivity(def activity, String name, String urlOn, String urlOff, String body) {
-    activity.setLabel(name)
+private void updateExistingActivity(def activity, def hub, String name, String urlOn, String urlOff, String body) {
+    activity.setLabel(hub ? "${hub.getLabel()}-${name}".toString() : name)
+    activity.setHubInfo(name, true)
     activity.updateSetting("webhookUrlOn", [value: urlOn ?: "", type: "text"])
     activity.updateSetting("webhookUrlOff", [value: urlOff ?: "", type: "text"])
     activity.updateSetting("bodyValue", [value: body, type: "text"])
@@ -746,7 +926,10 @@ def appButtonHandler(String btn) {
         return
     }
     if (btn.startsWith("removeHub_")) {
-        bridge?.removeRemoteDevice(btn - "removeHub_")
+        String dni = btn - "removeHub_"
+        bridge?.removeRemoteDevice(dni)
+        clearButtonSettings(dni)
+        subscribeButtons()
         return
     }
     if (btn == "cancelActivityBtn") { state.activityPageCancelled = true; return }
@@ -811,14 +994,32 @@ private List tipsTopics() {
                 "Enter your Hubitat hub's IP (<code>${location.hub.localIP}</code>), then the port, username, and password from step 1. " +
                 "If it asks for Home Assistant account credentials, that's just the broker username and password. Confirm it shows connected before moving on.</p>",
             warning: "<b>Easy to skip, and nothing works without it.</b><br>Ignore the Home Assistant wording, you're pointing it at Hubitat's broker. " +
-                "<b>Devices &rarr; Add Device &rarr; Wi-Fi &rarr; Home Assistant Remote</b> is a different feature. Don't use it here."],
+                "<b>Devices &rarr; Add Device &rarr; Wi-Fi &rarr; Home Assistant Remote</b> is a different feature, used later for remote buttons (step 4). Don't use it for this step."],
         [id: "x2add", label: "3. Add the hub", title: "Add the X2 hub", group: "X2 setup", icon: "pi-plus-circle",
             body: "<p>${HUBITAT_PILL}<br><b>Add a Hub</b> &rarr; Model <b>X2</b> &rarr; leave <b>Use Hubitat's built-in MQTT broker</b> on.</p>" +
                 "<p>${HUBITAT_PILL}<br>Tap <b>Find My X2</b>. On the Sofabaton remote, start or switch any activity, then tap <b>Check Again</b>. Pick your hub from the list and tap <b>Add This Hub</b>.</p>" +
-                "<p>Your activities appear automatically within a few seconds, with the names and IDs from the Sofabaton app. Tap <b>Done</b> on the main page when finished.</p>" +
+                "<p>Your activities appear automatically within a few seconds, named after the hub, e.g. <code>Living Room-Watch Apple TV</code>, " +
+                "so they group together in Room Lighting and other device pickers. Tap <b>Done</b> on the main page when finished.</p>" +
                 exampleBoxHtml("<b>Added or renamed an activity in the Sofabaton app?</b><br>Tap <b>Refresh Activities</b> on the hub. " +
                     "Names you set in Hubitat are never overwritten."),
             warning: "<b>Find My X2 needs an activity change.</b><br>Volume, channel, and other button presses never touch the network, so they won't show up."],
+        [id: "x2buttons", label: "4. Remote buttons (optional)", title: "Control Hubitat with remote buttons", group: "X2 setup", icon: "pi-th-large",
+            body: "<p>Turn spare keys on the remote (A, B, C, or a color key) into buttons that control anything in Hubitat.</p>" +
+                "<p>${SOFABATON_PILL}<br><b>Devices &rarr; Add Device &rarr; Wi-Fi &rarr; Home Assistant Remote</b>. Name it (e.g. <b>Hubitat Control</b>) " +
+                "and add a command for each button you want (e.g. <b>HE Button 1</b>, <b>HE Button 2</b>). The topic and payload are filled in for you.</p>" +
+                "<p>${SOFABATON_PILL}<br>Add Hubitat Control to an activity, then <b>Customize remote buttons</b> &rarr; pick an unused key &rarr; " +
+                "<b>Short press</b> and/or <b>Long press</b> &rarr; <b>Normal Key</b> &rarr; Device <b>Hubitat Control</b> &rarr; Command <b>HE Button 1</b>. " +
+                "Repeat in every activity where the key should work.</p>" +
+                "<p>${HUBITAT_PILL}<br>Press the key once. The hub learns Hubitat Control, loads its commands, and shows them on the main page, " +
+                "e.g. <b>1 &middot; HE Button 1</b>. The command number is the button number.</p>" +
+                "<p>${HUBITAT_PILL}<br>Tap <b>Button Actions</b> under the hub and pick what each button controls, with <b>Toggle</b>, <b>Turn on</b>, or <b>Turn off</b>. " +
+                "For a Room Lighting scene, pick its activator device.</p>" +
+                "<p>Need something fancier? Rule Machine and Button Controller can use the hub device (e.g. <b>Living Room</b>) as a button device too.</p>" +
+                exampleBoxHtml("<b>Example, a lamp on key A:</b><br>" +
+                    "&bull; Key A short press = <code>HE Button 1</code><br>" +
+                    "&bull; Button Actions: HE Button 1 &rarr; Living Room Lamp, Toggle<br>" +
+                    "Want a dedicated off? Set key A long press to <code>HE Button 3</code>, then HE Button 3 &rarr; the lamp, Turn off."),
+            warning: "Keys only send while you're in an activity they're assigned in. Added or renamed a command? Tap <b>Refresh Activities</b>."],
 
         [id: "x1swebhook", label: "1. Webhook URL (optional)", title: "Get the activity's webhook URL (optional)", group: "X1S setup", icon: "pi-link",
             body: "<p>${SOFABATON_PILL}<br>Open the activity, turn on <b>Turn on API</b> (just <b>API</b> in some app versions), and copy the webhook URL, " +
@@ -853,19 +1054,20 @@ private List tipsTopics() {
                 "<p>Turning off any activity powers off the hub, the same as the remote's Power Off key. Turning off an activity that's already off does nothing. " +
                 "To change activities, just turn on the new one.</p>"],
         [id: "x2missing", label: "X2 activities missing", title: "X2 activities missing or out of date", group: "Troubleshooting", icon: "pi-exclamation-triangle",
-            body: "<p>Activity lists refresh automatically every 3 hours. For an immediate update, tap <b>Refresh Activities</b> on the hub. If the banner says <b>Waiting for your X2</b>, the hub isn't replying: " +
+            body: "<p>Activity lists and button names refresh automatically every 3 hours. For an immediate update, tap <b>Refresh Activities</b> on the hub. If the banner says <b>Waiting for your X2</b>, the hub isn't replying: " +
                 "recheck X2 setup step 2, then run <b>Force Reconnect</b> on the Bridge device.</p>" +
                 "<p>An activity deleted in the Sofabaton app shows <b>Not on hub</b>, with a Remove button on the main page. It's never deleted automatically, so your rules don't break unexpectedly.</p>"],
         [id: "traffic", label: "What creates MQTT traffic", title: "What creates MQTT traffic", group: "Troubleshooting", icon: "pi-info-circle",
-            body: "<p>From the remote, only activity-level changes: starting or switching an activity, or Power Off. Button presses within an activity " +
-                "(volume, channel, play/pause) never touch the network. This integration reacts to activities, not individual button presses.</p>" +
+            body: "<p>From the remote: starting or switching an activity, Power Off, and keys assigned to your Hubitat Control remote (X2 setup, step 4). " +
+                "Other button presses within an activity (volume, channel, play/pause) never touch the network.</p>" +
                 "<p>X1S never uses MQTT. It reports over local HTTP, and takes commands through Sofabaton's cloud webhook if you added one.</p>"],
         [id: "faq", label: "Common questions", title: "Common questions", group: "Troubleshooting", icon: "pi-question-circle",
             body: "<p><b>Why isn't the original X1 supported?</b><br>The X1 can only send its IP control messages to port 8060, and Hubitat only listens on port 39501, " +
                 "so an X1 can't report to Hubitat directly. The X1S and X2 don't have this limit.</p>" +
                 "<p><b>Do I need the X1S webhook?</b><br>No. Without it, Hubitat still knows which activity is running (<b>Follow only</b>). " +
                 "Add it if you also want Hubitat to start and stop activities.</p>" +
-                "<p><b>Can I rename an X2 activity?</b><br>Yes, on its device page. Hubitat keeps your name, and the Sofabaton name is kept in the sofabatonName attribute.</p>" +
+                "<p><b>Can I rename an activity?</b><br>Yes, on its device page. New activities are named <b>Hub-Activity</b> so they group together in pickers; " +
+                "a name you set yourself is never overwritten. The Sofabaton name is kept in the sofabatonName attribute. Renaming a hub in Edit Hub updates its default-named activities.</p>" +
                 "<p><b>Where does an X1S webhook URL go?</b><br>The activity's Start and Stop Webhook URL fields, when adding it or later through Edit.</p>" +
                 "<p><b>Can I change a hub's model, MAC, or IP?</b><br>No, those set the device ID. Remove the hub and add it again.</p>"],
 
@@ -876,9 +1078,10 @@ private List tipsTopics() {
         [id: "logging", label: "Log levels", title: "Log levels", group: "Logging", icon: "pi-file",
             body: "<p>The <b>Log level</b> on the main page is the only logging setting. It applies to this app and every Sofabaton device.</p>" +
                 "<p>" + logLevelPill("Errors Only") + " Default. Warnings and errors only.</p>" +
-                "<p>" + logLevelPill("Normal") + " Errors, plus activities turning on and off, and hubs or activities added or removed.</p>" +
+                "<p>" + logLevelPill("Normal") + " Errors, plus activities turning on and off, button presses, and hubs or activities added or removed.</p>" +
                 "<p>" + logLevelPill("Full") + " Everything, including raw MQTT traffic. Use while troubleshooting. Turns itself off after 30 minutes.</p>" +
-                "<p>Logs appear under each device's name on Hubitat's <b>Logs</b> page. <b>View logs</b> in the banner shows this app only.</p>"]
+                "<p>Every Sofabaton log line appears under <b>Sofabaton Integration</b> on Hubitat's <b>Logs</b> page, labeled by where it came from, " +
+                "e.g. <code>[Bridge]</code>, <code>[Sofabaton LR Hub]</code>, or an activity name. <b>View logs</b> in the banner shows all of it in one place.</p>"]
     ]
 }
 
@@ -937,6 +1140,19 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
     font-size: 13px !important; padding: 3px 12px !important; min-height: 0 !important; height: auto !important;
     line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid #d0d7de !important;
     white-space: nowrap; }
+  .mdl-cell:has(> button.hrefElem[name^='_action_href_btnActs_']) {
+    background: transparent !important; border: 0 !important; box-shadow: none !important; padding: 0 !important; }
+  .app-main-content button.hrefElem[name^='_action_href_btnActs_'] {
+    width: auto !important; min-width: 0 !important; display: inline-block !important;
+    font-size: 13px !important; padding: 3px 12px !important; min-height: 0 !important; height: auto !important;
+    line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid #d0d7de !important;
+    border-radius: 2px !important; background: #eeeeee !important; color: #333 !important; text-align: center !important; white-space: nowrap; }
+  .app-main-content button.hrefElem[name^='_action_href_btnActs_']:hover { background: #e0e0e0 !important; }
+  .app-main-content button.hrefElem[name^='_action_href_btnActs_'] span { font-size: 13px !important; font-weight: 400 !important; color: #333 !important; }
+  .app-main-content button.hrefElem[name^='_action_href_btnActs_']::before,
+  .app-main-content button.hrefElem[name^='_action_href_btnActs_']::after,
+  .app-main-content button.hrefElem[name^='_action_href_btnActs_'] .state-incomplete-text,
+  .app-main-content button.hrefElem[name^='_action_href_btnActs_'] .state-complete-text { display: none !important; }
   .sb-hub-end { border-bottom: 1px solid #e0e0e0; margin: 4px 0 18px; }
   a.sb-link:hover { text-decoration: underline; }
   .app-main-support button.hrefElem[name^='_action_href_tips'] { height: 61.5px; padding-bottom: 13.5px; box-sizing: border-box; }
@@ -974,7 +1190,7 @@ private String loggingDetailsPopupHtml() {
   <div class='text-xl font-bold mb-1'>Logging levels</div>
   <div class='text-color-secondary text-base mb-3'>One setting for the app and every Sofabaton device.</div>
   ${logLevelDetailHtml("Errors Only", "Warnings and errors only.", current)}
-  ${logLevelDetailHtml("Normal", "Errors, plus activities turning on and off, and hubs or activities added or removed.", current)}
+  ${logLevelDetailHtml("Normal", "Errors, plus activities turning on and off, button presses, and hubs or activities added or removed.", current)}
   ${logLevelDetailHtml("Full", "Everything, including raw MQTT traffic. Use while troubleshooting. Turns off after 30 minutes.", current)}
 </div>
 """
