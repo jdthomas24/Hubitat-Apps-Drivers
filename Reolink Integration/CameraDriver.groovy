@@ -10,29 +10,21 @@
  * retried on timeout) instead of firing immediately; refresh() only
  * revalidates when not already validated. Added lastMotionTime and
  * lastMotionType (most important type wins within one motion event:
- * person > vehicle > pet > package > motion). Added clearBatteryInfo() for
- * wired devices that were wrongly marked battery.
+ * person > vehicle > pet > package > motion). New "power" summary attribute
+ * ("Wired", "Battery, 87%, charging", "Battery, 100%, plugged in",
+ * "Battery, 64%") replaces batteryMode; wired/battery is now kept in the
+ * powerMode data value. chargingStatus adds "plugged_in" (adapter connected,
+ * not charging, e.g. already full), which previously showed as not_charging.
+ * Wired devices never show battery values (clearBatteryInfo()).
  * v1.5.0 -- NVR recording-control support: excludeFromRecordingPresets
- * preference (below) is read directly by the app (ch.getSetting(...), same
- * technique already used for batteryCheckEnabled etc.) inside
+ * preference (below) is read directly by the app inside
  * componentLoadPreset() -- when true, no preset will ever write a new
- * schedule to this device, regardless of what that preset specifies. See
- * ParentApp.groovy for the enforcement side and the Recording Presets
- * page's 🔒 display. Also added checkRecordingSchedule() -- a diagnostic-
- * only command that reads and logs this channel's current NVR recording
- * schedule without changing anything (requires Full logging to see the
- * result).
+ * schedule to this device. Also added checkRecordingSchedule(), a
+ * read-only diagnostic (Full logging to see the result).
  * v1.4.2 -- HOTFIX: bare paragraph("text") calls in preferences are App-DSL
- * only and don't exist on a driver's compiled script -- caused a fatal
- * "No signature of method: Script1.paragraph()" on save/update, blocking the
- * 1.4.1 update entirely. Fixed via input(type: "paragraph").
- * v1.4.1 -- Added chargingStatus attribute (charging/not_charging/unknown)
- * from GetBatteryInfo's Battery.chargeStatus, confirmed against real
- * hardware (plugged in vs. unplugged). batteryMode self-heal was app-side
- * only, no change needed here.
- * v1.3.9 -- batteryMode can be backfilled by the app's scheduler if ever
- * left unset; no change needed in this file for that.
- * Full history prior to 1.3.9 is in GitHub commit history.
+ * only; fixed via input(type: "paragraph").
+ * v1.4.1 -- Added chargingStatus attribute from GetBatteryInfo.
+ * Full history prior to 1.4.1 is in GitHub commit history.
  */
 metadata {
     definition(name: "Reolink Camera", namespace: "jdthomas24", author: "Jason", component: true) {
@@ -61,13 +53,11 @@ metadata {
         attribute "height", "number"
         attribute "cpuUsage", "number"
         attribute "streamSubscribers", "number"
-        attribute "batteryMode", "enum", ["wired", "battery", "unknown"]
-        // NEW (2026-08-19): both "charging" and "not_charging" confirmed
-        // against real hardware -- see receiveBatteryInfo()'s comment.
-        attribute "chargingStatus", "enum", ["unknown", "not_charging", "charging"]
+        // v1.6.5: one-line power summary, replaces batteryMode.
+        attribute "power", "string"
+        attribute "chargingStatus", "enum", ["unknown", "not_charging", "charging", "plugged_in"]
         attribute "sleepStatus", "enum", ["awake", "asleep", "unknown"]
-        // Tracks whether the most recent state update came from the
-        // real-time event push path or the plain polling fallback.
+        // Whether the most recent state update came from an event push or a poll.
         attribute "lastUpdateSource", "enum", ["event", "poll"]
         attribute "spotlight", "enum", ["on", "off"]
         attribute "nightVision", "enum", ["auto", "on", "off"]
@@ -106,15 +96,8 @@ metadata {
         command "pirOff", [[name: "Disables the PIR motion trigger -- does not stop an in-progress recording"]]
     }
     preferences {
-        // v1.4.2 hotfix note: switched from bare paragraph("text") (App-DSL-
-        // only) to the driver-compatible input(type: "paragraph") form.
-        // v1.4.2 follow-up: reordered so each header is the FIRST of its own
-        // 3-item row in this 3-column grid. Unlike an App's paragraph(),
-        // input(type: "paragraph") on a driver does NOT span the full row --
-        // it's an ordinary single-column cell -- so a header only lines up
-        // correctly with its own toggle+interval when the group is exactly
-        // 3 items long and starts at column 1. Poll/Snapshot interval moved
-        // to the end for the same reason (2 items, cleanly fills the last row).
+        // Each header is the FIRST of its own 3-item row in this 3-column grid
+        // (input(type: "paragraph") on a driver does not span the full row).
         input name: "battChkHdr", type: "paragraph", title: "<b>Scheduled battery check</b>"
         input name: "batteryCheckEnabled", type: "bool", title: "Enable auto battery check", defaultValue: false,
             description: "Battery devices only, OFF by default. When ON, auto-checks and updates battery level " +
@@ -139,14 +122,8 @@ metadata {
                 "own refresh rate does NOT make the image any fresher than this -- it just re-displays whatever " +
                 "was last cached at this interval. Kept separate from poll interval so motion detection can " +
                 "stay fast without forcing a full image download that often."
-        // Permanent, per-device lock -- stronger than the Recording Presets
-        // page's own "Don't manage" per-preset choice, which only protects
-        // THIS channel if it's set correctly in every single preset. This
-        // protects it everywhere, automatically, without depending on
-        // remembering to configure it right each time a new preset is
-        // created. Read directly by the app inside componentLoadPreset().
-        // Does NOT affect a direct manual command aimed at this device
-        // (e.g. a Rule Machine Custom Action) -- only preset-driven writes.
+        // Permanent per-device lock, read by the app inside componentLoadPreset().
+        // Only blocks preset-driven writes; direct manual commands still work.
         input name: "excludeFromRecordingPresets", type: "bool",
             title: "🔒 Exclude this device from ALL recording presets", defaultValue: false,
             description: "When ON, loading ANY preset will never write a new recording schedule to this " +
@@ -311,13 +288,9 @@ def sirenOff() {
 }
 
 /**
- * Disables the PIR motion trigger. Logged at warn the moment it's toggled
- * off, since this is a meaningful change to the device's behavior worth
- * seeing even at default logging. Does NOT stop an in-progress recording --
- * only removes the trigger that would have woken a battery camera to record
- * in the first place. If anything else on this camera is separately
- * configured for continuous/scheduled recording outside PIR triggering,
- * that recording is unaffected.
+ * Disables the PIR motion trigger (logged at warn, since it changes device
+ * behavior). Does NOT stop an in-progress recording or any separately
+ * configured continuous/scheduled recording.
  */
 def pirOff() {
     parent?.componentSetPir(this, false, device.deviceNetworkId)
@@ -337,61 +310,77 @@ def checkBattery() {
 }
 
 /**
- * v1.3.9: called by the app at device creation time with the discovery-time
- * battery probe result (batteryMode was declared but never populated before
- * this). v1.4.1: the app's scheduler can also call this later to backfill a
- * device that ended up without batteryMode set -- see ParentApp.groovy's
- * schedulerTick(). Method's job is unchanged either way.
+ * Called by the app with "battery" or "wired" (at creation, scheduler
+ * backfill, and the v1.6.5 migration). Stored in the powerMode data value;
+ * the retired batteryMode attribute is removed from the device.
  */
 def receiveBatteryMode(String mode) {
-    sendEvent(name: "batteryMode", value: mode)
+    device.updateDataValue("powerMode", mode)
+    device.deleteCurrentState("batteryMode")
+    if (mode == "wired") clearBatteryInfo()
+    updatePowerSummary()
 }
 
 /**
- * Called by the app after GetBatteryInfo. battery% ("2026-08-17" fix) reads
- * the confirmed reolink_aio field Battery.batteryPercent nested first (flat
- * fallbacks kept for firmware variants that return it unnested). chargingStatus
- * reads Battery.chargeStatus (1=charging, 0=not_charging -- both confirmed
- * against real hardware, corroborated by current's sign flip and adapterStatus;
- * any other value maps to "unknown"). adapterStatus itself isn't its own
- * attribute yet. v1.6.5: ignored entirely on a wired device.
+ * Called by the app after GetBatteryInfo. Battery.chargeStatus nonzero =
+ * charging; zero with Battery.adapterStatus nonzero = plugged_in (adapter
+ * connected, not charging, confirmed on a full battery: adapterStatus=1,
+ * chargeStatus=0, current=0); both zero = not_charging. Ignored on a wired device.
  */
 def receiveBatteryInfo(battInfo) {
-    if (device.currentValue("batteryMode") == "wired") return
+    if (device.getDataValue("powerMode") == "wired") return
     def pct = battInfo?.Battery?.batteryPercent ?: battInfo?.batteryPercent ?: battInfo?.batteryPercentage
     if (pct != null) sendEvent(name: "battery", value: pct)
 
-    def chargeStatus = battInfo?.Battery?.chargeStatus
-    def chargingLabel = (chargeStatus == 1) ? "charging" : (chargeStatus == 0) ? "not_charging" : "unknown"
-    if (chargeStatus != null) sendEvent(name: "chargingStatus", value: chargingLabel)
+    def charge = battInfo?.Battery?.chargeStatus
+    def adapter = battInfo?.Battery?.adapterStatus
+    String label = null
+    if (charge != null) {
+        label = (charge as Integer) != 0 ? "charging" :
+            (adapter != null && (adapter as Integer) != 0) ? "plugged_in" : "not_charging"
+        sendEvent(name: "chargingStatus", value: label)
+    }
+    updatePowerSummary(pct, label)
 }
 
-/** v1.6.5: removes battery values from a wired device that was wrongly marked battery. */
+/** v1.6.5: removes battery values from a wired device. */
 def clearBatteryInfo() {
     device.deleteCurrentState("battery")
     device.deleteCurrentState("chargingStatus")
+}
+
+/** v1.6.5: builds the one-line power attribute. Values passed in win over currentValue (same-execution lag). */
+private void updatePowerSummary(pct = null, String charging = null) {
+    String mode = device.getDataValue("powerMode")
+    String text
+    if (mode == "wired") {
+        text = "Wired"
+    } else if (mode == "battery") {
+        def p = pct != null ? pct : device.currentValue("battery")
+        String c = charging ?: device.currentValue("chargingStatus")
+        List parts = ["Battery"]
+        if (p != null) parts << "${p}%"
+        if (c == "charging") parts << "charging"
+        else if (c == "plugged_in") parts << "plugged in"
+        text = parts.join(", ")
+    } else {
+        text = "Unknown"
+    }
+    sendIfChanged("power", text)
 }
 
 def checkAbilities() {
     parent?.componentCheckAbilities(this, device.deviceNetworkId)
 }
 
-/**
- * Diagnostic only: reads and logs this channel's current NVR recording
- * schedule, never writes anything. Requires the app's Log level set to
- * Full to see the result (same as any other logNormal/logFull-routed
- * message).
- */
+/** Diagnostic only: reads and logs this channel's current NVR recording schedule (Full logging). */
 def checkRecordingSchedule() {
     parent?.componentCheckRecordingSchedule(this, device.deviceNetworkId)
 }
 
 /**
- * Called by the app after GetAbility, both at discovery/creation time and on
- * a manual checkAbilities command. Informational only -- see the app's Tips
- * page ("Supported Features") for what this does and doesn't mean. Does NOT
- * hide or disable any command on this device; Hubitat has no way to do that
- * for an individual device instance.
+ * Called by the app after GetAbility. Informational only (see the app's Tips
+ * page); does not hide or disable any command on this device.
  */
 def receiveSupportedFeatures(List features) {
     sendEvent(name: "supportedFeatures", value: features ? features.join(", ") : "None detected")
@@ -419,11 +408,7 @@ def setSnapshotInterval(seconds) {
     parent?.componentSetSnapshotInterval(this, seconds as Integer, device.deviceNetworkId)
 }
 
-/**
- * Called by the app after either a poll (GetAiState/GetMdState) or a real-
- * time event push -- source defaults to "poll" so the existing polling call
- * site needs no change; the app's event path explicitly passes "event".
- */
+/** Called by the app after a poll (source "poll") or a real-time event push (source "event"). */
 def parseReolinkState(aiState, mdState, String source = "poll") {
     boolean wasActive = anyMotionActive()
     List<String> activeTypes = []
@@ -465,12 +450,7 @@ private void updateLastMotion(boolean wasActive, List<String> activeTypes) {
     }
 }
 
-/**
- * Only calls sendEvent() when the value actually changed from the device's
- * current state -- sendEvent() isn't free (event history, subscribed rule
- * evaluation, etc.), and calling it unconditionally on every poll can trip
- * Hubitat's "excessive hub load" protection on a lower-spec hub.
- */
+/** Only sends when the value changed, to avoid needless events and hub load. */
 private void sendIfChanged(String name, value) {
     if (device.currentValue(name)?.toString() != value?.toString()) {
         sendEvent(name: name, value: value)
@@ -478,11 +458,9 @@ private void sendIfChanged(String name, value) {
 }
 
 /**
- * Called by the app when a poll gets no response at all. For a wired device this
- * usually means a real problem; for a battery device it usually just means it
- * hasn't checked in since its last event or self-wake. This does NOT flip
- * motion/person/etc back to inactive -- those keep their last-known value,
- * since "no response" isn't the same as "no longer detected."
+ * Called by the app when a poll gets no response. Normal for a battery
+ * device, a real problem for a wired one. Motion/AI attributes keep their
+ * last-known value.
  */
 def markAsleep() {
     sendIfChanged("sleepStatus", "asleep")
