@@ -1,11 +1,17 @@
 /**
  * Reolink Camera (Component Driver)
- * Version: 1.6.4
+ * Version: 1.6.5
  *
  * Thin device: no HTTP of its own. Delegates everything to the parent app via
  * parent.componentX(this, ...), using data values sourceId/channel to
  * identify which source/channel this device maps to.
  *
+ * v1.6.5 -- RTSP validation is queued through the app (one device at a time,
+ * retried on timeout) instead of firing immediately; refresh() only
+ * revalidates when not already validated. Added lastMotionTime and
+ * lastMotionType (most important type wins within one motion event:
+ * person > vehicle > pet > package > motion). Added clearBatteryInfo() for
+ * wired devices that were wrongly marked battery.
  * v1.5.0 -- NVR recording-control support: excludeFromRecordingPresets
  * preference (below) is read directly by the app (ch.getSetting(...), same
  * technique already used for batteryCheckEnabled etc.) inside
@@ -46,6 +52,8 @@ metadata {
         attribute "vehicle", "enum", ["active", "inactive"]
         attribute "pet", "enum", ["active", "inactive"]
         attribute "package", "enum", ["active", "inactive"]
+        attribute "lastMotionTime", "string"
+        attribute "lastMotionType", "enum", ["person", "vehicle", "pet", "package", "motion"]
         attribute "snapshotUrl", "string"
         attribute "rtspUrl", "string"
         attribute "status", "string"
@@ -156,9 +164,10 @@ metadata {
     }
 }
 
+/** v1.6.5: only revalidates the stream when it isn't already validated. */
 def refresh() {
     parent?.componentRefresh(this, device.deviceNetworkId)
-    refreshRtsp()
+    if (device.currentValue("status") != "validated") refreshRtsp()
 }
 
 /** Applies changes to the RTSP port or MJPEG output width on device save. */
@@ -179,11 +188,15 @@ def receiveRtspConfig(Map config) {
             changed = true
         }
     }
-    if (changed || !device.currentValue("imageUrl")) refreshRtsp(config + [rtspPath: path])
+    // v1.6.5: also retry a stream left unvalidated. Returns true so the APP queues it
+    // (a device calling back into the app mid-call is unsafe with singleThreaded).
+    if (changed || !device.currentValue("imageUrl") || device.currentValue("status") != "validated")
+        return refreshRtsp(config + [rtspPath: path], true)
+    return false
 }
 
-/** Publishes the hub MJPEG endpoint and asks the hub to validate its RTSP source. */
-private void refreshRtsp(Map config = [:]) {
+/** Publishes the hub MJPEG endpoint and queues RTSP validation. fromApp: the app queues it itself. */
+private boolean refreshRtsp(Map config = [:], boolean fromApp = false) {
     String host = (config.host ?: settings.ipAddress)?.toString()?.trim()
     String path = (config.rtspPath ?: settings.rtspPath)?.toString()?.trim()
     String user = (config.username ?: settings.cameraUser)?.toString()
@@ -192,7 +205,7 @@ private void refreshRtsp(Map config = [:]) {
     try { rtspPort = (settings.port ?: 554) as Integer } catch (Exception ignored) { rtspPort = null }
     if (!host || !path?.startsWith("/") || !rtspPort || rtspPort < 1 || rtspPort > 65535) {
         sendEvent(name: "status", value: "invalid RTSP settings")
-        return
+        return false
     }
     String encodedUser = user ? URLEncoder.encode(user, "UTF-8").replace("+", "%20") : null
     String credentials = encodedUser ? "${encodedUser}${password ? ':********' : ''}@" : ""
@@ -200,40 +213,59 @@ private void refreshRtsp(Map config = [:]) {
     sendEvent(name: "refreshRate", value: 86400)
     if (getNumericHubVersion() < 9) {
         sendEvent(name: "status", value: "not supported on C8 or earlier hubs")
-        return
+        return false
     }
     sendEvent(name: "imageUrl", value: "/hub2/videoStream/${device.id}.mjpg")
+    // v1.6.5: validated one device at a time by the app (a Hub/NVR times out on simultaneous streams).
+    sendEvent(name: "status", value: "queued for validation")
+    if (!fromApp) parent?.componentQueueRtspValidation(this, device.deviceNetworkId)
+    return true
+}
+
+/** v1.6.5: called by the app when this device's turn comes up. Returns false if it couldn't start. */
+def startRtspValidation() {
     String generation = UUID.randomUUID().toString()
     state.rtspValidationGeneration = generation
     sendEvent(name: "status", value: "validating")
     try {
         asynchttpPost("rtspValidationHandler", [
             uri: "http://127.0.0.1:8080/hub2/videoStream/${device.id}/validate",
-            contentType: "application/json", timeout: 12
+            contentType: "application/json", timeout: 15
         ], [generation: generation])
+        return true
     } catch (Exception ignored) {
-        if (state.rtspValidationGeneration == generation)
-            sendEvent(name: "status", value: "unable to start RTSP validation")
+        state.remove("rtspValidationGeneration")
+        sendEvent(name: "status", value: "unable to start RTSP validation")
+        return false
     }
 }
 
-/** Handles the current validation request and exposes detected stream dimensions. */
+/** Handles the current validation request, exposes stream dimensions, and reports back to the queue. */
 def rtspValidationHandler(response, Map data) {
     if (!data?.generation || state.rtspValidationGeneration != data.generation) return
     state.remove("rtspValidationGeneration")
+    boolean success = false
+    String message
     if (response.status != 200 || !(response.json instanceof Map)) {
-        sendEvent(name: "status", value: "RTSP validation request failed")
-        return
-    }
-    Map result = response.json as Map
-    if (result.success == true) {
-        if (result.width instanceof Number && result.height instanceof Number) {
-            sendEvent(name: "width", value: result.width)
-            sendEvent(name: "height", value: result.height)
-        }
-        sendEvent(name: "status", value: "validated")
+        message = "RTSP validation request failed"
     } else {
-        sendEvent(name: "status", value: result.message ?: "RTSP validation failed")
+        Map result = response.json as Map
+        if (result.success == true) {
+            if (result.width instanceof Number && result.height instanceof Number) {
+                sendEvent(name: "width", value: result.width)
+                sendEvent(name: "height", value: result.height)
+            }
+            success = true
+            message = "validated"
+        } else {
+            message = result.message ?: "RTSP validation failed"
+        }
+    }
+    sendEvent(name: "status", value: message)
+    // The app answers with [attempt, delay] when it schedules a retry.
+    def retry = parent?.componentRtspValidationDone(this, device.deviceNetworkId, success, message)
+    if (retry instanceof Map && retry.attempt) {
+        sendEvent(name: "status", value: "timed out, retry ${retry.attempt} in ${retry.delay}s")
     }
 }
 
@@ -322,15 +354,22 @@ def receiveBatteryMode(String mode) {
  * reads Battery.chargeStatus (1=charging, 0=not_charging -- both confirmed
  * against real hardware, corroborated by current's sign flip and adapterStatus;
  * any other value maps to "unknown"). adapterStatus itself isn't its own
- * attribute yet.
+ * attribute yet. v1.6.5: ignored entirely on a wired device.
  */
 def receiveBatteryInfo(battInfo) {
+    if (device.currentValue("batteryMode") == "wired") return
     def pct = battInfo?.Battery?.batteryPercent ?: battInfo?.batteryPercent ?: battInfo?.batteryPercentage
     if (pct != null) sendEvent(name: "battery", value: pct)
 
     def chargeStatus = battInfo?.Battery?.chargeStatus
     def chargingLabel = (chargeStatus == 1) ? "charging" : (chargeStatus == 0) ? "not_charging" : "unknown"
     if (chargeStatus != null) sendEvent(name: "chargingStatus", value: chargingLabel)
+}
+
+/** v1.6.5: removes battery values from a wired device that was wrongly marked battery. */
+def clearBatteryInfo() {
+    device.deleteCurrentState("battery")
+    device.deleteCurrentState("chargingStatus")
 }
 
 def checkAbilities() {
@@ -386,20 +425,44 @@ def setSnapshotInterval(seconds) {
  * site needs no change; the app's event path explicitly passes "event".
  */
 def parseReolinkState(aiState, mdState, String source = "poll") {
+    boolean wasActive = anyMotionActive()
+    List<String> activeTypes = []
     sendIfChanged("sleepStatus", "awake")
     sendIfChanged("lastUpdateSource", source)
 
     // TODO map real field names once GetAiState/GetMdState payloads are confirmed
     def motionActive = mdState?.state == 1
     sendIfChanged("motion", motionActive ? "active" : "inactive")
+    if (motionActive) activeTypes << "motion"
 
     ["people", "vehicle", "dog_cat"].each { key ->
         def attr = key == "people" ? "person" : (key == "dog_cat" ? "pet" : key)
         def active = aiState?.getAt(key)?.alarm_state == 1
         sendIfChanged(attr, active ? "active" : "inactive")
+        if (active) activeTypes << attr
     }
     def pkgActive = aiState?.package?.alarm_state == 1
     sendIfChanged("package", pkgActive ? "active" : "inactive")
+    if (pkgActive) activeTypes << "package"
+
+    updateLastMotion(wasActive, activeTypes)
+}
+
+private boolean anyMotionActive() {
+    ["motion", "person", "vehicle", "pet", "package"].any { device.currentValue(it) == "active" }
+}
+
+/** v1.6.5: stamps a new motion event, or upgrades the type if a more important one appears mid-event. */
+private void updateLastMotion(boolean wasActive, List<String> activeTypes) {
+    if (!activeTypes) return
+    List<String> rank = ["person", "vehicle", "pet", "package", "motion"]
+    String best = rank.find { it in activeTypes }
+    String current = device.currentValue("lastMotionType")
+    boolean upgrade = current in rank && rank.indexOf(best) < rank.indexOf(current)
+    if (!wasActive || !current || upgrade) {
+        sendEvent(name: "lastMotionType", value: best)
+        sendEvent(name: "lastMotionTime", value: new Date().format("yyyy-MM-dd h:mm:ss a", location?.timeZone ?: TimeZone.getDefault()))
+    }
 }
 
 /**
