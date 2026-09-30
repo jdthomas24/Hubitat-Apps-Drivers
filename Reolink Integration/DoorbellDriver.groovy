@@ -1,11 +1,14 @@
 /**
  * Reolink Doorbell (Component Driver)
- * Version: 1.6.4
+ * Version: 1.6.5
  *
  * Same delegation pattern as Reolink Camera, plus a "visitor" (button press)
  * event so Rule Machine can trigger straight off "pushed 1" for a doorbell
  * ring, separate from AI person/motion detection.
  *
+ * v1.6.5 -- Same changes as the camera driver: RTSP validation queued through
+ * the app and retried on timeout, lastMotionTime/lastMotionType, and
+ * clearBatteryInfo() for wired devices wrongly marked battery.
  * v1.6.0 -- Added RTSPStream support using the same hub video stream service
  * and parent-managed source settings as the camera driver.
  * v1.5.1 -- No functional change to this driver (version kept in sync with
@@ -62,6 +65,8 @@ metadata {
         attribute "vehicle", "enum", ["active", "inactive"]
         attribute "pet", "enum", ["active", "inactive"]
         attribute "package", "enum", ["active", "inactive"]
+        attribute "lastMotionTime", "string"
+        attribute "lastMotionType", "enum", ["person", "vehicle", "pet", "package", "motion"]
         attribute "snapshotUrl", "string"
         attribute "rtspUrl", "string"
         attribute "status", "string"
@@ -136,9 +141,11 @@ metadata {
 def installed() {
     sendEvent(name: "numberOfButtons", value: 1)
 }
+
+/** v1.6.5: only revalidates the stream when it isn't already validated. */
 def refresh() {
     parent?.componentRefresh(this, device.deviceNetworkId)
-    refreshRtsp()
+    if (device.currentValue("status") != "validated") refreshRtsp()
 }
 
 /** Applies changes to the RTSP port or MJPEG output width on device save. */
@@ -165,11 +172,15 @@ def receiveRtspConfig(Map config) {
             changed = true
         }
     }
-    if (changed || !device.currentValue("imageUrl")) refreshRtsp(config + [rtspPath: path])
+    // v1.6.5: also retry a stream left unvalidated. Returns true so the APP queues it
+    // (a device calling back into the app mid-call is unsafe with singleThreaded).
+    if (changed || !device.currentValue("imageUrl") || device.currentValue("status") != "validated")
+        return refreshRtsp(config + [rtspPath: path], true)
+    return false
 }
 
-/** Publishes the hub MJPEG endpoint and asks the hub to validate its RTSP source. */
-private void refreshRtsp(Map config = [:]) {
+/** Publishes the hub MJPEG endpoint and queues RTSP validation. fromApp: the app queues it itself. */
+private boolean refreshRtsp(Map config = [:], boolean fromApp = false) {
     String host = (config.host ?: settings.ipAddress)?.toString()?.trim()
     String path = (config.rtspPath ?: settings.rtspPath)?.toString()?.trim()
     String user = (config.username ?: settings.cameraUser)?.toString()
@@ -178,7 +189,7 @@ private void refreshRtsp(Map config = [:]) {
     try { rtspPort = (settings.port ?: 554) as Integer } catch (Exception ignored) { rtspPort = null }
     if (!host || !path?.startsWith("/") || !rtspPort || rtspPort < 1 || rtspPort > 65535) {
         sendEvent(name: "status", value: "invalid RTSP settings")
-        return
+        return false
     }
     String encodedUser = user ? URLEncoder.encode(user, "UTF-8").replace("+", "%20") : null
     String credentials = encodedUser ? "${encodedUser}${password ? ':********' : ''}@" : ""
@@ -186,42 +197,62 @@ private void refreshRtsp(Map config = [:]) {
     sendEvent(name: "refreshRate", value: 86400)
     if (getNumericHubVersion() < 9) {
         sendEvent(name: "status", value: "not supported on C8 or earlier hubs")
-        return
+        return false
     }
     sendEvent(name: "imageUrl", value: "/hub2/videoStream/${device.id}.mjpg")
+    // v1.6.5: validated one device at a time by the app (a Hub/NVR times out on simultaneous streams).
+    sendEvent(name: "status", value: "queued for validation")
+    if (!fromApp) parent?.componentQueueRtspValidation(this, device.deviceNetworkId)
+    return true
+}
+
+/** v1.6.5: called by the app when this device's turn comes up. Returns false if it couldn't start. */
+def startRtspValidation() {
     String generation = UUID.randomUUID().toString()
     state.rtspValidationGeneration = generation
     sendEvent(name: "status", value: "validating")
     try {
         asynchttpPost("rtspValidationHandler", [
             uri: "http://127.0.0.1:8080/hub2/videoStream/${device.id}/validate",
-            contentType: "application/json", timeout: 12
+            contentType: "application/json", timeout: 15
         ], [generation: generation])
+        return true
     } catch (Exception ignored) {
-        if (state.rtspValidationGeneration == generation)
-            sendEvent(name: "status", value: "unable to start RTSP validation")
+        state.remove("rtspValidationGeneration")
+        sendEvent(name: "status", value: "unable to start RTSP validation")
+        return false
     }
 }
 
-/** Handles the current validation request and exposes detected stream dimensions. */
+/** Handles the current validation request, exposes stream dimensions, and reports back to the queue. */
 def rtspValidationHandler(response, Map data) {
     if (!data?.generation || state.rtspValidationGeneration != data.generation) return
     state.remove("rtspValidationGeneration")
+    boolean success = false
+    String message
     if (response.status != 200 || !(response.json instanceof Map)) {
-        sendEvent(name: "status", value: "RTSP validation request failed")
-        return
-    }
-    Map result = response.json as Map
-    if (result.success == true) {
-        if (result.width instanceof Number && result.height instanceof Number) {
-            sendEvent(name: "width", value: result.width)
-            sendEvent(name: "height", value: result.height)
-        }
-        sendEvent(name: "status", value: "validated")
+        message = "RTSP validation request failed"
     } else {
-        sendEvent(name: "status", value: result.message ?: "RTSP validation failed")
+        Map result = response.json as Map
+        if (result.success == true) {
+            if (result.width instanceof Number && result.height instanceof Number) {
+                sendEvent(name: "width", value: result.width)
+                sendEvent(name: "height", value: result.height)
+            }
+            success = true
+            message = "validated"
+        } else {
+            message = result.message ?: "RTSP validation failed"
+        }
+    }
+    sendEvent(name: "status", value: message)
+    // The app answers with [attempt, delay] when it schedules a retry.
+    def retry = parent?.componentRtspValidationDone(this, device.deviceNetworkId, success, message)
+    if (retry instanceof Map && retry.attempt) {
+        sendEvent(name: "status", value: "timed out, retry ${retry.attempt} in ${retry.delay}s")
     }
 }
+
 def takeSnapshot() {
     parent?.componentTakeSnapshot(this, device.deviceNetworkId)
 }
@@ -252,14 +283,21 @@ def checkBattery() {
  * driver, with flat fallbacks kept for firmware variants that return it
  * unnested. chargingStatus (v1.4.1) reads Battery.chargeStatus -- see
  * CameraDriver.groovy's matching comment for the confirmed hardware detail.
+ * v1.6.5: ignored entirely on a wired device.
  */
 def receiveBatteryInfo(battInfo) {
+    if (device.currentValue("batteryMode") == "wired") return
     def pct = battInfo?.Battery?.batteryPercent ?: battInfo?.batteryPercent ?: battInfo?.batteryPercentage
     if (pct != null) sendEvent(name: "battery", value: pct)
 
     def chargeStatus = battInfo?.Battery?.chargeStatus
     def chargingLabel = (chargeStatus == 1) ? "charging" : (chargeStatus == 0) ? "not_charging" : "unknown"
     if (chargeStatus != null) sendEvent(name: "chargingStatus", value: chargingLabel)
+}
+/** v1.6.5: removes battery values from a wired device that was wrongly marked battery. */
+def clearBatteryInfo() {
+    device.deleteCurrentState("battery")
+    device.deleteCurrentState("chargingStatus")
 }
 /**
  * Required by the PushableButton capability -- declaring the capability adds
@@ -284,6 +322,8 @@ def receiveSupportedFeatures(List features) {
 }
 /** Called by the app after either a poll or a real-time event push -- see CameraDriver.groovy's matching note. */
 def parseReolinkState(aiState, mdState, String source = "poll") {
+    boolean wasActive = anyMotionActive()
+    List<String> activeTypes = []
     sendIfChanged("sleepStatus", "awake")
     sendIfChanged("lastUpdateSource", source)
     // TODO confirm the visitor/doorbell-press field name in your firmware's GetAiState/GetMdState payload
@@ -293,13 +333,33 @@ def parseReolinkState(aiState, mdState, String source = "poll") {
     }
     def motionActive = mdState?.state == 1
     sendIfChanged("motion", motionActive ? "active" : "inactive")
+    if (motionActive) activeTypes << "motion"
     ["people", "vehicle", "dog_cat"].each { key ->
         def attr = key == "people" ? "person" : (key == "dog_cat" ? "pet" : key)
         def active = aiState?.getAt(key)?.alarm_state == 1
         sendIfChanged(attr, active ? "active" : "inactive")
+        if (active) activeTypes << attr
     }
     def pkgActive = aiState?.package?.alarm_state == 1
     sendIfChanged("package", pkgActive ? "active" : "inactive")
+    if (pkgActive) activeTypes << "package"
+
+    updateLastMotion(wasActive, activeTypes)
+}
+private boolean anyMotionActive() {
+    ["motion", "person", "vehicle", "pet", "package"].any { device.currentValue(it) == "active" }
+}
+/** v1.6.5: stamps a new motion event, or upgrades the type if a more important one appears mid-event. */
+private void updateLastMotion(boolean wasActive, List<String> activeTypes) {
+    if (!activeTypes) return
+    List<String> rank = ["person", "vehicle", "pet", "package", "motion"]
+    String best = rank.find { it in activeTypes }
+    String current = device.currentValue("lastMotionType")
+    boolean upgrade = current in rank && rank.indexOf(best) < rank.indexOf(current)
+    if (!wasActive || !current || upgrade) {
+        sendEvent(name: "lastMotionType", value: best)
+        sendEvent(name: "lastMotionTime", value: new Date().format("yyyy-MM-dd h:mm:ss a", location?.timeZone ?: TimeZone.getDefault()))
+    }
 }
 /** See camera driver for why this exists -- cuts redundant sendEvent() calls to reduce load on lower-spec hubs. */
 private void sendIfChanged(String name, value) {
