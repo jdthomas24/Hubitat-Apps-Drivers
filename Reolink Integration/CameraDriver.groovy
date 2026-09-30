@@ -10,7 +10,7 @@
  * retried on timeout) instead of firing immediately; refresh() only
  * revalidates when not already validated. Added lastMotionTime and
  * lastMotionType (most important type wins within one motion event:
- * person > vehicle > pet > package > motion). New "batteryWiredMode" summary
+ * person > vehicle > pet > package > motion). New "batteryWired" summary
  * attribute ("Wired", "Battery, 87%, charging", "Battery, 100%, plugged in",
  * "Battery, 64%") replaces batteryMode; wired/battery is now kept in the
  * powerMode data value. chargingStatus adds "plugged_in" (adapter connected,
@@ -54,7 +54,7 @@ metadata {
         attribute "cpuUsage", "number"
         attribute "streamSubscribers", "number"
         // v1.6.5: one-line power summary, replaces batteryMode (sorts right after Battery).
-        attribute "batteryWiredMode", "string"
+        attribute "batteryWired", "string"
         attribute "chargingStatus", "enum", ["unknown", "not_charging", "charging", "plugged_in"]
         attribute "sleepStatus", "enum", ["awake", "asleep", "unknown"]
         // Whether the most recent state update came from an event push or a poll.
@@ -319,6 +319,7 @@ def receiveBatteryMode(String mode) {
     updatePowerSummary()
     safeDelete("batteryMode")
     safeDelete("power")
+    safeDelete("batteryWiredMode")
     if (mode == "wired") clearBatteryInfo()
 }
 
@@ -355,7 +356,7 @@ private void safeDelete(String name) {
     try { device.deleteCurrentState(name) } catch (e) { /* not present or not supported */ }
 }
 
-/** v1.6.5: builds the one-line batteryWiredMode attribute. Values passed in win over currentValue (same-execution lag). */
+/** v1.6.5: builds the one-line batteryWired attribute. Values passed in win over currentValue (same-execution lag). */
 private void updatePowerSummary(pct = null, String charging = null) {
     String mode = device.getDataValue("powerMode")
     String text
@@ -372,7 +373,7 @@ private void updatePowerSummary(pct = null, String charging = null) {
     } else {
         text = "Unknown"
     }
-    sendIfChanged("batteryWiredMode", text)
+    sendIfChanged("batteryWired", text)
 }
 
 def checkAbilities() {
@@ -421,7 +422,7 @@ def parseReolinkState(aiState, mdState, String source = "poll") {
     sendIfChanged("sleepStatus", "awake")
     sendIfChanged("lastUpdateSource", source)
     // v1.6.5: self-heal if the power line was never written.
-    if (device.getDataValue("powerMode") && device.currentValue("batteryWiredMode") == null) updatePowerSummary()
+    if (device.getDataValue("powerMode") && device.currentValue("batteryWired") == null) updatePowerSummary()
 
     // TODO map real field names once GetAiState/GetMdState payloads are confirmed
     def motionActive = mdState?.state == 1
