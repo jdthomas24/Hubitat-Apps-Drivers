@@ -42,13 +42,20 @@ import groovy.transform.Field
 @Field static final String HIDE_DONE_CSS = """<style>
   #fieldsetAppButtons { display: none !important; }
   button.hrefElem[name^='_action_href_sbCancel'], button.hrefElem[name^='_action_href_sbSave'] {
-    min-height: 0 !important; height: auto !important; padding: 8px 18px !important; border-radius: 4px !important;
-    box-shadow: none !important; font-size: 15px !important; font-weight: 600; text-align: center; }
+    width: auto !important; min-width: 140px; min-height: 0 !important; height: auto !important;
+    display: inline-block !important; padding: 8px 20px !important; margin: 4px 12px 4px 0 !important;
+    border-radius: 4px !important; border-left-width: 1px !important; box-shadow: none !important;
+    font-size: 15px !important; font-weight: 600 !important; text-align: center !important; line-height: 1.4 !important; }
   button.hrefElem[name^='_action_href_sbCancel']::before, button.hrefElem[name^='_action_href_sbSave']::before,
   button.hrefElem[name^='_action_href_sbCancel']::after, button.hrefElem[name^='_action_href_sbSave']::after { display: none !important; }
-  button.hrefElem[name^='_action_href_sbCancel'] span, button.hrefElem[name^='_action_href_sbSave'] span { color: inherit !important; }
+  button.hrefElem[name^='_action_href_sbCancel'] span { color: #333 !important; font-size: 15px !important; }
+  button.hrefElem[name^='_action_href_sbSave'] span { color: #fff !important; font-size: 15px !important; }
+  button.hrefElem[name^='_action_href_sbCancel']:hover { background: #e8e8e8 !important; }
+  button.hrefElem[name^='_action_href_sbSave']:hover { filter: brightness(0.92); }
   button.hrefElem[name^='_action_href_sbCancel'] .state-incomplete-text, button.hrefElem[name^='_action_href_sbSave'] .state-incomplete-text,
   button.hrefElem[name^='_action_href_sbCancel'] .state-complete-text, button.hrefElem[name^='_action_href_sbSave'] .state-complete-text { display: none !important; }
+  .mdl-cell:has(> button.hrefElem[name^='_action_href_sbCancel']), .mdl-cell:has(> button.hrefElem[name^='_action_href_sbSave']) {
+    width: auto !important; flex: 0 0 auto !important; }
 </style>"""
 
 @Field static final String HUBITAT_PILL = "<span style='background:#1976d2;color:#fff;border-radius:8px;padding:1px 9px;font-size:0.75em;font-weight:bold'>HUBITAT</span>"
@@ -1108,3 +1115,4 @@ private String tipsCardCss() {
   button.hrefElem[name^='_action_href_tips']::before { color: #1565c0; }
 """
 }
+
