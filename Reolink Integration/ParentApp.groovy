@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.6.4
+ * Version: 1.6.5
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -19,6 +19,20 @@
  * in-app Tips page, not duplicated here. TODO markers mark spots needing
  * exact command/param names verified against firmware (field names can
  * drift by version). Full history prior to 1.3.6 is in GitHub commit history.
+ *
+ * v1.6.5 -- Battery detection, RTSP validation, last motion:
+ *  - Battery vs wired now comes from GetAbility's per-channel "battery"
+ *    ability. An NVR answers GetBatteryInfo even for PoE channels, with junk
+ *    data (zero voltage, shifted fields), so "the probe answered" flagged
+ *    every PoE channel behind an NVR as battery. The probe is now only a
+ *    fallback when the ability is missing, and its data must look real.
+ *    Existing wired devices are corrected once on upgrade (migrateBatteryModes).
+ *  - RTSP validation is queued: one device at a time, RTSP_GAP_SEC apart,
+ *    retried on timeout (RTSP_RETRY_DELAYS). Simultaneous validations through
+ *    one Home Hub timed out, and nothing retried them. The app queues devices
+ *    itself when it pushes stream settings (receiveRtspConfig() returns true),
+ *    so no device calls back into the app mid-call (singleThreaded).
+ *  - Softer "No response" discovery wording (no longer implies battery-class).
  *
  * v1.6.4 -- Stuck and given-up event connections now recover on their own:
  *  - The saved connection status is only a hint. Done/reboot now restarts any
@@ -237,7 +251,12 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.6.4"
+@Field static final String APP_VERSION = "1.6.5"
+
+// v1.6.5: RTSP validation queue timing.
+@Field static final int RTSP_GAP_SEC = 5
+@Field static final int RTSP_WATCHDOG_SEC = 30
+@Field static final List<Integer> RTSP_RETRY_DELAYS = [60, 180]
 
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 
@@ -2614,15 +2633,9 @@ def reolinkApiCall(sourceId, String cmd, Map param = [:], Integer channel = null
 /**
  * quiet=true suppresses the usual failure escalation (markSourceUnreachable
  * warn, or the JSON-parse-failure warn) and logs at Full tier instead. Used
- * by guessIsBattery() below -- see that method's comment for why a failed
- * GetBatteryInfo probe must NOT be treated as evidence the whole SOURCE is
- * unreachable.
- */
-/**
- * timeoutSec lets a caller shorten the HTTP timeout below the normal 10s --
- * used by guessIsBattery() below, since a slow rejection and a fast one
- * mean the same thing for that specific probe (see that method's comment
- * for the full reasoning).
+ * by detectIsBattery()'s fallback probe below -- a failed GetBatteryInfo
+ * probe must NOT be treated as evidence the whole SOURCE is unreachable.
+ * timeoutSec lets a caller shorten the HTTP timeout below the normal 10s.
  */
 private Map doReolinkApiCall(src, sourceId, String cmd, String token, Map param, Integer channel, boolean quiet = false, int timeoutSec = 10) {
     def p = channel != null ? param + [channel: channel] : param
@@ -2681,18 +2694,16 @@ def discoverChannels(sourceId) {
     if (!src.isHub) {
         def info = reolinkApiCall(sourceId, "GetDevInfo")
         if (info == null) {
-            state.lastDiscoveryError = "No response from ${src.host}. If this is a battery-class " +
-                "camera or doorbell (not PoE/plug-in WiFi), it may not run a local HTTP/ONVIF " +
-                "server at all -- those typically only become reachable once paired to a Home Hub or NVR."
+            state.lastDiscoveryError = "No response from ${src.host}. Check the IP address and HTTPS port, " +
+                "and that HTTPS is enabled on the device. (Battery-only cameras and doorbells usually need " +
+                "to be added through a Home Hub or NVR instead.)"
             return channels
         }
-        // Skip the GetBatteryInfo round-trip entirely for a channel that
-        // already has a child device -- isBattery is ONLY ever read at
-        // device CREATION time, so recomputing it on every discovery run for
-        // an existing channel is a wasted HTTP round-trip.
+        // Skip battery detection entirely for a channel that already has a
+        // child device -- isBattery is ONLY ever read at device CREATION time.
         def existing0 = bridgeForDiscovery?.getChildDevice(childDni(sourceId, 0)) != null
         channels << [channel: 0, name: info?.DevInfo?.name ?: src.label, deviceType: guessDeviceType(info),
-            isBattery: existing0 ? null : guessIsBattery(sourceId, 0),
+            isBattery: existing0 ? null : detectIsBattery(sourceId, 0, abilityChnList?.getAt(0)),
             supportedFeatures: computeSupportedFeatures(abilityChnList?.getAt(0))]
     } else {
         def status = reolinkApiCall(sourceId, "GetChannelstatus")
@@ -2704,7 +2715,7 @@ def discoverChannels(sourceId) {
             if (ch.online) {
                 def existing = bridgeForDiscovery?.getChildDevice(childDni(sourceId, ch.channel)) != null
                 channels << [channel: ch.channel, name: ch.name ?: "Channel ${ch.channel}", deviceType: guessChannelDeviceType(ch),
-                    isBattery: existing ? null : guessIsBattery(sourceId, ch.channel),
+                    isBattery: existing ? null : detectIsBattery(sourceId, ch.channel, abilityChnList?.getAt(ch.channel as Integer)),
                     supportedFeatures: computeSupportedFeatures(abilityChnList?.getAt(ch.channel as Integer))]
             }
         }
@@ -2735,39 +2746,37 @@ private String guessChannelDeviceType(ch) {
 }
 
 /**
- * Battery vs wired isn't reported directly by GetDevInfo/GetChannelstatus, so
- * this uses GetBatteryInfo as a signal instead: a battery-class device
- * answers it with real data, a wired/PoE device returns nothing usable --
- * and on some wired firmware, "nothing usable" is an outright timeout
- * rather than a clean unsupported-command response.
- *
- * This probe is EXPECTED to fail for roughly half of all cameras (any
- * wired one) -- that's not a source-health signal, it's routine. Calls
- * doReolinkApiCall() directly with quiet=true instead of going through the
- * public reolinkApiCall() wrapper, so a failure here logs at Full tier
- * only and never touches source-reachable state (a real PoE camera timing
- * out on this specific probe was previously marking its whole SOURCE
- * unreachable, then immediately flipping back to "connection restored" on
- * the very next unrelated successful call -- noisy and misleading, since
- * every other command for that source was working fine the whole time).
- *
- * Also passes a short 3s timeout instead of the normal 10s -- this is
- * called once per NEW channel, sequentially, synchronously, within a
- * single page render, and on a large Hub/NVR's FIRST-EVER discovery
- * (every channel is "new" at once), a wired channel timing out here is
- * the expected, common case, not rare. At 10s each, a 24-channel Hub with
- * many wired cameras could block for minutes inside one page load,
- * plausibly exceeding Hubitat's own execution-time limit and crashing the
- * whole page ("Unexpected Error"). A slow rejection and a fast one mean
- * the same thing here (not battery), so shortening the timeout loses no
- * real information while cutting worst-case blocking time roughly 3x.
+ * v1.6.5: GetAbility's per-channel "battery" ability decides first. An NVR
+ * answers GetBatteryInfo even for PoE channels, with junk data (zero voltage,
+ * shifted fields), so the probe is only a fallback when the ability is
+ * missing, and its data must look like a real battery. The probe stays quiet
+ * (Full logging only, never marks the source unreachable) with a short 3s
+ * timeout, since wired channels commonly time out on it.
  */
-private Boolean guessIsBattery(sourceId, channel) {
+private Boolean detectIsBattery(sourceId, channel, Map abilityChn) {
+    String mode = batteryModeFromAbility(abilityChn)
+    if (mode) return mode == "battery"
     def src = getSource(sourceId)
     def token = reolinkLogin(sourceId)
     if (!token) return false
     def outcome = doReolinkApiCall(src, sourceId, "GetBatteryInfo", token, [:], channel, true, 3)
-    return outcome.value != null
+    return looksLikeRealBattery(outcome.value, true)
+}
+
+/** "battery" or "wired" from GetAbility, or null if the ability isn't reported. */
+private String batteryModeFromAbility(Map abilityChn) {
+    if (abilityChn == null || !abilityChn.containsKey("battery")) return null
+    return abilityPermit(abilityChn, "battery") > 0 ? "battery" : "wired"
+}
+
+/** Rejects NVR junk. Strict also requires a nonzero voltage (used when deciding battery vs wired). */
+private boolean looksLikeRealBattery(value, boolean strict = false) {
+    def b = value?.Battery ?: value
+    def pct = b?.batteryPercent
+    if (!(pct instanceof Number) || pct < 0 || pct > 100) return false
+    if (!strict) return true
+    def volt = b?.voltage
+    return volt instanceof Number && volt > 0
 }
 
 /**
@@ -3121,6 +3130,9 @@ def createSelectedChildren(sourceId) {
 /**
  * Copies source login settings to an RTSP-capable child after its channel data
  * value exists. The hub stream service reads these private device settings.
+ * v1.6.5: the device returns true when it needs validation, and the app
+ * queues it here (a device calling back into the app mid-call is unsafe with
+ * singleThreaded).
  *
  * @param child camera or doorbell created by the bridge or found during discovery
  * @param src source holding the camera/NVR host and login
@@ -3134,9 +3146,11 @@ private void configureRtspChild(child, src, channel) {
     }
     // src.port is the Reolink HTTP API port, not the RTSP port. The doorbell
     // driver saves these stream defaults only when its fields are unset.
-    child.receiveRtspConfig([host: src.host, username: src.username,
+    if (child.receiveRtspConfig([host: src.host, username: src.username,
         password: src.password, channel: channel, rtspPort: 554,
-        outputWidth: 640])
+        outputWidth: 640]) == true) {
+        componentQueueRtspValidation(child, child.deviceNetworkId)
+    }
 }
 
 // ---------- Polling ----------
@@ -3210,6 +3224,11 @@ def initialize() {
     }
     runMigrations()
 
+    // v1.6.5: start the RTSP validation queue fresh (anything pending re-queues below).
+    state.rtspQueue = []
+    state.remove("rtspActive")
+    state.remove("rtspRetries")
+
     // Keep existing camera children in sync when the app or driver is upgraded.
     (state.sources ?: []).each { src ->
         childrenForSource(src.id).each { child ->
@@ -3244,6 +3263,9 @@ def initialize() {
  * the registry the first time it WAS actually created going forward), but
  * backfilling here means existing installs get full self-heal coverage
  * immediately on upgrade rather than device-by-device over time.
+ *
+ * v1.6.5: also schedules migrateBatteryModes() to correct wired devices
+ * that were wrongly marked battery.
  */
 private void runMigrations() {
     if (state.lastKnownAppVersion == APP_VERSION) return
@@ -3290,11 +3312,40 @@ private void runMigrations() {
             "managed via named presets (see the Recording Presets page)"
     }
 
+    // v1.6.5: correct wired devices that were wrongly marked battery. Delayed so it doesn't slow initialize().
+    runIn(15, "migrateBatteryModes")
+
     logNormal "Reolink Integration: upgraded ${fromVersion} -> ${APP_VERSION}"
     state.lastKnownAppVersion = APP_VERSION
 }
 
-/** Auto-reverts Full back to Normal after 60 minutes -- Full is meant for actively chasing something, not a steady state. Errors Only and Normal have no timer. */
+/** v1.6.5: re-decides battery vs wired for every device from GetAbility, one call per source. */
+def migrateBatteryModes() {
+    int fixed = 0
+    (state.sources ?: []).each { src ->
+        def bridge = getSourceBridge(src.id)
+        if (!bridge) return
+        def abilities = fetchAbilityChnList(src.id)
+        if (abilities == null) return
+        (bridge.getChildDevices() ?: []).each { child ->
+            try {
+                if (!child.hasCapability("Battery")) return
+                def chn = child.getDataValue("channel") as Integer
+                String mode = batteryModeFromAbility(abilities.getAt(chn))
+                if (!mode) return
+                if (child.currentValue("batteryMode") != mode) {
+                    child.receiveBatteryMode(mode)
+                    fixed++
+                }
+                if (mode == "wired" && child.currentValue("battery") != null) child.clearBatteryInfo()
+            } catch (e) {
+                log.warn "Reolink Integration: battery mode check failed for ${child.displayName} -- ${e.message}"
+            }
+        }
+    }
+    if (fixed) log.info "Reolink Integration: corrected battery/wired mode on ${fixed} device(s)"
+}
+
 /** Auto-reverts Full back to Errors Only after 60 minutes -- Full is meant for actively chasing something, not a steady state. Reverting to Errors Only (not Normal) matches this app's actual default, so a forgotten Full session doesn't leave routine logging elevated indefinitely. */
 def revertToNormalLogging() {
     app.updateSetting("logLevel", [type: "enum", value: "Errors Only"])
@@ -3466,13 +3517,14 @@ def schedulerTick() {
                     // Battery level never arrives via push, so this runs
                     // regardless of sourceConnected (before the early return).
                     if (child.hasCapability("Battery") && nowMs >= ((battDue[dni] ?: 0) as Long)) {
-                        // Missing batteryMode = unknown, backfill via a live probe once.
+                        // Missing batteryMode = unknown, backfill once (v1.6.5: from GetAbility first).
                         def batteryMode = child.currentValue("batteryMode")
                         if (batteryMode == null) {
                             log.warn "Reolink Integration: ${child.displayName} (${dni}) has no batteryMode set -- " +
                                 "backfilling via a live probe"
-                            componentCheckBattery(child)
-                            def backfilled = child.currentValue("battery") != null ? "battery" : "wired"
+                            def sid = child.getDataValue("sourceId") as Integer
+                            def chn = child.getDataValue("channel") as Integer
+                            def backfilled = detectIsBattery(sid, chn, fetchAbilityChnList(sid)?.getAt(chn)) ? "battery" : "wired"
                             child.receiveBatteryMode(backfilled)
                             batteryMode = backfilled
                         }
@@ -3816,11 +3868,20 @@ def componentSetPir(child, Boolean on, String dni = null) {
     reolinkApiCall(sourceId, "SetPirInfo", [PirInfo: [channel: channel, enable: (on ? 1 : 0)]], null)
 }
 
+/** v1.6.5: skipped for wired devices; implausible (NVR junk) battery data is ignored. */
 def componentCheckBattery(child, String dni = null) {
     def c = resolveChild(child, dni)
+    if (c.currentValue("batteryMode") == "wired") {
+        logNormal "Reolink ${c.deviceNetworkId}: wired device, battery check skipped"
+        return
+    }
     def sourceId = c.getDataValue("sourceId") as Integer
     def channel = c.getDataValue("channel") as Integer
     def battInfo = reolinkApiCall(sourceId, "GetBatteryInfo", [:], channel)
+    if (battInfo != null && !looksLikeRealBattery(battInfo)) {
+        logFull "Reolink source ${sourceId} ch ${channel}: ignoring implausible battery data -- ${battInfo}"
+        return
+    }
     c.receiveBatteryInfo(battInfo)
 }
 
@@ -3913,15 +3974,6 @@ def componentSetRecordingEnabled(child, sourceId, Boolean enabled) {
 }
 
 /**
- * Writes a named preset's per-channel schedule strings to the NVR. Always
- * does a FRESH read-modify-write per channel per call -- no stale snapshot,
- * no "restores whatever was cached the first time this ever ran" trap. A
- * channel with no string saved for this preset is skipped (existing
- * schedule left alone), which also serves as the mechanism for excluding a
- * battery-class channel from a preset meant for wired channels -- just
- * leave that channel's field blank on the Recording Presets page.
- */
-/**
  * Read-only lookup used by the bridge's Preferences page to populate a
  * live "Preset to load" dropdown -- see ReolinkDeviceBridge.groovy's
  * getAvailablePresetNames(). Returns the current preset names for this
@@ -3932,6 +3984,15 @@ def componentGetPresetNames(sourceId) {
     return presets.keySet().sort()
 }
 
+/**
+ * Writes a named preset's per-channel schedule strings to the NVR. Always
+ * does a FRESH read-modify-write per channel per call -- no stale snapshot,
+ * no "restores whatever was cached the first time this ever ran" trap. A
+ * channel with no string saved for this preset is skipped (existing
+ * schedule left alone), which also serves as the mechanism for excluding a
+ * battery-class channel from a preset meant for wired channels -- just
+ * leave that channel's field blank on the Recording Presets page.
+ */
 def componentLoadPreset(child, sourceId, String presetName) {
     def bridge = getSourceBridge(sourceId)
     if (!bridge) {
@@ -4152,6 +4213,96 @@ def componentBridgeButtonPushed(child, sourceId, Integer btn) {
         return
     }
     componentLoadPreset(child, sourceId, presetName)
+}
+
+// ---------- RTSP validation queue (v1.6.5) ----------
+
+/**
+ * A Hub/NVR can't open several validation streams at once, so devices
+ * validate one at a time, RTSP_GAP_SEC apart. Called by the app itself
+ * (configureRtspChild) or by a device (via its bridge) on save/refresh.
+ */
+def componentQueueRtspValidation(child, String dni = null) {
+    String d = dni ?: child?.deviceNetworkId
+    if (!d) return
+    List q = state.rtspQueue ?: []
+    if (state.rtspActive?.dni != d && !q.contains(d)) {
+        q << d
+        state.rtspQueue = q
+    }
+    // Always a fresh execution, never a nested call back into the device that asked.
+    runIn(1, "processRtspQueue", [overwrite: true])
+}
+
+/** Starts the next queued validation if none is running. */
+def processRtspQueue() {
+    if (state.rtspActive) return
+    List q = state.rtspQueue ?: []
+    while (q) {
+        String d = q.remove(0)
+        def c = getSourceBridgeForChannelDni(d)?.getChildDevice(d)
+        if (!c) continue
+        state.rtspQueue = q
+        state.rtspActive = [dni: d, startedAt: now()]
+        runIn(RTSP_WATCHDOG_SEC, "rtspValidationWatchdog", [data: [dni: d], overwrite: true])
+        boolean started = false
+        try { started = c.startRtspValidation() == true } catch (e) { log.warn "Reolink ${d}: ${e.message}" }
+        if (!started) {
+            log.warn "Reolink ${d}: could not start RTSP validation"
+            state.remove("rtspActive")
+            unschedule("rtspValidationWatchdog")
+            runIn(RTSP_GAP_SEC, "processRtspQueue", [overwrite: true])
+        }
+        return
+    }
+    state.rtspQueue = q
+}
+
+/**
+ * Reported by the device when its validation finishes. Timeouts retry after
+ * RTSP_RETRY_DELAYS. Returns [attempt, delay] when a retry is scheduled so the
+ * device can show it (a call back into the device here would be unsafe).
+ */
+def componentRtspValidationDone(child, String dni, Boolean success, String message) {
+    Map retryInfo = null
+    String d = dni ?: child?.deviceNetworkId
+    if (state.rtspActive?.dni == d) {
+        state.remove("rtspActive")
+        unschedule("rtspValidationWatchdog")
+    }
+    Map retries = state.rtspRetries ?: [:]
+    String msg = message?.toLowerCase() ?: ""
+    if (!success && (msg.contains("timed out") || msg.contains("request failed"))) {
+        int attempt = ((retries[d] ?: 0) as int) + 1
+        if (attempt <= RTSP_RETRY_DELAYS.size()) {
+            retries[d] = attempt
+            int delay = RTSP_RETRY_DELAYS[attempt - 1]
+            retryInfo = [attempt: attempt, delay: delay]
+            runIn(delay, "requeueRtspValidation", [data: [dni: d], overwrite: false])
+            logNormal "Reolink ${d}: RTSP validation timed out, retry ${attempt} in ${delay}s"
+        } else {
+            retries.remove(d)
+            log.warn "Reolink ${d}: RTSP validation still timing out after ${RTSP_RETRY_DELAYS.size()} retries. " +
+                "Save the device's preferences to try again."
+        }
+    } else {
+        retries.remove(d)
+    }
+    state.rtspRetries = retries
+    runIn(RTSP_GAP_SEC, "processRtspQueue", [overwrite: true])
+    return retryInfo
+}
+
+def requeueRtspValidation(data) {
+    componentQueueRtspValidation(null, data?.dni)
+}
+
+/** Keeps the queue moving if a device never reports back. */
+def rtspValidationWatchdog(data) {
+    if (state.rtspActive?.dni != data?.dni) return
+    logFull "Reolink ${data.dni}: no RTSP validation result after ${RTSP_WATCHDOG_SEC}s, moving on"
+    state.remove("rtspActive")
+    processRtspQueue()
 }
 
 // ---------- Logging ----------
