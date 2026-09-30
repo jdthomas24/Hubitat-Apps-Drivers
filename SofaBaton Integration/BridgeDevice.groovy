@@ -35,7 +35,7 @@ import hubitat.helper.MQTTHelper
 def version() { return "1.0.0" }
 
 metadata {
-    definition (name: "Sofabaton Integration Bridge", namespace: "jdthomas24", author: "Jason Thomas") {
+    definition (name: "Sofabaton Integration Bridge", namespace: "jdthomas24", author: "Jason Thomas", importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/SofaBaton%20Integration/BridgeDevice.groovy") {
         capability "Actuator"
         attribute "mqttStatus", "string"
         attribute "brokerRunning", "string"
