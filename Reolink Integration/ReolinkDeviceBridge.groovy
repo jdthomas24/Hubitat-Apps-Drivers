@@ -1,6 +1,6 @@
 /**
  * Reolink Device Bridge (Internal Parent Driver)
- * Version: 1.6.4
+ * Version: 1.6.5
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- ONE instance per SOURCE (Hub/NVR or standalone).
@@ -13,6 +13,10 @@
  * parent?.componentX(...) calls resolve to THIS device (their real parent);
  * every componentX() method below is a one-line passthrough up to this
  * bridge's own parent (the app).
+ *
+ * v1.6.5 -- RTSP validation queue passthroughs. The harmless "unable to
+ * decrypt body" message (marker 'c800' is a reply status code, not an
+ * encryption marker) moved to Full logging and now includes the cmd_id.
  *
  * v1.5.0 -- NVR recording control: a master record on/off switch, plus
  * named per-channel schedule presets loaded on demand. Confirmed against a
@@ -266,6 +270,9 @@ def componentCalibratePtz(child, String dni = null) { parent?.componentCalibrate
 def componentCheckPtzCalibrationStatus(child, String dni = null) { parent?.componentCheckPtzCalibrationStatus(child, dni) }
 def componentSetPollInterval(child, Integer seconds, String dni = null) { parent?.componentSetPollInterval(child, seconds, dni) }
 def componentSetSnapshotInterval(child, Integer seconds, String dni = null) { parent?.componentSetSnapshotInterval(child, seconds, dni) }
+// v1.6.5: RTSP validation queue.
+def componentQueueRtspValidation(child, String dni = null) { parent?.componentQueueRtspValidation(child, dni) }
+def componentRtspValidationDone(child, String dni, Boolean success, String message) { return parent?.componentRtspValidationDone(child, dni, success, message) }
 
 // ============================================================================
 // v1.5.0: recording control for this source, reachable via the standard
@@ -912,7 +919,7 @@ private void processBuffer() {
         payloadOffset: payloadOffset, messageClass: messageClass, totalHexNeeded: totalHexNeeded]
     state.chunkMsgCount = (state.chunkMsgCount ?: 0) + 1
 
-    String bodyText = decryptBody(bodyHex, encTypeMarker, chId)
+    String bodyText = decryptBody(bodyHex, encTypeMarker, chId, cmdId)
     handleMessage(cmdId, bodyText)
     // v1.5.3: real ground truth for sendKeepalive()'s staleness watchdog --
     // a successfully-parsed message is genuine traffic, regardless of
@@ -925,7 +932,7 @@ private void processBuffer() {
     }
 }
 
-private String decryptBody(String bodyHex, String encTypeMarker, int chId) {
+private String decryptBody(String bodyHex, String encTypeMarker, int chId, int cmdId = -1) {
     if (!bodyHex) return ""
     byte[] bodyBytes = hexToBytes(bodyHex)
     String result = null
@@ -952,7 +959,8 @@ private String decryptBody(String bodyHex, String encTypeMarker, int chId) {
             if (bcTry?.trim()?.startsWith("<?xml")) return bcTry
         } catch (e) { /* fall through */ }
     }
-    log.warn "Reolink Device Bridge (source ${state.sourceId}): unable to decrypt body (marker '${encTypeMarker}')"
+    // v1.6.5: harmless ('c800' is a reply status code, not an encryption marker); Full only.
+    logF "Reolink Device Bridge (source ${state.sourceId}): unable to decrypt body (marker '${encTypeMarker}', cmd_id ${cmdId})"
     return ""
 }
 
