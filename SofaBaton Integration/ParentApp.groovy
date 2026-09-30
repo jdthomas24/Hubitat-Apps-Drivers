@@ -44,18 +44,23 @@ import groovy.transform.Field
   button.hrefElem[name^='_action_href_sbCancel'], button.hrefElem[name^='_action_href_sbSave'] {
     width: auto !important; min-width: 140px; min-height: 0 !important; height: auto !important;
     display: inline-block !important; padding: 8px 20px !important; margin: 4px 12px 4px 0 !important;
-    border-radius: 4px !important; border-left-width: 1px !important; box-shadow: none !important;
-    font-size: 15px !important; font-weight: 600 !important; text-align: center !important; line-height: 1.4 !important; }
+    border: 1px solid transparent !important; border-radius: 4px !important; box-shadow: none !important;
+    font-size: 15px !important; font-weight: 600 !important; text-align: center !important; line-height: 1.4 !important;
+    cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+  button.hrefElem[name^='_action_href_sbCancel'] { background: #f1f3f5 !important; border-color: #d0d7de !important; }
+  button.hrefElem[name^='_action_href_sbCancel']:hover { background: #e2e6ea !important; }
+  button.hrefElem[name^='_action_href_sbSave'] { background: #bdbdbd !important; border-color: #bdbdbd !important; }
+  button.hrefElem[name^='_action_href_sbSave']:hover { background: #a8a8a8 !important; }
+  button.hrefElem[name*='Ready'] { background: #2e7d32 !important; border-color: #2e7d32 !important; }
+  button.hrefElem[name*='Ready']:hover { background: #256b29 !important; }
   button.hrefElem[name^='_action_href_sbCancel']::before, button.hrefElem[name^='_action_href_sbSave']::before,
   button.hrefElem[name^='_action_href_sbCancel']::after, button.hrefElem[name^='_action_href_sbSave']::after { display: none !important; }
   button.hrefElem[name^='_action_href_sbCancel'] span { color: #333 !important; font-size: 15px !important; }
   button.hrefElem[name^='_action_href_sbSave'] span { color: #fff !important; font-size: 15px !important; }
-  button.hrefElem[name^='_action_href_sbCancel']:hover { background: #e8e8e8 !important; }
-  button.hrefElem[name^='_action_href_sbSave']:hover { filter: brightness(0.92); }
   button.hrefElem[name^='_action_href_sbCancel'] .state-incomplete-text, button.hrefElem[name^='_action_href_sbSave'] .state-incomplete-text,
   button.hrefElem[name^='_action_href_sbCancel'] .state-complete-text, button.hrefElem[name^='_action_href_sbSave'] .state-complete-text { display: none !important; }
   .mdl-cell:has(> button.hrefElem[name^='_action_href_sbCancel']), .mdl-cell:has(> button.hrefElem[name^='_action_href_sbSave']) {
-    width: auto !important; flex: 0 0 auto !important; }
+    width: auto !important; flex: 0 0 auto !important; background: transparent !important; border: 0 !important; padding: 0 !important; }
 </style>"""
 
 @Field static final String HUBITAT_PILL = "<span style='background:#1976d2;color:#fff;border-radius:8px;padding:1px 9px;font-size:0.75em;font-weight:bold'>HUBITAT</span>"
@@ -657,11 +662,10 @@ def addActivityPage() {
 private void formButtons(String kind, String saveTitle, boolean ready) {
     if (!state.formToken) state.formToken = now().toString()
     href name: "sbCancel${kind}", title: "Cancel", description: "", page: "mainPage",
-        params: [formAction: "cancel${kind}", token: state.formToken], width: 3,
-        style: "background:#f5f5f5;color:#333;border:1px solid #d0d7de;"
-    href name: "sbSave${kind}", title: saveTitle, description: "", page: "mainPage",
-        params: [formAction: "save${kind}", token: state.formToken], width: 3,
-        style: "background:${ready ? '#2e7d32' : '#bdbdbd'};color:#fff;border:1px solid ${ready ? '#2e7d32' : '#bdbdbd'};"
+        params: [formAction: "cancel${kind}", token: state.formToken], width: 3
+    // "Ready" in the name lets HIDE_DONE_CSS color it green (href style lands on an outer box).
+    href name: "sbSave${kind}${ready ? 'Ready' : ''}", title: saveTitle, description: "", page: "mainPage",
+        params: [formAction: "save${kind}", token: state.formToken], width: 3
 }
 
 // Small colored pill plus one line of help, used as a group header on the Activity page.
