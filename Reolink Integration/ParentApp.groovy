@@ -28,10 +28,12 @@
  *    fallback when the ability is missing, and its data must look real.
  *  - batteryMode attribute retired. Wired/battery lives in each device's
  *    powerMode data value (read via powerModeOf()), and devices show a
- *    one-line "batteryWiredMode" attribute ("Wired", "Battery, 100%,
- *    plugged in"), named to sort right after Battery on the device page.
+ *    one-line "batteryWired" attribute ("Wired", "Battery, 100%, plugged
+ *    in"), named to sort right after Battery on the device page.
  *    migrateBatteryModes() converts existing devices and corrects
- *    wrongly-marked wired ones; it re-runs on every Done until all succeed.
+ *    wrongly-marked wired ones. It starts on its own from schedulerTick()
+ *    after a code update (no Done needed) and retries every 10 minutes
+ *    until every device converts.
  *  - chargingStatus "plugged_in": adapter connected but not charging (e.g.
  *    full), previously reported as not_charging (driver-side change).
  *  - RTSP validation is queued: one device at a time, RTSP_GAP_SEC apart,
@@ -259,6 +261,10 @@ definition(
 )
 
 @Field static final String APP_VERSION = "1.6.5"
+
+// v1.6.5: power mode migration key; changing it re-runs migrateBatteryModes().
+@Field static final String POWER_MIGRATION_KEY = "batteryWired"
+@Field static final long POWER_MIGRATION_RETRY_MS = 600000L
 
 // v1.6.5: RTSP validation queue timing.
 @Field static final int RTSP_GAP_SEC = 5
@@ -3212,10 +3218,8 @@ def initialize() {
         }
     }
     runMigrations()
-    // v1.6.5: power mode conversion. Own flag (not the version guard) so it still
-    // runs on a hub that already had an earlier 1.6.5 build installed.
-    // Delayed so it doesn't slow initialize().
-    if (!state.batteryWiredModeMigrated) runIn(15, "migrateBatteryModes")
+    // v1.6.5: power mode conversion (schedulerTick() also starts it without Done).
+    if (state.powerMigrationKey != POWER_MIGRATION_KEY) runIn(15, "migrateBatteryModes")
 
     // v1.6.5: start the RTSP validation queue fresh (anything pending re-queues below).
     state.rtspQueue = []
@@ -3307,13 +3311,13 @@ private void runMigrations() {
 }
 
 /**
- * v1.6.5: converts every device to the powerMode data value +
- * batteryWiredMode attribute, re-deciding battery vs wired from GetAbility
- * (one call per source) and keeping the existing mode where the ability
- * isn't reported. receiveBatteryMode() clears battery values on wired
- * devices. Only marked done when no device failed, so it retries on Done.
+ * v1.6.5: converts every device to the powerMode data value + batteryWired
+ * attribute. Mode comes from GetAbility, then the existing mode, then a live
+ * probe. receiveBatteryMode() clears battery values on wired devices. Only
+ * marked done when no device failed; schedulerTick() retries otherwise.
  */
 def migrateBatteryModes() {
+    state.lastPowerMigrationAttempt = now()
     int corrected = 0
     int converted = 0
     int failed = 0
@@ -3326,8 +3330,9 @@ def migrateBatteryModes() {
                 if (!child.hasCapability("Battery")) return
                 def chn = child.getDataValue("channel") as Integer
                 String previous = powerModeOf(child)
-                String mode = batteryModeFromAbility(abilities?.getAt(chn)) ?: previous
-                if (!mode) return   // unknown, schedulerTick() backfills it
+                // Ability first, then the existing mode, then a live probe (never skipped).
+                String mode = batteryModeFromAbility(abilities?.getAt(chn)) ?: previous ?:
+                    (detectIsBattery(src.id, chn, null) ? "battery" : "wired")
                 child.receiveBatteryMode(mode)
                 converted++
                 if (previous && previous != mode) corrected++
@@ -3337,9 +3342,13 @@ def migrateBatteryModes() {
             }
         }
     }
-    if (!failed) state.batteryWiredModeMigrated = true
+    if (!failed) {
+        state.powerMigrationKey = POWER_MIGRATION_KEY
+        state.remove("powerModeMigrated")
+        state.remove("batteryWiredModeMigrated")
+    }
     logNormal "Reolink Integration: power mode migration converted ${converted} device(s)" +
-        (failed ? ", ${failed} failed (retries next time you click Done)" : "")
+        (failed ? ", ${failed} failed (retrying in 10 minutes)" : "")
     if (corrected) log.info "Reolink Integration: corrected battery/wired mode on ${corrected} device(s)"
 }
 
@@ -3502,6 +3511,13 @@ def schedulerTick() {
         def snapDue = state.nextSnapshotDue ?: [:]
         def battDue = state.nextBatteryCheckDue ?: [:]
         boolean dirty = false
+
+        // v1.6.5: run the power mode migration on its own after a code update.
+        if (state.powerMigrationKey != POWER_MIGRATION_KEY &&
+            nowMs - ((state.lastPowerMigrationAttempt ?: 0) as Long) > POWER_MIGRATION_RETRY_MS) {
+            state.lastPowerMigrationAttempt = nowMs
+            runIn(2, "migrateBatteryModes", [overwrite: true])
+        }
 
         (state.sources ?: []).each { src ->
             def bridge = getSourceBridge(src.id)
@@ -3697,6 +3713,17 @@ def componentRefresh(child, String dni = null) {
     if (!effectiveDni) {
         log.warn "Reolink Integration: componentRefresh() called with a device that has no deviceNetworkId"
         return
+    }
+    // v1.6.5: Refresh also backfills a missing power mode, so a device never stays blank.
+    def c = resolveChild(child, effectiveDni)
+    if (c?.hasCapability("Battery") && !powerModeOf(c)) {
+        try {
+            def sid = c.getDataValue("sourceId") as Integer
+            def chn = c.getDataValue("channel") as Integer
+            c.receiveBatteryMode(detectIsBattery(sid, chn, fetchAbilityChnList(sid)?.getAt(chn)) ? "battery" : "wired")
+        } catch (e) {
+            log.warn "Reolink ${effectiveDni}: power mode backfill failed -- ${e.message}"
+        }
     }
     pollChild([dni: effectiveDni])
 }
@@ -4344,3 +4371,4 @@ void logNormal(msg) {
 void logFull(msg) {
     if (logLevelRank() >= 2) log.debug msg
 }
+
