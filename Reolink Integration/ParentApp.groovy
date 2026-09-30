@@ -28,9 +28,10 @@
  *    fallback when the ability is missing, and its data must look real.
  *  - batteryMode attribute retired. Wired/battery lives in each device's
  *    powerMode data value (read via powerModeOf()), and devices show a
- *    one-line "power" attribute ("Wired", "Battery, 100%, plugged in").
- *    migrateBatteryModes() runs once (state.powerModeMigrated) to convert
- *    existing devices and correct wrongly-marked wired ones.
+ *    one-line "batteryWiredMode" attribute ("Wired", "Battery, 100%,
+ *    plugged in"), named to sort right after Battery on the device page.
+ *    migrateBatteryModes() converts existing devices and corrects
+ *    wrongly-marked wired ones; it re-runs on every Done until all succeed.
  *  - chargingStatus "plugged_in": adapter connected but not charging (e.g.
  *    full), previously reported as not_charging (driver-side change).
  *  - RTSP validation is queued: one device at a time, RTSP_GAP_SEC apart,
@@ -3211,10 +3212,10 @@ def initialize() {
         }
     }
     runMigrations()
-    // v1.6.5: one-time power mode conversion. Own flag (not the version guard) so
-    // it still runs on a hub that already had an earlier 1.6.5 build installed.
+    // v1.6.5: power mode conversion. Own flag (not the version guard) so it still
+    // runs on a hub that already had an earlier 1.6.5 build installed.
     // Delayed so it doesn't slow initialize().
-    if (!state.powerModeMigrated) runIn(15, "migrateBatteryModes")
+    if (!state.batteryWiredModeMigrated) runIn(15, "migrateBatteryModes")
 
     // v1.6.5: start the RTSP validation queue fresh (anything pending re-queues below).
     state.rtspQueue = []
@@ -3306,14 +3307,16 @@ private void runMigrations() {
 }
 
 /**
- * v1.6.5: converts every device to the powerMode data value + power
- * attribute, re-deciding battery vs wired from GetAbility (one call per
- * source) and keeping the existing mode where the ability isn't reported.
- * receiveBatteryMode() clears battery values on wired devices. Runs once.
+ * v1.6.5: converts every device to the powerMode data value +
+ * batteryWiredMode attribute, re-deciding battery vs wired from GetAbility
+ * (one call per source) and keeping the existing mode where the ability
+ * isn't reported. receiveBatteryMode() clears battery values on wired
+ * devices. Only marked done when no device failed, so it retries on Done.
  */
 def migrateBatteryModes() {
     int corrected = 0
     int converted = 0
+    int failed = 0
     (state.sources ?: []).each { src ->
         def bridge = getSourceBridge(src.id)
         if (!bridge) return
@@ -3329,12 +3332,14 @@ def migrateBatteryModes() {
                 converted++
                 if (previous && previous != mode) corrected++
             } catch (e) {
+                failed++
                 log.warn "Reolink Integration: power mode migration failed for ${child.displayName} -- ${e.message}"
             }
         }
     }
-    state.powerModeMigrated = true
-    logNormal "Reolink Integration: power mode migration converted ${converted} device(s)"
+    if (!failed) state.batteryWiredModeMigrated = true
+    logNormal "Reolink Integration: power mode migration converted ${converted} device(s)" +
+        (failed ? ", ${failed} failed (retries next time you click Done)" : "")
     if (corrected) log.info "Reolink Integration: corrected battery/wired mode on ${corrected} device(s)"
 }
 
