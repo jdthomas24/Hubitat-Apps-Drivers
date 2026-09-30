@@ -1,6 +1,6 @@
 /**
  * Reolink Standalone Devices (Internal Group Driver)
- * Version: 1.6.4
+ * Version: 1.6.5
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- exactly ONE instance total, shared across every
@@ -16,6 +16,8 @@
  * becomes a child of THIS device instead -- one collapsible entry holding
  * every standalone camera/doorbell's bridge, instead of N separate unnested
  * bridges.
+ *
+ * v1.6.5 -- RTSP validation queue passthroughs (same pattern as v1.5.1).
  *
  * v1.5.1 -- HOTFIX: six passthrough gaps found and closed, all the same
  * root-cause pattern as v1.4.3/v1.4.6 below -- ReolinkDeviceBridge.groovy
@@ -185,3 +187,7 @@ def componentLoadPreset(child, sourceId, String presetName) { parent?.componentL
 def componentSetRecordingEnabled(child, sourceId, Boolean enabled) { parent?.componentSetRecordingEnabled(child, sourceId, enabled) }
 def componentBridgeButtonPushed(child, sourceId, Integer btn) { parent?.componentBridgeButtonPushed(child, sourceId, btn) }
 def componentGetPresetNames(sourceId) { return parent?.componentGetPresetNames(sourceId) }
+
+// v1.6.5: RTSP validation queue.
+def componentQueueRtspValidation(child, String dni = null) { parent?.componentQueueRtspValidation(child, dni) }
+def componentRtspValidationDone(child, String dni, Boolean success, String message) { return parent?.componentRtspValidationDone(child, dni, success, message) }
