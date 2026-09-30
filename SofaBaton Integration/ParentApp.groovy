@@ -78,7 +78,7 @@ definition(
     singleInstance: true,
     iconUrl: "",
     iconX2Url: "",
-    importUrl: ""
+    importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/SofaBaton%20Integration/ParentApp.groovy"
 )
 
 preferences {
