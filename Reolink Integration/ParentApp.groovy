@@ -20,13 +20,19 @@
  * exact command/param names verified against firmware (field names can
  * drift by version). Full history prior to 1.3.6 is in GitHub commit history.
  *
- * v1.6.5 -- Battery detection, RTSP validation, last motion:
+ * v1.6.5 -- Battery detection, power summary, RTSP validation, last motion:
  *  - Battery vs wired now comes from GetAbility's per-channel "battery"
  *    ability. An NVR answers GetBatteryInfo even for PoE channels, with junk
  *    data (zero voltage, shifted fields), so "the probe answered" flagged
  *    every PoE channel behind an NVR as battery. The probe is now only a
  *    fallback when the ability is missing, and its data must look real.
- *    Existing wired devices are corrected once on upgrade (migrateBatteryModes).
+ *  - batteryMode attribute retired. Wired/battery lives in each device's
+ *    powerMode data value (read via powerModeOf()), and devices show a
+ *    one-line "power" attribute ("Wired", "Battery, 100%, plugged in").
+ *    migrateBatteryModes() runs once (state.powerModeMigrated) to convert
+ *    existing devices and correct wrongly-marked wired ones.
+ *  - chargingStatus "plugged_in": adapter connected but not charging (e.g.
+ *    full), previously reported as not_charging (driver-side change).
  *  - RTSP validation is queued: one device at a time, RTSP_GAP_SEC apart,
  *    retried on timeout (RTSP_RETRY_DELAYS). Simultaneous validations through
  *    one Home Hub timed out, and nothing retried them. The app queues devices
@@ -2769,6 +2775,17 @@ private String batteryModeFromAbility(Map abilityChn) {
     return abilityPermit(abilityChn, "battery") > 0 ? "battery" : "wired"
 }
 
+/**
+ * v1.6.5: a device's "battery"/"wired" mode, from its powerMode data value.
+ * Falls back to the retired batteryMode attribute until migrateBatteryModes()
+ * has converted the device. Null = unknown.
+ */
+private String powerModeOf(child) {
+    String mode = child?.getDataValue("powerMode")
+    if (mode) return mode
+    try { return child?.currentValue("batteryMode") } catch (e) { return null }
+}
+
 /** Rejects NVR junk. Strict also requires a nonzero voltage (used when deciding battery vs wired). */
 private boolean looksLikeRealBattery(value, boolean strict = false) {
     def b = value?.Battery ?: value
@@ -2994,40 +3011,17 @@ def componentEventChannelUpdate(child, sourceId, channelId, String status, Strin
 }
 
 /**
- * A battery-mode device only ever answers GetBatteryInfo (or anything else)
- * when it's genuinely awake -- that's the whole reason
- * batteryCheckIntervalHours exists on a long, conservative interval, so the
- * periodic scheduler doesn't waste battery forcing a wake just to ask. But
- * a REAL event push (this method's caller) means the device is ALREADY
- * awake and already talking to us right now, for a completely unrelated
- * reason -- piggybacking a battery/charging check onto that costs
- * essentially nothing extra, unlike the scheduler's own artificial checks.
- * Without this, chargingStatus (see CameraDriver.groovy) could only ever
- * update on the next scheduled check (up to batteryCheckIntervalHours away,
- * default 12h) or a manual Check Battery run, even though the device may
- * have been awake and reachable dozens of times in between via real
- * motion/AI events.
- *
- * OFF by default (checkBatteryOnEventWake device preference) -- even though
- * the marginal cost of piggybacking is low, it's still a behavior change
- * from what every existing installation has been running, and opt-in
- * respects that rather than silently changing what happens on every event
- * push for everyone. Throttle window is also configurable per device
- * (eventWakeBatteryThrottleSec, default 60s) rather than hardcoded, so it
- * can be tuned looser or tighter than the default guess.
- *
- * Throttled (state.lastEventBatteryCheck, keyed by DNI) so a rapid burst of
- * pushes -- e.g. motion, then person, then vehicle, then motion-inactive,
- * all within a few seconds, as seen in real logs -- triggers one check for
- * that wake, not one per push. Wired/non-battery devices are skipped
- * entirely (GetBatteryInfo is meaningless for them). Also nudges
- * nextBatteryCheckDue forward by the device's own interval from now, same
- * as a real scheduled check would, so schedulerTick() doesn't immediately
- * re-check the same device again on its very next tick.
+ * A real event push means a battery device is already awake, so a
+ * battery/charging check piggybacks for free instead of waiting for the
+ * long scheduled interval. Opt-in per device (checkBatteryOnEventWake),
+ * throttled per device (eventWakeBatteryThrottleSec, default 60s) so a
+ * burst of pushes from one wake triggers one check. Wired devices are
+ * skipped. Also pushes nextBatteryCheckDue forward so schedulerTick()
+ * doesn't immediately re-check the same device.
  */
 private void maybeCheckBatteryOnWake(child) {
     if (!child.hasCapability("Battery")) return
-    if (child.currentValue("batteryMode") != "battery") return
+    if (powerModeOf(child) != "battery") return
     if (child.getSetting("checkBatteryOnEventWake") != true) return
     def dni = child.deviceNetworkId
     def nowMs = now()
@@ -3088,16 +3082,10 @@ def createSelectedChildren(sourceId) {
             def driverName = ch.deviceType == "doorbell" ? "Reolink Doorbell" : "Reolink Camera"
             def pollDefault = ch.isBattery ? DEFAULT_BATTERY_POLL_SEC : DEFAULT_WIRED_POLL_SEC
             def child = bridge.createChannelDevice(driverName, dni, ch.name, pollDefault as Integer, ch.supportedFeatures ?: [])
-            // batteryMode is declared as a device attribute but only ever
-            // populated here, once, at creation time -- this is the one
-            // moment ch.isBattery holds a real, freshly-probed value (it's
-            // null on a re-discovery of an already-existing channel, by
-            // design -- see discoverChannels()). Set on both device types --
-            // both get the periodic auto-check (see schedulerTick(), gated
-            // on hasCapability("Battery"), which both drivers declare).
-            // schedulerTick() below self-heals any device that still ends
-            // up without batteryMode set, rather than relying solely on
-            // this single creation-time call succeeding.
+            // Power mode is set once here, at creation (the only moment
+            // ch.isBattery holds a freshly-probed value; it's null on
+            // re-discovery of an existing channel). schedulerTick()
+            // backfills any device that still ends up without one.
             if (child) {
                 child.receiveBatteryMode(ch.isBattery ? "battery" : "wired")
                 configureRtspChild(child, src, ch.channel)
@@ -3223,6 +3211,10 @@ def initialize() {
         }
     }
     runMigrations()
+    // v1.6.5: one-time power mode conversion. Own flag (not the version guard) so
+    // it still runs on a hub that already had an earlier 1.6.5 build installed.
+    // Delayed so it doesn't slow initialize().
+    if (!state.powerModeMigrated) runIn(15, "migrateBatteryModes")
 
     // v1.6.5: start the RTSP validation queue fresh (anything pending re-queues below).
     state.rtspQueue = []
@@ -3247,11 +3239,11 @@ def initialize() {
  * older, now-fixed battery-check gate used to keep advancing
  * nextBatteryCheckDue a full interval every tick even while silently
  * skipping the check, so that stale schedule would otherwise delay
- * schedulerTick()'s batteryMode backfill by up to a full
+ * schedulerTick()'s power mode backfill by up to a full
  * batteryCheckIntervalHours after upgrading. This clears
- * nextBatteryCheckDue for every device with no batteryMode set, so the
+ * nextBatteryCheckDue for every device with no power mode set, so the
  * backfill runs on the very next tick (~1s) instead. Devices with a valid
- * batteryMode are untouched.
+ * power mode are untouched.
  *
  * v1.5.2: also backfills state.knownDeviceDnis for every device that
  * already exists at upgrade time -- without this, discoverPage()'s
@@ -3263,9 +3255,6 @@ def initialize() {
  * the registry the first time it WAS actually created going forward), but
  * backfilling here means existing installs get full self-heal coverage
  * immediately on upgrade rather than device-by-device over time.
- *
- * v1.6.5: also schedules migrateBatteryModes() to correct wired devices
- * that were wrongly marked battery.
  */
 private void runMigrations() {
     if (state.lastKnownAppVersion == APP_VERSION) return
@@ -3278,7 +3267,7 @@ private void runMigrations() {
     (state.sources ?: []).each { src ->
         def bridge = getSourceBridge(src.id)
         (bridge?.getChildDevices() ?: []).each { child ->
-            if (child.hasCapability("Battery") && child.currentValue("batteryMode") == null) {
+            if (child.hasCapability("Battery") && powerModeOf(child) == null) {
                 battDue.remove(child.deviceNetworkId)
                 cleared++
             }
@@ -3292,7 +3281,7 @@ private void runMigrations() {
     state.knownDeviceDnis = known
     if (cleared > 0) {
         logNormal "Reolink Integration: migration -- cleared stale battery-check schedule for " +
-            "${cleared} device(s) with no batteryMode set, so the fix takes effect on the next tick " +
+            "${cleared} device(s) with no power mode set, so the fix takes effect on the next tick " +
             "instead of waiting out an old schedule"
     }
     if (backfilled > 0) {
@@ -3312,38 +3301,41 @@ private void runMigrations() {
             "managed via named presets (see the Recording Presets page)"
     }
 
-    // v1.6.5: correct wired devices that were wrongly marked battery. Delayed so it doesn't slow initialize().
-    runIn(15, "migrateBatteryModes")
-
     logNormal "Reolink Integration: upgraded ${fromVersion} -> ${APP_VERSION}"
     state.lastKnownAppVersion = APP_VERSION
 }
 
-/** v1.6.5: re-decides battery vs wired for every device from GetAbility, one call per source. */
+/**
+ * v1.6.5: converts every device to the powerMode data value + power
+ * attribute, re-deciding battery vs wired from GetAbility (one call per
+ * source) and keeping the existing mode where the ability isn't reported.
+ * receiveBatteryMode() clears battery values on wired devices. Runs once.
+ */
 def migrateBatteryModes() {
-    int fixed = 0
+    int corrected = 0
+    int converted = 0
     (state.sources ?: []).each { src ->
         def bridge = getSourceBridge(src.id)
         if (!bridge) return
         def abilities = fetchAbilityChnList(src.id)
-        if (abilities == null) return
         (bridge.getChildDevices() ?: []).each { child ->
             try {
                 if (!child.hasCapability("Battery")) return
                 def chn = child.getDataValue("channel") as Integer
-                String mode = batteryModeFromAbility(abilities.getAt(chn))
-                if (!mode) return
-                if (child.currentValue("batteryMode") != mode) {
-                    child.receiveBatteryMode(mode)
-                    fixed++
-                }
-                if (mode == "wired" && child.currentValue("battery") != null) child.clearBatteryInfo()
+                String previous = powerModeOf(child)
+                String mode = batteryModeFromAbility(abilities?.getAt(chn)) ?: previous
+                if (!mode) return   // unknown, schedulerTick() backfills it
+                child.receiveBatteryMode(mode)
+                converted++
+                if (previous && previous != mode) corrected++
             } catch (e) {
-                log.warn "Reolink Integration: battery mode check failed for ${child.displayName} -- ${e.message}"
+                log.warn "Reolink Integration: power mode migration failed for ${child.displayName} -- ${e.message}"
             }
         }
     }
-    if (fixed) log.info "Reolink Integration: corrected battery/wired mode on ${fixed} device(s)"
+    state.powerModeMigrated = true
+    logNormal "Reolink Integration: power mode migration converted ${converted} device(s)"
+    if (corrected) log.info "Reolink Integration: corrected battery/wired mode on ${corrected} device(s)"
 }
 
 /** Auto-reverts Full back to Errors Only after 60 minutes -- Full is meant for actively chasing something, not a steady state. Reverting to Errors Only (not Normal) matches this app's actual default, so a forgotten Full session doesn't leave routine logging elevated indefinitely. */
@@ -3517,20 +3509,20 @@ def schedulerTick() {
                     // Battery level never arrives via push, so this runs
                     // regardless of sourceConnected (before the early return).
                     if (child.hasCapability("Battery") && nowMs >= ((battDue[dni] ?: 0) as Long)) {
-                        // Missing batteryMode = unknown, backfill once (v1.6.5: from GetAbility first).
-                        def batteryMode = child.currentValue("batteryMode")
-                        if (batteryMode == null) {
-                            log.warn "Reolink Integration: ${child.displayName} (${dni}) has no batteryMode set -- " +
+                        // Missing power mode = unknown, backfill once (GetAbility first).
+                        def powerMode = powerModeOf(child)
+                        if (powerMode == null) {
+                            log.warn "Reolink Integration: ${child.displayName} (${dni}) has no power mode set -- " +
                                 "backfilling via a live probe"
                             def sid = child.getDataValue("sourceId") as Integer
                             def chn = child.getDataValue("channel") as Integer
                             def backfilled = detectIsBattery(sid, chn, fetchAbilityChnList(sid)?.getAt(chn)) ? "battery" : "wired"
                             child.receiveBatteryMode(backfilled)
-                            batteryMode = backfilled
+                            powerMode = backfilled
                         }
                         def checkEnabled = child.getSetting("batteryCheckEnabled") == true
                         def hours = (child.getSetting("batteryCheckIntervalHours") ?: 12) as Integer
-                        if (checkEnabled && hours > 0 && batteryMode == "battery") {
+                        if (checkEnabled && hours > 0 && powerMode == "battery") {
                             componentCheckBattery(child)
                         }
                         // Re-armed even when skipped so a settings change is picked up.
@@ -3871,7 +3863,7 @@ def componentSetPir(child, Boolean on, String dni = null) {
 /** v1.6.5: skipped for wired devices; implausible (NVR junk) battery data is ignored. */
 def componentCheckBattery(child, String dni = null) {
     def c = resolveChild(child, dni)
-    if (c.currentValue("batteryMode") == "wired") {
+    if (powerModeOf(c) == "wired") {
         logNormal "Reolink ${c.deviceNetworkId}: wired device, battery check skipped"
         return
     }
