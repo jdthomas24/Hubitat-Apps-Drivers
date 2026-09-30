@@ -1,6 +1,6 @@
 {
     "packageName": "Sofabaton Integration",
-    "releaseNotes": "v1.0.0 (initial scaffold) -- Not yet publicly released. ParentApp, Sofabaton Integration Bridge (grouping device), Sofabaton Remote (forked from dJOS's community Sofabaton X Series Driver, local button/activity triggers unmodified from the original) and Sofabaton Activity (cloud webhook start/stop) added. Remote-driven Activity state sync -- the fired activity is set on and the previously-on activity for that hub set off, both local-only with no cloud call -- is new and not yet validated against real hardware. Cloud Stop Activity webhook is unconfirmed as a real Sofabaton feature; off() falls back to a local-only state change with a warning if no Stop URL is configured.",
+    "releaseNotes": "releaseNotes": "v1.1.0: X2 remote buttons now control Hubitat. Commands on the Sofabaton Home Assistant Remote become Hubitat buttons, with names imported from the hub, and a new Button Actions page assigns lights, groups, or scene activators (Toggle, On, Off). Activities are named Hub-Activity so they group in device pickers. List refreshes are sent one at a time with a retry, MQTT reconnects on its own after a hub reboot, and all Sofabaton logging appears under the app. Requires Hubitat 2.5.2.126 or newer.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Sofabaton%20Integration",
     "communityLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Sofabaton%20Integration",
     "author": "jdthomas24",
