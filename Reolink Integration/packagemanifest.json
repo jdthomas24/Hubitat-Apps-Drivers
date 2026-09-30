@@ -1,57 +1,48 @@
 {
-    "packageName": "Reolink Integration",
-    "releaseNotes": "v1.6.4: Stuck or given-up event connections now recover automatically. Offline warnings log once per outage. After updating, open the app and click Done once.v1.6.3: Fixes constant reconnects from 1.6.2 and bridges not reconnecting after a hub reboot. Much quieter connection logging. After updating, open the app and click Done once.",
-    "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
-    "communityLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
+    "packageName": "Sofabaton Integration",
+    "releaseNotes": "v1.0.0: Initial release. X2 is fully local and two-way over MQTT, with activities added automatically. X1S reports activities locally, with optional start/stop control through Sofabaton's cloud webhook. X2 requires Hubitat 2.5.2.126 or newer with the built-in MQTT broker enabled. After installing, open the app and follow Tips & Troubleshooting for your hub.",
+    "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/SofaBaton%20Integration",
+    "communityLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/SofaBaton%20Integration",
     "author": "jdthomas24",
-    "version": "1.6.4",
-    "minimumHEVersion": "2.3.0",
-    "dateReleased": "2026-08-14",
+    "version": "1.0.0",
+    "minimumHEVersion": "2.5.2.126",
+    "dateReleased": "2026-09-29",
     "category": "Integrations",
-    "tags": "Cameras & Video",
+    "tags": "Entertainment & Media",
     "apps": [
         {
-            "id": "65694031-b2ec-487e-abfc-9ad90435fb4b",
-            "name": "Reolink Integration",
+            "id": "f7dfc763-edf2-4f21-8081-76afd952d488",
+            "name": "Sofabaton Integration",
             "namespace": "jdthomas24",
-            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Reolink%20Integration/ParentApp.groovy",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/SofaBaton%20Integration/ParentApp.groovy",
             "required": true,
-            "oauth": true,
-            "description": "Manages Reolink sources (standalone cameras, NVRs, Home Hubs) and creates camera/doorbell child devices."
+            "description": "Manages Sofabaton X2 and X1S hubs and creates their activity devices. Includes setup guides and status."
         }
     ],
     "drivers": [
         {
-            "id": "57f47553-5071-4936-aefd-1cb3b4560f0a",
-            "name": "Reolink Camera",
+            "id": "6d1a0761-fe48-4e89-955e-decd9489ccbb",
+            "name": "Sofabaton Integration Bridge",
             "namespace": "jdthomas24",
-            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Reolink%20Integration/CameraDriver.groovy",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/SofaBaton%20Integration/BridgeDevice.groovy",
             "required": true,
-            "description": "Component driver for a standard Reolink camera channel."
+            "description": "Internal bridge device. Holds the shared MQTT connection for X2 hubs and parents each hub. Not user-facing; created automatically by the app."
         },
         {
-            "id": "45e79695-73b0-4f6d-84bb-45b8aee58b17",
-            "name": "Reolink Doorbell",
+            "id": "5cae97ba-3791-4358-9476-8da3ee424f15",
+            "name": "Sofabaton Remote",
             "namespace": "jdthomas24",
-            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Reolink%20Integration/DoorbellDriver.groovy",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/SofaBaton%20Integration/RemoteDriver.groovy",
             "required": true,
-            "description": "Component driver for a Reolink doorbell channel, adds button-press (visitor) event."
+            "description": "One per Sofabaton hub. Receives activity changes over MQTT (X2) or local HTTP (X1S). Created automatically by the app."
         },
         {
-            "id": "8f2c6a1d-4e3b-4a7f-9c5d-2b6e8f0a1c3d",
-            "name": "Reolink Device Bridge",
+            "id": "15f66113-7cfd-4923-99b9-535389214d7f",
+            "name": "Sofabaton Activity",
             "namespace": "jdthomas24",
-            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Reolink%20Integration/ReolinkDeviceBridge.groovy",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/SofaBaton%20Integration/ActivityDriver.groovy",
             "required": true,
-            "description": "Internal per-source bridge device -- holds the real-time event connection and parents each source's camera/doorbell devices. Not user-facing; created automatically by the app."
-        },
-        {
-            "id": "1a9d5e72-6c4f-4b8a-93e0-7d2c8f5b4a61",
-            "name": "Reolink Standalone Devices",
-            "namespace": "jdthomas24",
-            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Reolink%20Integration/StandaloneDevices.groovy",
-            "required": true,
-            "description": "Internal nesting-only group device -- gives every standalone (non-Hub) camera/doorbell's bridge a shared parent so they group together in the Devices list instead of appearing separately. Not user-facing; created automatically by the app."
+            "description": "One per activity, as a switch for rules and dashboards. Created automatically for X2, added in the app for X1S."
         }
     ]
 }
