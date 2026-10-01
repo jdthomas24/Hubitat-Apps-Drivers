@@ -1,16 +1,17 @@
 {
     "packageName": "Device Health Monitor",
-    "releaseNotes": "v1.7.0 reads the hub's own Z-Wave and Zigbee radio data, so quiet devices that answer without creating events are no longer flagged Offline. Mains devices are probed and need 3 missed checks in a row for Offline. Adds a Check with hub radio button, a new General page, and a rebuilt Locations page where renaming a location keeps its devices. After updating, tap Done and run Deep verification once. Hub Login Security users: enter your login under Settings, General.v1.6.0 is a major UI refresh with phone-friendly pages, a Needs attention list, and one-stop Device and Bulk actions. Fixes device snoozes that never stuck, notification devices ignoring the notifications switch, Send Now reporting sent when nothing went out, and the portal's last scan time. If summaries stop arriving, check that Notifications is On.",
+    "releaseNotes": "v1.7.1: a Zigbee, Z-Wave or Matter device reporting a battery of 5% or lower now shows Poor at best, whatever its timing says, with its battery level shown. It clears once a new battery reports. Also fixes the Locations Move pickers showing stale picks. After updating, tap Force scan now on the Summary page. v1.7.0 reads the hub's own Z-Wave and Zigbee radio data, so quiet devices that answer without creating events are no longer flagged Offline. Mains devices are probed and need 3 missed checks in a row for Offline. Adds a Check with hub radio button, a new General page, and a rebuilt Locations page where renaming a location keeps its devices. After updating, tap Done and run Deep verification once. Hub Login Security users: enter your login under Settings, General. v1.6.0 is a major UI refresh with phone-friendly pages, a Needs attention list, and one-stop Device and Bulk actions. Fixes device snoozes that never stuck, notification devices ignoring the notifications switch, Send Now reporting sent when nothing went out, and the portal's last scan time. If summaries stop arriving, check that Notifications is On.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Device%20Health%20Monitor",
     "communityLink": "https://community.hubitat.com/t/release-device-health-monitor/163229",
     "author": "jdthomas24",
-    "version": "1.7.0",
+    "version": "1.7.1",
     "minimumHEVersion": "2.3.0",
-    "dateReleased": "2026-09-25",
+    "dateReleased": "2026-10-01",
     "category": "Convenience",
     "tags": "Monitoring",
     "apps": [
         {
+            "id": "a045ac2b-5fe0-4159-830b-8550899d9553",
             "name": "Device Health Monitor",
             "namespace": "jdthomas24",
             "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Device%20Health%20Monitor/Raw%20Code/DeviceHealthMonitor.groovy",
