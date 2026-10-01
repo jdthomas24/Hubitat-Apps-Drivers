@@ -1,23 +1,23 @@
 {
     "packageName": "Sofabaton Integration",
     "releaseNotes": "v1.1.0: X2 remote buttons now control Hubitat. Commands on the Sofabaton Home Assistant Remote become Hubitat buttons, with names imported from the hub, and a new Button Actions page assigns lights, groups, or scene activators (Toggle, On, Off). Activities are named Hub-Activity so they group in device pickers. List refreshes are sent one at a time with a retry, MQTT reconnects on its own after a hub reboot, and all Sofabaton logging appears under the app. Requires Hubitat 2.5.2.126 or newer.",
-    "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Sofabaton%20Integration",
-    "communityLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Sofabaton%20Integration",
+    "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/SofaBaton%20Integration",
+    "communityLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/SofaBaton%20Integration",
     "author": "jdthomas24",
     "version": "1.1.0",
-    "minimumHEVersion": "2.5.0",
+    "minimumHEVersion": "2.5.2.126",
     "dateReleased": "",
     "category": "Integrations",
-    "tags": "remote, video, TV",
+    "tags": "remote, video, TV, buttons, MQTT",
     "apps": [
         {
             "id": "938eb704-adaf-44b6-957a-d81698af9b10",
             "name": "Sofabaton Integration",
             "namespace": "jdthomas24",
-            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Sofabaton%20Integration/ParentApp.groovy",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/SofaBaton%20Integration/ParentApp.groovy",
             "required": true,
             "oauth": false,
-            "description": "Manages one or more Sofabaton X Series hubs. Creates a Sofabaton Remote device per hub (local remote-to-Hubitat triggers) and Sofabaton Activity devices per hub (cloud webhook control)."
+            "description": "Manages one or more Sofabaton X1S or X2 hubs: activities as switches, X2 remote buttons with Button Actions, and setup guides and troubleshooting in one place."
         }
     ],
     "drivers": [
@@ -25,25 +25,25 @@
             "id": "1c2584c4-58c8-4324-8e42-4bf4c33fb38a",
             "name": "Sofabaton Integration Bridge",
             "namespace": "jdthomas24",
-            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Sofabaton%20Integration/BridgeDevice.groovy",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/SofaBaton%20Integration/BridgeDevice.groovy",
             "required": true,
-            "description": "Internal nesting-only group device -- gives each hub's Sofabaton Remote device a shared parent so multiple hubs group together in the Devices list. Not user-facing; created automatically by the app."
+            "description": "Created automatically by the app. Holds the shared MQTT connection for X2 hubs and groups each hub's devices together."
         },
         {
             "id": "398080a1-8ee2-48cc-bdbe-e76d92ce7338",
             "name": "Sofabaton Remote",
             "namespace": "jdthomas24",
-            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Sofabaton%20Integration/RemoteDriver.groovy",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/SofaBaton%20Integration/RemoteDriver.groovy",
             "required": true,
-            "description": "Component driver for one physical Sofabaton hub (X1S/X2). Receives local button/activity triggers from the physical remote and drives Sofabaton Activity state sync. Forked from dJOS's community Sofabaton X Series Driver -- see driver header for full credit and changelog."
+            "description": "One per Sofabaton hub, created by the app. Tracks activity changes and fires button events (X2 Hubitat Control commands, X1S IP control). X1S receive path forked from dJOS's Sofabaton X Series driver, see the driver header for credits."
         },
         {
             "id": "df7fa700-8ef0-41c0-a81c-eef92760a811",
             "name": "Sofabaton Activity",
             "namespace": "jdthomas24",
-            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Sofabaton%20Integration/ActivityDriver.groovy",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/SofaBaton%20Integration/ActivityDriver.groovy",
             "required": true,
-            "description": "Component driver for one Sofabaton activity. on()/off() call Sofabaton's cloud webhook for that activity. syncOn()/syncOff() are called only by the parent Sofabaton Remote device to mirror state locally, with no cloud call, when the physical remote changes activity."
+            "description": "One per Sofabaton activity, as a switch, created by the app. Starts and stops the activity locally over MQTT (X2) or through Sofabaton's cloud webhook (X1S)."
         }
     ]
 }
