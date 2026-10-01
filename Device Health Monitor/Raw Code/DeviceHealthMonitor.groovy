@@ -1,12 +1,15 @@
 /**
  * Device Health Monitor
- * Version: 1.7.0
+ * Version: 1.7.1
  *
  * Learns each device's normal check-in pattern and flags devices that go quiet, across
  * Zigbee, Z-Wave, Matter, Hub Mesh, LAN, Virtual and Hub Variable. Verifies Poor/Offline
  * devices by state events, refresh/ping, the hub's Z-Wave and Zigbee radio data, or Hue Bridge /
  * Konnected Panel round-trips. Optional OAuth web portal.
  *
+ * v1.7.1 -- A Zigbee, Z-Wave or Matter device reporting a battery of 5% or lower is Poor at best,
+ * whatever timing says, with its battery level shown. Clears when the battery is replaced.
+ * Fixed: Locations, after Move the device and location pickers could show stale picks.
  * v1.7.0 -- Hub radio check. DHM reads the hub's own Z-Wave and Zigbee radio data, so quiet devices
  * that answer without creating events are no longer flagged Offline.
  * Z-Wave: mains devices are checked with a refresh sent through one paced queue (about one per second),
@@ -52,18 +55,19 @@ definition(
     importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Device%20Health%20Monitor/Raw%20Code/DeviceHealthMonitor.groovy",
     iconUrl: "",
     iconX2Url: "",
-    version: "1.7.0",
+    version: "1.7.1",
     doNotFocus: true,
     oauth: true
 )
 
-@Field static final String APP_VERSION = "1.7.0"
+@Field static final String APP_VERSION = "1.7.1"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/release-device-health-monitor/163229"
 @Field static final String COFFEE_URL = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "best"
 @Field static final int ZW_MISS_LIMIT = 3
 @Field static final int ZW_PACE_MS = 1000
 @Field static final long DEEP_RECENT_MS = 30L * 60 * 1000
+@Field static final int DEAD_BATTERY_PCT = 5
 
 // ============================================================
 // ===================== OAUTH MAPPINGS ======================
@@ -116,10 +120,10 @@ def updated() {
         if (debugEnabled()) log.debug "Snooze disabled — all active snoozes cleared"
     }
 
-    // Retired settings from pre-1.6.0 pages
+    // Retired settings from pre-1.6.0 pages, and pre-1.7.1 Locations move inputs
     ["devicesToSnooze", "devicesToUnsnooze", "confirmSnooze", "confirmUnsnooze",
      "resetHistoryDevices", "resetHistoryConfirm", "sendNowConfirm",
-     "bulkLoc", "bulkDevs", "bulkApplyConfirm"].each {
+     "bulkLoc", "bulkDevs", "bulkApplyConfirm", "locMoveDevs", "locMoveTo"].each {
         if (settings.containsKey(it)) app.removeSetting(it)
     }
     state.remove("lastBulkLoc")
@@ -150,6 +154,7 @@ def initialize() {
     if (state.deepScanResult      == null) state.deepScanResult      = [:]
     if (state.dropHistory         == null) state.dropHistory         = [:]
     if (state.fairHold            == null) state.fairHold            = [:]
+    if (state.deadBattery         == null) state.deadBattery         = [:]
 
     if (!state.capabilitiesResetDone) {
         state.deviceCapabilities  = [:]
@@ -1522,7 +1527,7 @@ def purgeOrphanedState(devList) {
     def activeIds = devList.collect { it.id as String } as Set
 
     ["history", "health", "verifying", "stateHistory", "fairHold",
-     "deviceCapabilities", "dropHistory", "prevHealth", "deviceLocations"].each { stateKey ->
+     "deviceCapabilities", "dropHistory", "prevHealth", "deviceLocations", "deadBattery"].each { stateKey ->
         def map = state[stateKey]
         if (map instanceof Map) {
             def stale = map.keySet().findAll { !((it as String) in activeIds) }
@@ -1733,7 +1738,38 @@ def finalizeScan() {
 // ============================================================
 // ===================== HEALTH SCORING ======================
 // ============================================================
+/** Battery level of a radio device at or below DEAD_BATTERY_PCT, or null. LAN/virtual batteries (EVs, phones) don't count. */
+private Integer deadBatteryPct(device) {
+    if (!(getProtocol(device) in ["Zigbee", "Z-Wave", "Matter", "Hub Mesh (Zigbee)", "Hub Mesh (Z-Wave)", "Hub Mesh (Matter)"])) return null
+    try {
+        if (!device.hasAttribute("battery")) return null
+        def v = device.currentValue("battery")?.toString()
+        if (!v || !v.isNumber()) return null
+        int pct = v.toBigDecimal().intValue()
+        return pct <= DEAD_BATTERY_PCT ? pct : null
+    } catch (e) {
+        return null
+    }
+}
+
+// v1.7.1: a dead battery is Poor at best, whatever timing says. Applied after normal scoring,
+// so it adds no verification pings and clears itself once the battery reads above the limit.
 def updateHealth(device, boolean allowProbe = true) {
+    updateHealthCore(device, allowProbe)
+    def key = device.id as String
+    def pct = deadBatteryPct(device)
+    def db  = state.deadBattery ?: [:]
+    if (pct == null) {
+        if (db.containsKey(key)) { db.remove(key); state.deadBattery = db }
+        return
+    }
+    db[key] = pct
+    state.deadBattery = db
+    if (!state.history?.get(device.id)) return
+    if (!(state.health?.get(device.id) in ["Poor", "Offline"])) state.health[device.id] = "Poor"
+}
+
+private void updateHealthCore(device, boolean allowProbe) {
     def id   = device.id
     def data = state.history[id]
     if (!data) return
@@ -2091,6 +2127,8 @@ private Map healthInfo(device) {
     if (h == "Pending")      return [label: "Pending", tone: "gray", note: "${Math.min(samples, 3)}/3 samples", rank: 1]
 
     def tags = []
+    def bat  = state.deadBattery?.get(id)
+    if (bat != null) tags << "🪫 Battery ${bat}%".toString()
     if (isRepeatDrops(id)) tags << "🔄 Repeat drops"
     else if (isLowActivity(id) && h in ["Fair", "Poor", "Offline"]) tags << "Low activity"
 
@@ -2301,7 +2339,8 @@ def serveDataEndpoint() {
                 repeatDrops:     isRepeatDrops(device.id as String),
                 extStateTag:     getExtendedStateTag(device),
                 verifyMethod:    verifyMethod ?: "",
-                lowActivity:     isLowActivity(device.id as String)
+                lowActivity:     isLowActivity(device.id as String),
+                deadBattery:     state.deadBattery?.get(device.id as String)
             ]
         }
 
@@ -2424,8 +2463,9 @@ function healthLabel(dev) {
     if (h === 'Pending') return "⏳ Pending";
 
     let suffix = '';
-    if (dev.repeatDrops) suffix = ' <span style="color:#f97316;font-size:10px;">🔄 Repeat Drops</span>';
-    else if (dev.lowActivity && (h === 'Fair' || h === 'Poor' || h === 'Offline')) suffix = ' <span style="color:#94a3b8;font-size:10px;">ℹ️ Low Activity</span>';
+    if (dev.deadBattery !== null && dev.deadBattery !== undefined) suffix += ' <span style="color:#ef4444;font-size:10px;">🪫 Battery ' + dev.deadBattery + '%</span>';
+    if (dev.repeatDrops) suffix += ' <span style="color:#f97316;font-size:10px;">🔄 Repeat Drops</span>';
+    else if (dev.lowActivity && (h === 'Fair' || h === 'Poor' || h === 'Offline')) suffix += ' <span style="color:#94a3b8;font-size:10px;">ℹ️ Low Activity</span>';
 
     if (h === 'Poor' || h === 'Offline') {
         let vm = dev.verifyMethod;
@@ -2701,7 +2741,9 @@ def scheduledSummary(boolean manual = false) {
                 def stateStr  = stateInfo ? " [${stateInfo.label}]" : ""
                 def lastStr   = state.history?.get(device.id)?.lastSeen
                     ? ", last seen ${formatTimeAgo(state.history[device.id].lastSeen)}" : ""
-                sections[h].list << "${device.displayName.trim()}${stateStr}${lastStr}"
+                def bat       = state.deadBattery?.get(device.id as String)
+                def batStr    = bat != null ? ", battery ${bat}%" : ""
+                sections[h].list << "${device.displayName.trim()}${stateStr}${lastStr}${batStr}"
             }
         }
     }
@@ -2783,7 +2825,7 @@ void appButtonHandler(String btn) {
             }
             break
         case "locAddBtn":        break   // the page render adds whatever is in the name box
-        case "locMoveBtn":       moveDevicesToLocation(settings?.locMoveTo); break
+        case "locMoveBtn":       moveDevicesToLocation(settings[locMoveKey("To")]); break
         case "locAddHereBtn":
             def here = (1..30).find { (it as String) == (state.locSel as String) }
             moveDevicesToLocation(here ? ((settings["loc${here}"] ?: "") as String).trim() : null)
@@ -3168,13 +3210,23 @@ private void syncLocationSlots() {
     state.locSnapshot = cur
 }
 
+// v1.7.1: move inputs carry a generation suffix, bumped after each move, so the browser can't resubmit old picks
+private String locMoveKey(String part) {
+    return "locMove${part}_${(state.locMoveGen ?: 0) as int}".toString()
+}
+
+private void clearLocMoveInputs() {
+    app.removeSetting(locMoveKey("Devs"))
+    app.removeSetting(locMoveKey("To"))
+}
+
 private void moveDevicesToLocation(target) {
-    def ids = (settings?.locMoveDevs ?: []).collect { it as String }
+    def ids = (settings[locMoveKey("Devs")] ?: []).collect { it as String }
     if (!ids) { state.locMsg = [tone: "err", text: "Pick at least one device first."]; return }
     if (!target) { state.locMsg = [tone: "err", text: "Pick a location first."]; return }
     ids.each { setDeviceLocation(it, target as String) }
-    app.removeSetting("locMoveDevs")
-    app.removeSetting("locMoveTo")
+    clearLocMoveInputs()
+    state.locMoveGen = ((state.locMoveGen ?: 0) as int) + 1
     state.locMsg = [tone: "ok", text: "Moved ${ids.size()} device${ids.size() == 1 ? '' : 's'} to <b>${bmEsc(target)}</b>.".toString()]
 }
 
@@ -3190,8 +3242,7 @@ def locationsPage(params) {
     if (params?.slot && (params.slot as String) != (state.locSel as String)) {
         state.locSel = params.slot as String
         state.remove("locPending")
-        app.removeSetting("locMoveDevs")
-        app.removeSetting("locMoveTo")
+        clearLocMoveInputs()
     }
     syncLocationSlots()
 
@@ -3228,6 +3279,8 @@ def locationsPage(params) {
     def sel     = state.locSel as String
     def msg     = state.remove("locMsg")
     def pending = state.locPending
+    def moveDevsKey = locMoveKey("Devs")
+    def moveToKey   = locMoveKey("To")
 
     dynamicPage(name: "locationsPage", title: "Locations", install: false) {
         section(sectionClass: "bm-da-index") {
@@ -3263,9 +3316,9 @@ def locationsPage(params) {
                     "<div class='bm-hint' style='margin-bottom:8px;'>This isn't a room. It's every device that hasn't been given a location yet. Pick devices and a location below to move them.</div>" +
                     (rows ? locDeviceTable(rows, names) : "<div class='bm-msg bm-msg-ok'>Every device has a location.</div>") + hubLinkScript()
                 if (rows && slots) {
-                    input "locMoveDevs", "enum", title: "Devices", required: false, multiple: true, width: 6,
+                    input moveDevsKey, "enum", title: "Devices", required: false, multiple: true, width: 6,
                           options: rows.collectEntries { d -> [(d.id as String): d.displayName.trim()] }
-                    input "locMoveTo", "enum", title: "Move to", required: false, width: 3,
+                    input moveToKey, "enum", title: "Move to", required: false, width: 3,
                           options: slots.collectEntries { [(it.name): it.name] }
                     input "locMoveBtn", "button", title: "Move", width: 3, styleClass: "bm-btn bm-btn-primary bm-loc-add"
                 }
@@ -3286,7 +3339,7 @@ def locationsPage(params) {
                     def others = all.findAll { getDeviceLocation(it.id) != l.name }
                                     .sort { a, b -> a.displayName.trim().toLowerCase() <=> b.displayName.trim().toLowerCase() }
                     if (others) {
-                        input "locMoveDevs", "enum", title: "Add devices here", required: false, multiple: true, width: 8,
+                        input moveDevsKey, "enum", title: "Add devices here", required: false, multiple: true, width: 8,
                               options: others.collectEntries { d ->
                                   def cur = getDeviceLocation(d.id)
                                   [(d.id as String): "${d.displayName.trim()} (${cur in names ? cur : 'unassigned'})".toString()]
@@ -3352,7 +3405,7 @@ def summaryPage() {
             paragraph "<div style='background-color:#e8f0fe; border-left:4px solid #1a73e8; padding:8px 12px; font-size:13px; color:#1a1a1a;'>" +
                       "<b>Health</b> compares time since the last check-in with the device's usual check-in: Excellent up to 1.5x, Good up to 3x, Fair up to 6x, then Poor. " +
                       "<b>Offline</b> means no activity for the offline threshold. <b>Quiet</b> is Fair but confirmed reachable. " +
-                      "<b>Pending</b> is still learning (3 samples needed).<br><br>" +
+                      "<b>Pending</b> is still learning (3 samples needed). A battery at ${DEAD_BATTERY_PCT}% or lower shows <b>Poor</b> at best.<br><br>" +
                       "Tap a count to filter, a column header to sort, or search by name, protocol, or location. <b>Issues only</b> is remembered in this browser." +
                       "</div>"
         }
@@ -4144,6 +4197,8 @@ private List tipsTopics() {
                 "<tr><td><b>Quiet</b></td><td>Fair, but confirmed reachable, so it's idle rather than lost</td></tr>" +
                 "<tr><td><b>Poor</b></td><td>Beyond 6x of usual</td></tr>" +
                 "<tr><td><b>Offline</b></td><td>No activity for the offline threshold (default 168 hours)</td></tr></table>" +
+                "<p><b>Dead batteries:</b> a Zigbee, Z-Wave, or Matter device reporting a battery of ${DEAD_BATTERY_PCT}% or lower shows <b>Poor</b> at best, " +
+                "whatever its timing says, with the battery level shown. It clears once a new battery reports.</p>" +
                 "<p><b>Low activity</b> marks devices monitored 7+ days with fewer than 3 samples. If they can't be verified, they're capped at Poor instead of Offline.</p>"],
         [id: "baselines", label: "Usual check-in", title: "How the usual check-in is learned", group: "Health", icon: "pi-chart-line",
             body: "<p>Each time a device checks in, the time since its previous check-in becomes a smoothed sample. Up to 20 are kept, and the average is its usual check-in.</p>" +
