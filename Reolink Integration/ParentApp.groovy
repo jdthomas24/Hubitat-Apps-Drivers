@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.6.5
+ * Version: 1.6.6
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -19,6 +19,18 @@
  * in-app Tips page, not duplicated here. TODO markers mark spots needing
  * exact command/param names verified against firmware (field names can
  * drift by version). Full history prior to 1.3.6 is in GitHub commit history.
+ *
+ * v1.6.6 -- Source password no longer shown in plain text:
+ *  - Each bridge kept the source password in its state, so State Variables
+ *    showed it in plain text (and in any screenshot of that page). The bridge
+ *    now holds it in memory only and asks the app for it after a reboot or
+ *    driver save (componentGetSourceSecret()). Its State Variables show
+ *    "Password: Saved, N characters", Login ("OK, 10:42 AM" / "Failed: wrong
+ *    username or password") and Last Good Login. migrateCredentials()
+ *    overwrites the old value on every existing bridge once, without Done.
+ *  - Edit connection settings shows the same password summary and last login
+ *    result under the password field.
+ *  - The password was never written to any log; unchanged.
  *
  * v1.6.5 -- Battery detection, power summary, RTSP validation, last motion:
  *  - Battery vs wired now comes from GetAbility's per-channel "battery"
@@ -260,11 +272,14 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.6.5"
+@Field static final String APP_VERSION = "1.6.6"
 
 // v1.6.5: power mode migration key; changing it re-runs migrateBatteryModes().
 @Field static final String POWER_MIGRATION_KEY = "batteryWired"
 @Field static final long POWER_MIGRATION_RETRY_MS = 600000L
+
+// v1.6.6: password display migration key; changing it re-runs migrateCredentials().
+@Field static final String CRED_MIGRATION_KEY = "passwordMasked"
 
 // v1.6.5: RTSP validation queue timing.
 @Field static final int RTSP_GAP_SEC = 5
@@ -796,7 +811,11 @@ private List tipsTopics() {
             body: [
                 "<p>" + ("A source is one camera, one NVR, or one Home Hub -- anything with its own IP/login. " +
                 "A standalone camera always has one channel: 0. An NVR/Home Hub has one channel per paired " +
-                "camera -- run discovery to see what it finds.") + "</p>"
+                "camera -- run discovery to see what it finds.") + "</p>",
+                "<p>" + ("<b>Your login:</b> the source's password is stored only in this app on your hub, and is " +
+                "never shown or written to the logs. The source's Reolink Device Bridge shows <b>Password: Saved, " +
+                "N characters</b> and the last <b>Login</b> result, so a wrong password is easy to spot. To change " +
+                "it, use <b>Edit connection settings</b> on the source's page.") + "</p>"
             ].join("")],
         [id: "network", label: "Network setup", title: "Before adding a camera", group: "Getting started", icon: "pi-sitemap",
             body: [
@@ -1427,6 +1446,8 @@ def editSourcePage(params) {
             input "editPort", "number", title: "HTTPS port", range: "1..65535", required: true, width: 4
             input "editUser", "text", title: "Username", required: true
             input "editPass", "password", title: "New password (leave blank to keep current password)"
+            // v1.6.6: never shows the password itself, only its length and the last login result.
+            paragraph rawHtml: true, editLoginLineHtml(src)
             paragraph "These settings apply to all devices belonging to this source."
         }
         section(sectionClass: "reolink-recovery-actions") {
@@ -1439,6 +1460,16 @@ def editSourcePage(params) {
                 width: 4, submitOnChange: true, inputClass: "p-button"
         }
     }
+}
+
+/** v1.6.6: "Password: Saved, 12 characters · Last login OK, 10:42 AM" under the password field. */
+private String editLoginLineHtml(src) {
+    Map rec = (state.sourceLogin ?: [:])[src.id.toString()] as Map
+    String login = rec?.ok == true ? "Last login OK, ${shortTime(rec.at as Long)}" :
+        rec?.ok == false ? "Login failed: ${rec.reason}" : "Login not checked yet"
+    String tone = rec?.ok == false ? "text-red-700" : "text-color-secondary"
+    return "<div class='text-sm ${tone}'>Password: ${passwordSummary(src.password)} &middot; " +
+        "${discoveryEscapeHtml(login)}</div>"
 }
 
 /** Validates and commits the active connection editor draft. */
@@ -1742,6 +1773,13 @@ private void applySourceConnection(src, String host, Integer port, String userna
     src.connectionRevision = (src.connectionRevision ?: 0) + 1
     state.sources = (state.sources ?: []).collect { it.id == src.id ? src : it }
     state.sourceUnreachable?.remove(src.id.toString())
+    // v1.6.6: new credentials start unchecked; the next login records the result.
+    def logins = state.sourceLogin ?: [:]
+    def rec = (logins[src.id.toString()] ?: [:]) as Map
+    rec.remove("ok")
+    rec.remove("reason")
+    logins[src.id.toString()] = rec
+    state.sourceLogin = logins
     childrenForSource(src.id).each { child ->
         try { configureRtspChild(child, src, child.getDataValue("channel")) }
         catch (Exception ignored) { log.warn "Reolink source ${src.id}: stream refresh failed; refresh the device to retry" }
@@ -2451,6 +2489,7 @@ def removeSource(id) {
     state.sourceUnreachable?.remove(id.toString())
     state.sourceConnMode?.remove(id.toString())
     state.lastEventRetry?.remove(id.toString())
+    state.sourceLogin?.remove(id.toString())
     // Clean up any presets defined for this source too, so state doesn't
     // accumulate dead entries forever.
     state.recPresets?.remove(id.toString())
@@ -2504,6 +2543,7 @@ private String reolinkLogin(sourceId) {
         // already known-unreachable) the underlying connection failure --
         // nothing more to log here, and nothing to parse out of a response
         // that never arrived.
+        recordLoginResult(sourceId, false, "no response from the source")
         return null
     }
     def first = firstResultValue(resp, src)
@@ -2527,6 +2567,7 @@ private String reolinkLogin(sourceId) {
             src.token = null
             src.tokenExpires = 0
             log.warn "Reolink source ${sourceId}: could not verify the saved device identity; use Find changed IP"
+            recordLoginResult(sourceId, false, "a different device answered, use Find changed IP")
             return null
         }
         if (uid && !src.identity?.uid) {
@@ -2535,11 +2576,93 @@ private String reolinkLogin(sourceId) {
         }
         logNormal "Reolink source ${sourceId}: new token acquired, leaseTime=${leaseSec}s"
         markSourceReachable(sourceId)
+        recordLoginResult(sourceId, true)
     } else {
+        // The raw response is the camera's reply only; it never contains the password.
         log.warn "Reolink source ${sourceId}: Login response parsed but no Token.name found (check " +
             "credentials) -- raw: ${resp?.toString()?.take(500)}"
+        recordLoginResult(sourceId, false, loginFailureReason(resp))
     }
     return token
+}
+
+// ---------- Login status and password display (v1.6.6) ----------
+
+/** Bridges call this after a reboot or driver save; the password itself lives only in this app's state. */
+def componentGetSourceSecret(sourceId) {
+    return getSource(sourceId)?.password
+}
+
+private String passwordSummary(String password) {
+    password ? "Saved, ${password.length()} characters" : "Not set"
+}
+
+/** "10:42 AM" for today, "Sep 30, 9:15 PM" otherwise, in the hub's time zone. */
+private String shortTime(Long ms) {
+    if (!ms) return ""
+    def tz = location?.timeZone ?: TimeZone.getDefault()
+    def d = new Date(ms)
+    boolean today = d.format("yyyyMMdd", tz) == new Date().format("yyyyMMdd", tz)
+    return d.format(today ? "h:mm a" : "MMM d, h:mm a", tz)
+}
+
+private String loginStatusText(Map rec) {
+    if (rec?.ok == true) return "OK, ${shortTime(rec.at as Long)}"
+    if (rec?.ok == false) return "Failed: ${rec.reason}"
+    return "Not checked yet"
+}
+
+/** Records a fresh login result and shows it on the bridge. A repeat failure with the same reason writes nothing. */
+private void recordLoginResult(sourceId, boolean ok, String reason = null) {
+    def all = state.sourceLogin ?: [:]
+    def key = sourceId.toString()
+    Map rec = (all[key] ?: [:]) as Map
+    if (!ok && rec.ok == false && rec.reason == reason) return
+    rec.ok = ok
+    rec.reason = ok ? null : reason
+    rec.at = now()
+    if (ok) rec.lastGood = rec.at
+    all[key] = rec
+    state.sourceLogin = all
+    pushLoginStatusToBridge(sourceId)
+}
+
+private void pushLoginStatusToBridge(sourceId) {
+    Map rec = (state.sourceLogin ?: [:])[sourceId.toString()] as Map
+    try {
+        getSourceBridge(sourceId)?.receiveLoginStatus(loginStatusText(rec),
+            rec?.lastGood ? shortTime(rec.lastGood as Long) : null)
+    } catch (e) { /* older bridge driver */ }
+}
+
+/** Plain-language reason from a rejected Login reply (the reply never contains the credentials). */
+private String loginFailureReason(resp) {
+    def err = (resp instanceof List && resp) ? resp[0]?.error : null
+    String detail = err?.detail?.toString()?.toLowerCase() ?: ""
+    if (detail.contains("lock") || detail.contains("max") || detail.contains("too many"))
+        return "too many sessions or attempts, try again later"
+    if (detail.contains("password") || detail.contains("user") || detail.contains("login"))
+        return "wrong username or password"
+    return detail ? "the source replied '${detail}'".toString() : "unexpected reply from the source"
+}
+
+/** v1.6.6: replaces the plain-text password in every existing bridge's state, once. */
+def migrateCredentials() {
+    state.remove("credMigrationQueued")
+    int updated = 0
+    (state.sources ?: []).each { src ->
+        def bridge = getSourceBridge(src.id)
+        if (!bridge) return
+        try {
+            bridge.configureConnection(src.host, BAICHUAN_PORT, src.username, src.password, src.id as Integer)
+            pushLoginStatusToBridge(src.id)
+            updated++
+        } catch (e) {
+            log.warn "Reolink source ${src.id}: could not update the bridge's password display -- ${e.message}"
+        }
+    }
+    state.credMigrationKey = CRED_MIGRATION_KEY
+    logNormal "Reolink Integration: password display updated on ${updated} bridge(s)"
 }
 
 private firstResultValue(resp, src) {
@@ -2953,6 +3076,7 @@ def ensureSourceBridge(sourceId) {
     // with state.sources, independent of whether the subscription is
     // actually wanted right now.
     bridge.configureConnection(src.host, BAICHUAN_PORT, src.username, src.password, sourceId as Integer)
+    pushLoginStatusToBridge(sourceId)
     try { bridge.setLogRank(logLevelRank()) } catch (e) { /* older bridge driver */ }
 
     def wantEvent = settings["useEventSubscription_${sourceId}"] != false  // default true
@@ -3220,6 +3344,8 @@ def initialize() {
     runMigrations()
     // v1.6.5: power mode conversion (schedulerTick() also starts it without Done).
     if (state.powerMigrationKey != POWER_MIGRATION_KEY) runIn(15, "migrateBatteryModes")
+    // v1.6.6: the queued flag never survives a Done (unschedule() above cancels the job).
+    state.remove("credMigrationQueued")
 
     // v1.6.5: start the RTSP validation queue fresh (anything pending re-queues below).
     state.rtspQueue = []
@@ -3517,6 +3643,11 @@ def schedulerTick() {
             nowMs - ((state.lastPowerMigrationAttempt ?: 0) as Long) > POWER_MIGRATION_RETRY_MS) {
             state.lastPowerMigrationAttempt = nowMs
             runIn(2, "migrateBatteryModes", [overwrite: true])
+        }
+        // v1.6.6: mask the password on existing bridges once, without needing Done.
+        if (state.credMigrationKey != CRED_MIGRATION_KEY && !state.credMigrationQueued) {
+            state.credMigrationQueued = true
+            runIn(3, "migrateCredentials", [overwrite: true])
         }
 
         (state.sources ?: []).each { src ->
