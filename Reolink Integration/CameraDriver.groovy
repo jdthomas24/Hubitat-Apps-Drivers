@@ -8,9 +8,10 @@
  *
  * v1.6.6 -- PIR fixes. pirOn()/pirOff() never changed the camera (it rejected
  * every request) but updated PIR Enabled anyway. They now just ask the app,
- * and receivePirState() updates the page only once the camera confirms it,
- * or shows why it failed. Turning PIR on removes the "PIR off" note (an empty
- * value showed as "null").
+ * and receivePirState() updates PIR Enabled only once the camera confirms it.
+ * pirStatusNote retired (PIR Enabled says the same; the note couldn't clear
+ * without a page reload). batteryWired drops the percentage, which the
+ * Battery row already shows.
  * v1.6.5 -- RTSP validation is queued through the app (one device at a time,
  * retried on timeout) instead of firing immediately; refresh() only
  * revalidates when not already validated. Added lastMotionTime and
@@ -70,7 +71,6 @@ metadata {
         attribute "ptzCalibrationStatus", "enum", ["unknown", "required", "running", "done"]
         attribute "supportedFeatures", "string"
         attribute "pirEnabled", "enum", ["true", "false"]
-        attribute "pirStatusNote", "string"
 
         // ---- Core ----
         command "takeSnapshot"
@@ -301,19 +301,11 @@ def pirOn() {
     parent?.componentSetPir(this, true, device.deviceNetworkId)
 }
 
-/** v1.6.6: called by the app with the camera's confirmed result; error set when it didn't change. */
+/** v1.6.6: called by the app once the device confirms the change (failures are logged by the app). */
 def receivePirState(Boolean enabled, String error = null) {
-    if (error) {
-        sendEvent(name: "pirStatusNote", value: "⚠️ PIR ${enabled ? 'on' : 'off'} failed: ${error}")
-        return
-    }
+    if (error) return
     sendEvent(name: "pirEnabled", value: enabled ? "true" : "false")
-    if (enabled) {
-        safeDelete("pirStatusNote")
-    } else {
-        sendEvent(name: "pirStatusNote", value: "⏸️ PIR off, motion suppressed")
-        log.warn "${device.displayName}: PIR disabled -- motion trigger suppressed until turned back on"
-    }
+    if (!enabled) log.warn "${device.displayName}: PIR disabled -- motion trigger suppressed until turned back on"
 }
 
 def checkBattery() {
@@ -367,17 +359,15 @@ private void safeDelete(String name) {
     try { device.deleteCurrentState(name) } catch (e) { /* not present or not supported */ }
 }
 
-/** v1.6.5: builds the one-line batteryWired attribute. Values passed in win over currentValue (same-execution lag). */
+/** Builds batteryWired: Wired, Battery, Battery, charging, or Battery, plugged in (percentage is on the Battery row). */
 private void updatePowerSummary(pct = null, String charging = null) {
     String mode = device.getDataValue("powerMode")
     String text
     if (mode == "wired") {
         text = "Wired"
     } else if (mode == "battery") {
-        def p = pct != null ? pct : device.currentValue("battery")
         String c = charging ?: device.currentValue("chargingStatus")
         List parts = ["Battery"]
-        if (p != null) parts << "${p}%"
         if (c == "charging") parts << "charging"
         else if (c == "plugged_in") parts << "plugged in"
         text = parts.join(", ")
@@ -434,6 +424,12 @@ def parseReolinkState(aiState, mdState, String source = "poll") {
     sendIfChanged("lastUpdateSource", source)
     // v1.6.5: self-heal if the power line was never written.
     if (device.getDataValue("powerMode") && device.currentValue("batteryWired") == null) updatePowerSummary()
+    // v1.6.6: one-time cleanup on the next update: retired note, battery line without the percentage.
+    if (state.v166Cleanup == null) {
+        safeDelete("pirStatusNote")
+        if (device.getDataValue("powerMode")) updatePowerSummary()
+        state.v166Cleanup = true
+    }
 
     // TODO map real field names once GetAiState/GetMdState payloads are confirmed
     def motionActive = mdState?.state == 1
