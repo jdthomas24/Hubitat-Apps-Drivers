@@ -1475,8 +1475,10 @@ private String editLoginLineHtml(src) {
     Map rec = (state.sourceLogin ?: [:])[src.id.toString()] as Map
     String login = rec?.ok == true ? "Last login OK, ${shortTime(rec.at as Long)}" :
         rec?.ok == false ? "Login failed: ${rec.reason}" : "Login not checked yet"
-    String tone = rec?.ok == false ? "text-red-700" : "text-color-secondary"
-    return "<div class='text-sm ${tone}'>Password: ${passwordSummary(src.password)} &middot; " +
+    String tone = rec?.ok == true ? "text-green-700" : rec?.ok == false ? "text-red-700" : "text-color-secondary"
+    String icon = rec?.ok == true ? "<i class='pi pi-check-circle mr-1' aria-hidden='true'></i>" :
+        rec?.ok == false ? "<i class='fa-solid fa-exclamation-triangle mr-1' aria-hidden='true'></i>" : ""
+    return "<div class='text-sm font-semibold ${tone}'>${icon}Password: ${passwordSummary(src.password)} &middot; " +
         "${discoveryEscapeHtml(login)}</div>"
 }
 
