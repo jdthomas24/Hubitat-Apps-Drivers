@@ -1,6 +1,6 @@
 /**
  * Reolink Standalone Devices (Internal Group Driver)
- * Version: 1.6.5
+ * Version: 1.6.6
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- exactly ONE instance total, shared across every
@@ -16,6 +16,10 @@
  * becomes a child of THIS device instead -- one collapsible entry holding
  * every standalone camera/doorbell's bridge, instead of N separate unnested
  * bridges.
+ *
+ * v1.6.6 -- componentGetSourceSecret() passthrough: standalone bridges fetch
+ * the source password from the app after a reboot or driver save, since it's
+ * no longer kept in the bridge's state.
  *
  * v1.6.5 -- RTSP validation queue passthroughs (same pattern as v1.5.1).
  *
@@ -191,3 +195,6 @@ def componentGetPresetNames(sourceId) { return parent?.componentGetPresetNames(s
 // v1.6.5: RTSP validation queue.
 def componentQueueRtspValidation(child, String dni = null) { parent?.componentQueueRtspValidation(child, dni) }
 def componentRtspValidationDone(child, String dni, Boolean success, String message) { return parent?.componentRtspValidationDone(child, dni, success, message) }
+
+// v1.6.6: standalone bridges re-fetch the source password from the app (kept out of bridge state).
+def componentGetSourceSecret(sourceId) { return parent?.componentGetSourceSecret(sourceId) }
