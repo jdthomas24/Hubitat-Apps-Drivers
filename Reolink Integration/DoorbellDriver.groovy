@@ -7,8 +7,8 @@
  * ring, separate from AI person/motion detection.
  *
  * v1.6.6 -- pirOn/pirOff added (battery doorbells have PIR), same as the
- * camera driver: the app confirms the change with the doorbell before PIR
- * Enabled updates. A wired doorbell without PIR shows a note saying so.
+ * camera driver: PIR Enabled updates only once the doorbell confirms it.
+ * batteryWired drops the percentage, which the Battery row already shows.
  * v1.6.5 -- Same changes as the camera driver: RTSP validation queued through
  * the app and retried on timeout, lastMotionTime/lastMotionType, the new
  * "batteryWired" summary attribute (replaces batteryMode; wired/battery kept in the
@@ -61,7 +61,6 @@ metadata {
         attribute "lastUpdateSource", "enum", ["event", "poll"]
         attribute "supportedFeatures", "string"
         attribute "pirEnabled", "enum", ["true", "false"]
-        attribute "pirStatusNote", "string"
         command "takeSnapshot"
         command "checkAbilities", [[name: "Refreshes the supportedFeatures attribute from the doorbell's current GetAbility data"]]
         command "checkRecordingSchedule", [[name: "Diagnostic only -- reads and logs this channel's current NVR recording schedule, does NOT change anything. Set logging to Full to see the result."]]
@@ -256,19 +255,11 @@ def pirOff() {
 def pirOn() {
     parent?.componentSetPir(this, true, device.deviceNetworkId)
 }
-/** v1.6.6: called by the app with the doorbell's confirmed result; error set when it didn't change. */
+/** v1.6.6: called by the app once the device confirms the change (failures are logged by the app). */
 def receivePirState(Boolean enabled, String error = null) {
-    if (error) {
-        sendEvent(name: "pirStatusNote", value: "⚠️ PIR ${enabled ? 'on' : 'off'} failed: ${error}")
-        return
-    }
+    if (error) return
     sendEvent(name: "pirEnabled", value: enabled ? "true" : "false")
-    if (enabled) {
-        safeDelete("pirStatusNote")
-    } else {
-        sendEvent(name: "pirStatusNote", value: "⏸️ PIR off, motion suppressed")
-        log.warn "${device.displayName}: PIR disabled -- motion trigger suppressed until turned back on"
-    }
+    if (!enabled) log.warn "${device.displayName}: PIR disabled -- motion trigger suppressed until turned back on"
 }
 
 /** Called by the app with "battery" or "wired". See CameraDriver.groovy's matching note. */
@@ -306,17 +297,15 @@ def clearBatteryInfo() {
 private void safeDelete(String name) {
     try { device.deleteCurrentState(name) } catch (e) { /* not present or not supported */ }
 }
-/** v1.6.5: builds the one-line batteryWired attribute. Values passed in win over currentValue (same-execution lag). */
+/** Builds batteryWired: Wired, Battery, Battery, charging, or Battery, plugged in (percentage is on the Battery row). */
 private void updatePowerSummary(pct = null, String charging = null) {
     String mode = device.getDataValue("powerMode")
     String text
     if (mode == "wired") {
         text = "Wired"
     } else if (mode == "battery") {
-        def p = pct != null ? pct : device.currentValue("battery")
         String c = charging ?: device.currentValue("chargingStatus")
         List parts = ["Battery"]
-        if (p != null) parts << "${p}%"
         if (c == "charging") parts << "charging"
         else if (c == "plugged_in") parts << "plugged in"
         text = parts.join(", ")
@@ -344,6 +333,12 @@ def parseReolinkState(aiState, mdState, String source = "poll") {
     sendIfChanged("lastUpdateSource", source)
     // v1.6.5: self-heal if the power line was never written.
     if (device.getDataValue("powerMode") && device.currentValue("batteryWired") == null) updatePowerSummary()
+    // v1.6.6: one-time cleanup on the next update: retired note, battery line without the percentage.
+    if (state.v166Cleanup == null) {
+        safeDelete("pirStatusNote")
+        if (device.getDataValue("powerMode")) updatePowerSummary()
+        state.v166Cleanup = true
+    }
     // TODO confirm the visitor/doorbell-press field name in your firmware's GetAiState/GetMdState payload
     def visitorPressed = aiState?.visitor?.alarm_state == 1
     if (visitorPressed) {
