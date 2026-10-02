@@ -36,7 +36,7 @@
  *    componentSetPir() now reads the camera's PIR settings (GetPirInfo),
  *    changes only "enable", writes the full object back under the key the
  *    camera itself used, and the camera page updates only once the camera
- *    accepts it (receivePirState()). A camera without PIR gets a clear note.
+ *    accepts it (receivePirState()). A failure logs a warning instead.
  *
  * v1.6.5 -- Battery detection, power summary, RTSP validation, last motion:
  *  - Battery vs wired now comes from GetAbility's per-channel "battery"
