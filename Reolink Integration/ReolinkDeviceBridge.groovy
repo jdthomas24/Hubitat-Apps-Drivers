@@ -18,7 +18,8 @@
  * where State Variables showed it in plain text. It's held in memory only
  * (SOURCE_SECRETS) and re-fetched from the app after a reboot or driver save.
  * State now shows "Password: Saved, N characters", plus Login (last result,
- * pushed by the app) and Last Good Login.
+ * pushed by the app) and Last Good Login. scrubState() also replaces a password
+ * left by an older driver (any update order) and drops retired state keys.
  *
  * v1.6.5 -- RTSP validation queue passthroughs. The harmless "unable to
  * decrypt body" message (marker 'c800' is a reply status code, not an
@@ -508,6 +509,7 @@ private void clearFlapIfCalm() {
 
 /** For the app: true only with live evidence (subscribed and real traffic within the stale threshold). */
 def isEventConnectionAlive() {
+    scrubState()
     if (state.stage != "SUBSCRIBED") return false
     Long last = LAST_REAL_TRAFFIC.get(device.id.toString())
     return last != null && (now() - last) <= (STALE_CONNECTION_THRESHOLD_SEC * 1000L)
@@ -529,6 +531,21 @@ def configureConnection(String host, Integer port, String username, String passw
     state.sourceId = sourceId
     if (password != null) SOURCE_SECRETS.put(device.id.toString(), password)
     state.password = password ? "Saved, ${password.length()} characters" : "Not set"
+    scrubState()
+}
+
+/**
+ * v1.6.6: replaces a plain-text password left in state by an older driver (whatever order the
+ * files were updated in) and drops retired keys. Cheap; runs on every keepalive and liveness check.
+ */
+private void scrubState() {
+    String saved = state.password?.toString()
+    if (saved && !saved.startsWith("Saved, ") && saved != "Not set") {
+        SOURCE_SECRETS.putIfAbsent(device.id.toString(), saved)
+        state.password = "Saved, ${saved.length()} characters"
+    }
+    if (state.lastRawReceiveTime != null) state.remove("lastRawReceiveTime")
+    if (state.lastRealMessageAt != null) state.remove("lastRealMessageAt")
 }
 
 /** Opens the event socket after cancelling any obsolete delayed close.
@@ -722,6 +739,7 @@ def sendSubscribe() {
  * old per-camera poll-spam problem event mode was built to avoid.
  */
 def sendKeepalive() {
+    scrubState()
     if (state.stage == "SUBSCRIBED") {
         // v1.5.3: staleness watchdog, restored -- see
         // STALE_CONNECTION_THRESHOLD_SEC's declaration for the full
