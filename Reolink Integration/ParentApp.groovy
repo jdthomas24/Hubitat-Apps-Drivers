@@ -2526,6 +2526,8 @@ private String reolinkLogin(sourceId) {
     if (src.token && now() < src.tokenExpires &&
         (src.identity?.uid || (src.identityCheckedAt && now() - src.identityCheckedAt < 3600000L))) {
         logFull "Reolink source ${sourceId}: reusing cached token, expires in ${(src.tokenExpires - now()) / 1000}s"
+        // v1.6.6: a token that's still valid means the login worked; show it without waiting for the next fresh login.
+        if ((state.sourceLogin ?: [:])[sourceId.toString()]?.ok == null) recordLoginResult(sourceId, true)
         return src.token
     }
 
