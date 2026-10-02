@@ -1,11 +1,14 @@
 /**
  * Reolink Camera (Component Driver)
- * Version: 1.6.5
+ * Version: 1.6.6
  *
  * Thin device: no HTTP of its own. Delegates everything to the parent app via
  * parent.componentX(this, ...), using data values sourceId/channel to
  * identify which source/channel this device maps to.
  *
+ * v1.6.6 -- pirOn() removes the "PIR off, motion suppressed" note instead of
+ * blanking it. Hubitat ignores an empty value, so the note stayed on the
+ * device page after PIR was turned back on.
  * v1.6.5 -- RTSP validation is queued through the app (one device at a time,
  * retried on timeout) instead of firing immediately; refresh() only
  * revalidates when not already validated. Added lastMotionTime and
@@ -299,10 +302,11 @@ def pirOff() {
     log.warn "${device.displayName}: PIR disabled -- motion trigger suppressed until turned back on"
 }
 
+/** v1.6.6: removes the PIR-off note (an empty value is ignored, so it used to stay). */
 def pirOn() {
     parent?.componentSetPir(this, true, device.deviceNetworkId)
     sendEvent(name: "pirEnabled", value: "true")
-    sendEvent(name: "pirStatusNote", value: "")
+    safeDelete("pirStatusNote")
 }
 
 def checkBattery() {
