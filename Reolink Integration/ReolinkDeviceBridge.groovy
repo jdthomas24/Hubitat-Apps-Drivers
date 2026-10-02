@@ -1,6 +1,6 @@
 /**
  * Reolink Device Bridge (Internal Parent Driver)
- * Version: 1.6.5
+ * Version: 1.6.6
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- ONE instance per SOURCE (Hub/NVR or standalone).
@@ -13,6 +13,12 @@
  * parent?.componentX(...) calls resolve to THIS device (their real parent);
  * every componentX() method below is a one-line passthrough up to this
  * bridge's own parent (the app).
+ *
+ * v1.6.6 -- The source password is no longer stored in this device's state,
+ * where State Variables showed it in plain text. It's held in memory only
+ * (SOURCE_SECRETS) and re-fetched from the app after a reboot or driver save.
+ * State now shows "Password: Saved, N characters", plus Login (last result,
+ * pushed by the app) and Last Good Login.
  *
  * v1.6.5 -- RTSP validation queue passthroughs. The harmless "unable to
  * decrypt body" message (marker 'c800' is a reply status code, not an
@@ -386,6 +392,12 @@ def receiveRecordingResult(String summary) {
     sendEvent(name: "lastRecordingResult", value: summary)
 }
 
+/** v1.6.6: last login result from the app, shown in State Variables ("OK, 10:42 AM" / "Failed: ..."). */
+def receiveLoginStatus(String login, String lastGood = null) {
+    state.login = login
+    if (lastGood) state.lastGoodLogin = lastGood
+}
+
 // ============================================================================
 // Persistent event subscription -- reconnect, per-channel push handling.
 // ============================================================================
@@ -409,6 +421,21 @@ def receiveRecordingResult(String summary) {
 // persisted, so no state/atomicState save can overwrite it with a stale copy.
 @Field static final java.util.concurrent.ConcurrentHashMap<String, Long> LAST_REAL_TRAFFIC =
     new java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+// v1.6.6: source password, in memory only (never in state). Empty after a reboot
+// or driver save; sourcePassword() then fetches it from the app again.
+@Field static final java.util.concurrent.ConcurrentHashMap<String, String> SOURCE_SECRETS =
+    new java.util.concurrent.ConcurrentHashMap<String, String>()
+
+private String sourcePassword() {
+    String key = device.id.toString()
+    String pw = SOURCE_SECRETS.get(key)
+    if (pw == null) {
+        try { pw = parent?.componentGetSourceSecret(state.sourceId) } catch (e) { pw = null }
+        if (pw != null) SOURCE_SECRETS.put(key, pw)
+    }
+    return pw ?: ""
+}
 
 private void markRealTraffic() {
     LAST_REAL_TRAFFIC.put(device.id.toString(), now())
@@ -494,12 +521,14 @@ def isEventConnectionAlive() {
 def installed() {}
 def updated() {}
 
+/** v1.6.6: password goes to memory only; state.password just shows "Saved, N characters". */
 def configureConnection(String host, Integer port, String username, String password, Integer sourceId) {
     state.host = host
     state.port = port
     state.username = username
-    state.password = password
     state.sourceId = sourceId
+    if (password != null) SOURCE_SECRETS.put(device.id.toString(), password)
+    state.password = password ? "Saved, ${password.length()} characters" : "Not set"
 }
 
 /** Opens the event socket after cancelling any obsolete delayed close.
@@ -669,7 +698,7 @@ def sendNonceRequest() {
 def sendLoginRequest() {
     state.stage = "AWAITING_LOGIN"
     def userHash = md5Modern("${state.username}${state.nonce}")
-    def passHash = md5Modern("${state.password}${state.nonce}")
+    def passHash = md5Modern("${sourcePassword()}${state.nonce}")
     String xml = String.format(LOGIN_XML, userHash, passHash)
     byte[] bodyBytes = xml.getBytes("UTF-8")
     byte[] encBody = xorBaichuan(bodyBytes, HOST_CH_ID)
@@ -992,7 +1021,7 @@ private void handleMessage(int cmdId, String bodyText) {
                 return
             }
             state.nonce = nonce
-            state.aesKeyHex = bytesToHex(deriveAesKey(nonce, state.password))
+            state.aesKeyHex = bytesToHex(deriveAesKey(nonce, sourcePassword()))
             sendLoginRequest()
             break
         case "AWAITING_LOGIN":
