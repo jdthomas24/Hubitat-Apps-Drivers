@@ -1,11 +1,14 @@
 /**
  * Reolink Doorbell (Component Driver)
- * Version: 1.6.5
+ * Version: 1.6.6
  *
  * Same delegation pattern as Reolink Camera, plus a "visitor" (button press)
  * event so Rule Machine can trigger straight off "pushed 1" for a doorbell
  * ring, separate from AI person/motion detection.
  *
+ * v1.6.6 -- pirOn/pirOff added (battery doorbells have PIR), same as the
+ * camera driver: the app confirms the change with the doorbell before PIR
+ * Enabled updates. A wired doorbell without PIR shows a note saying so.
  * v1.6.5 -- Same changes as the camera driver: RTSP validation queued through
  * the app and retried on timeout, lastMotionTime/lastMotionType, the new
  * "batteryWired" summary attribute (replaces batteryMode; wired/battery kept in the
@@ -57,12 +60,16 @@ metadata {
         // Whether the most recent state update came from an event push or a poll.
         attribute "lastUpdateSource", "enum", ["event", "poll"]
         attribute "supportedFeatures", "string"
+        attribute "pirEnabled", "enum", ["true", "false"]
+        attribute "pirStatusNote", "string"
         command "takeSnapshot"
         command "checkAbilities", [[name: "Refreshes the supportedFeatures attribute from the doorbell's current GetAbility data"]]
         command "checkRecordingSchedule", [[name: "Diagnostic only -- reads and logs this channel's current NVR recording schedule, does NOT change anything. Set logging to Full to see the result."]]
         command "checkBattery", [[name: "Battery-mode devices only"]]
         command "setPollInterval", [[name: "seconds", type: "NUMBER"]]
         command "setSnapshotInterval", [[name: "seconds", type: "NUMBER"]]
+        command "pirOn", [[name: "Battery doorbells only -- enables the PIR motion trigger"]]
+        command "pirOff", [[name: "Battery doorbells only -- disables the PIR motion trigger, does not stop an in-progress recording"]]
     }
     preferences {
         // Each header is the FIRST of its own 3-item row (see CameraDriver.groovy).
@@ -241,6 +248,29 @@ def checkRecordingSchedule() {
 def checkBattery() {
     parent?.componentCheckBattery(this, device.deviceNetworkId)
 }
+
+/** v1.6.6: PIR motion trigger (battery doorbells). The app confirms with the doorbell first. */
+def pirOff() {
+    parent?.componentSetPir(this, false, device.deviceNetworkId)
+}
+def pirOn() {
+    parent?.componentSetPir(this, true, device.deviceNetworkId)
+}
+/** v1.6.6: called by the app with the doorbell's confirmed result; error set when it didn't change. */
+def receivePirState(Boolean enabled, String error = null) {
+    if (error) {
+        sendEvent(name: "pirStatusNote", value: "⚠️ PIR ${enabled ? 'on' : 'off'} failed: ${error}")
+        return
+    }
+    sendEvent(name: "pirEnabled", value: enabled ? "true" : "false")
+    if (enabled) {
+        safeDelete("pirStatusNote")
+    } else {
+        sendEvent(name: "pirStatusNote", value: "⏸️ PIR off, motion suppressed")
+        log.warn "${device.displayName}: PIR disabled -- motion trigger suppressed until turned back on"
+    }
+}
+
 /** Called by the app with "battery" or "wired". See CameraDriver.groovy's matching note. */
 def receiveBatteryMode(String mode) {
     device.updateDataValue("powerMode", mode)
