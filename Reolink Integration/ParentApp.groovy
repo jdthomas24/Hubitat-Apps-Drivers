@@ -31,6 +31,12 @@
  *  - Edit connection settings shows the same password summary and last login
  *    result under the password field.
  *  - The password was never written to any log; unchanged.
+ *  - PIR on/off never worked: SetPirInfo was rejected every time ("get config
+ *    failed", rspCode -12), yet the camera page showed the new state anyway.
+ *    componentSetPir() now reads the camera's PIR settings (GetPirInfo),
+ *    changes only "enable", writes the full object back under the key the
+ *    camera itself used, and the camera page updates only once the camera
+ *    accepts it (receivePirState()). A camera without PIR gets a clear note.
  *
  * v1.6.5 -- Battery detection, power summary, RTSP validation, last motion:
  *  - Battery vs wired now comes from GetAbility's per-channel "battery"
@@ -4012,15 +4018,31 @@ def componentSetSiren(child, Boolean on, String dni = null) {
 }
 
 /**
- * PIR enable/disable, cameras only. Field names unconfirmed against real
- * hardware -- built following the same naming convention as
- * GetIrLights/SetIrLights, see the Tips page's "built but not tested" list.
+ * v1.6.6: PIR on/off as a read-modify-write (a partial SetPirInfo is rejected,
+ * same as recording schedules). Reports the confirmed result to the camera.
  */
 def componentSetPir(child, Boolean on, String dni = null) {
     def c = resolveChild(child, dni)
     def sourceId = c.getDataValue("sourceId") as Integer
     def channel = c.getDataValue("channel") as Integer
-    reolinkApiCall(sourceId, "SetPirInfo", [PirInfo: [channel: channel, enable: (on ? 1 : 0)]], null)
+    def current = reolinkApiCall(sourceId, "GetPirInfo", [:], channel)
+    String key = (current instanceof Map) ? current.keySet().find { it.toString().equalsIgnoreCase("pirInfo") } : null
+    if (!key || !(current[key] instanceof Map)) {
+        log.warn "Reolink ${c.displayName}: PIR not changed -- the camera returned no PIR settings (no PIR sensor, or it didn't answer)"
+        c.receivePirState(on, "camera has no PIR, or didn't answer")
+        return
+    }
+    Map pir = deepCopyRec(current[key] as Map)
+    pir.channel = channel
+    pir.enable = on ? 1 : 0
+    def result = reolinkApiCall(sourceId, "SetPirInfo", [(key): pir], null)
+    if (result?.rspCode == 200 || result?.rspCode == 0) {
+        logNormal "Reolink ${c.displayName}: PIR ${on ? 'enabled' : 'disabled'}"
+        c.receivePirState(on, null)
+    } else {
+        log.warn "Reolink ${c.displayName}: PIR not changed -- the camera rejected the request (Full logging shows its reply)"
+        c.receivePirState(on, "camera rejected the change")
+    }
 }
 
 /** v1.6.5: skipped for wired devices; implausible (NVR junk) battery data is ignored. */
@@ -4502,4 +4524,3 @@ void logNormal(msg) {
 void logFull(msg) {
     if (logLevelRank() >= 2) log.debug msg
 }
-
