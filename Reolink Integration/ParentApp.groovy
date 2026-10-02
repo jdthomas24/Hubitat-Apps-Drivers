@@ -29,7 +29,9 @@
  *    username or password") and Last Good Login. migrateCredentials()
  *    overwrites the old value on every existing bridge once, without Done.
  *  - Edit connection settings shows the same password summary and last login
- *    result under the password field.
+ *    result under the password field. Login is confirmed by any successful
+ *    HTTP login, and by a live event connection (checked on Done and every
+ *    15 minutes), since event-connected sources don't poll.
  *  - The password was never written to any log; unchanged.
  *  - PIR on/off never worked: SetPirInfo was rejected every time ("get config
  *    failed", rspCode -12), yet the camera page showed the new state anyway.
@@ -3093,6 +3095,8 @@ def ensureSourceBridge(sourceId) {
     // v1.6.4: the saved status is only a hint; confirm against the bridge's live traffic.
     def alive = currentlyRunning
     try { alive = bridge.isEventConnectionAlive() } catch (e) { /* older bridge driver: trust saved status */ }
+    // v1.6.6: a live event connection logged in with the same credentials, so the login is good.
+    if (alive == true) recordLoginResult(sourceId, true)
     if (wantEvent && !alive) {
         bridge.startEventSubscription()
         logNormal(currentlyRunning ?
@@ -3592,6 +3596,7 @@ def auditEventConnections() {
         if (!stale) {
             def alive = true
             try { alive = bridge.isEventConnectionAlive() } catch (e) { /* older bridge driver */ }
+            if (alive) recordLoginResult(src.id, true)
             def last = ((state.lastEventRetry ?: [:])[key] ?: 0) as Long
             if (!alive && now() - last >= EVENT_RETRY_INTERVAL_MS) retryEventConnection(src.id, "not connected")
         }
