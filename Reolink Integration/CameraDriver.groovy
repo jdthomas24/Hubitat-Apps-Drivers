@@ -6,9 +6,11 @@
  * parent.componentX(this, ...), using data values sourceId/channel to
  * identify which source/channel this device maps to.
  *
- * v1.6.6 -- pirOn() removes the "PIR off, motion suppressed" note instead of
- * blanking it. Hubitat ignores an empty value, so the note stayed on the
- * device page after PIR was turned back on.
+ * v1.6.6 -- PIR fixes. pirOn()/pirOff() never changed the camera (it rejected
+ * every request) but updated PIR Enabled anyway. They now just ask the app,
+ * and receivePirState() updates the page only once the camera confirms it,
+ * or shows why it failed. Turning PIR on removes the "PIR off" note (an empty
+ * value showed as "null").
  * v1.6.5 -- RTSP validation is queued through the app (one device at a time,
  * retried on timeout) instead of firing immediately; refresh() only
  * revalidates when not already validated. Added lastMotionTime and
@@ -290,23 +292,28 @@ def sirenOff() {
     sendEvent(name: "siren", value: "off")
 }
 
-/**
- * Disables the PIR motion trigger (logged at warn, since it changes device
- * behavior). Does NOT stop an in-progress recording or any separately
- * configured continuous/scheduled recording.
- */
+/** Disables the PIR motion trigger. Does NOT stop an in-progress or scheduled recording. */
 def pirOff() {
     parent?.componentSetPir(this, false, device.deviceNetworkId)
-    sendEvent(name: "pirEnabled", value: "false")
-    sendEvent(name: "pirStatusNote", value: "⏸️ PIR off, motion suppressed")
-    log.warn "${device.displayName}: PIR disabled -- motion trigger suppressed until turned back on"
 }
 
-/** v1.6.6: removes the PIR-off note (an empty value is ignored, so it used to stay). */
 def pirOn() {
     parent?.componentSetPir(this, true, device.deviceNetworkId)
-    sendEvent(name: "pirEnabled", value: "true")
-    safeDelete("pirStatusNote")
+}
+
+/** v1.6.6: called by the app with the camera's confirmed result; error set when it didn't change. */
+def receivePirState(Boolean enabled, String error = null) {
+    if (error) {
+        sendEvent(name: "pirStatusNote", value: "⚠️ PIR ${enabled ? 'on' : 'off'} failed: ${error}")
+        return
+    }
+    sendEvent(name: "pirEnabled", value: enabled ? "true" : "false")
+    if (enabled) {
+        safeDelete("pirStatusNote")
+    } else {
+        sendEvent(name: "pirStatusNote", value: "⏸️ PIR off, motion suppressed")
+        log.warn "${device.displayName}: PIR disabled -- motion trigger suppressed until turned back on"
+    }
 }
 
 def checkBattery() {
