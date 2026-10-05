@@ -2976,12 +2976,12 @@ def mainPage() {
         }
 
         section(title: "<b>Settings</b>", sectionClass: "bm-settings") {
-            // v1.7.2: scan runs in place; while it runs the row reloads this page to check
+            // v1.7.2: scan runs in place; while it runs the row just refreshes this page
             if (devCount) {
                 if (scanRunning()) {
                     href(name: "toScanCheck", page: "mainPage",
                          title: "<i class='fa-solid fa-rotate' aria-hidden='true'></i>Scanning…",
-                         description: "Tap to check", width: 12, style: "margin:0;")
+                         description: "Tap to refresh", width: 12, style: "margin:0;")
                 } else {
                     def last = state.lastScanCompleted ? "Last scan ${formatTimeAgo(state.lastScanCompleted as Long)}" : "Not scanned yet"
                     input "mainForceScan", "button", width: 12, styleClass: "bm-scan-row",
