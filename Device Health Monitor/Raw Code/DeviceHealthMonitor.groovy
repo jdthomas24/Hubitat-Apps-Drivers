@@ -1,12 +1,17 @@
 /**
  * Device Health Monitor
- * Version: 1.7.1
+ * Version: 1.7.2
  *
  * Learns each device's normal check-in pattern and flags devices that go quiet, across
  * Zigbee, Z-Wave, Matter, Hub Mesh, LAN, Virtual and Hub Variable. Verifies Poor/Offline
  * devices by state events, refresh/ping, the hub's Z-Wave and Zigbee radio data, or Hue Bridge /
  * Konnected Panel round-trips. Optional OAuth web portal.
  *
+ * v1.7.2 -- Driver-reported Health Status / Online Status is a supporting signal: offline caps a device
+ * at Poor and sends Z-Wave/Zigbee to the front of the hub radio queue (3 misses = Offline). Real activity
+ * or a radio answer after the report wins over the driver. Those attributes never count as activity.
+ * Force scan on the main page, Battery Monitor card in Help & Support, Verified pill grays out while a
+ * battery is dead, and a Locations explainer.
  * v1.7.1 -- A Zigbee, Z-Wave or Matter device reporting a battery of 5% or lower is Poor at best,
  * whatever timing says, with its battery level shown. Clears when the battery is replaced.
  * Fixed: Locations, after Move the device and location pickers could show stale picks.
@@ -55,12 +60,12 @@ definition(
     importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Device%20Health%20Monitor/Raw%20Code/DeviceHealthMonitor.groovy",
     iconUrl: "",
     iconX2Url: "",
-    version: "1.7.1",
+    version: "1.7.2",
     doNotFocus: true,
     oauth: true
 )
 
-@Field static final String APP_VERSION = "1.7.1"
+@Field static final String APP_VERSION = "1.7.2"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/release-device-health-monitor/163229"
 @Field static final String COFFEE_URL = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "best"
@@ -68,6 +73,8 @@ definition(
 @Field static final int ZW_PACE_MS = 1000
 @Field static final long DEEP_RECENT_MS = 30L * 60 * 1000
 @Field static final int DEAD_BATTERY_PCT = 5
+@Field static final List DRIVER_HEALTH_ATTRS = ["healthStatus", "onlineStatus"]
+@Field static final String BM_URL = "https://community.hubitat.com/t/release-battery-monitor-2-0/162329"
 
 // ============================================================
 // ===================== OAUTH MAPPINGS ======================
@@ -155,6 +162,7 @@ def initialize() {
     if (state.dropHistory         == null) state.dropHistory         = [:]
     if (state.fairHold            == null) state.fairHold            = [:]
     if (state.deadBattery         == null) state.deadBattery         = [:]
+    if (state.driverOffline       == null) state.driverOffline       = [:]
 
     if (!state.capabilitiesResetDone) {
         state.deviceCapabilities  = [:]
@@ -602,11 +610,11 @@ private boolean zwNeedsRadioCheck(device) {
 }
 
 // All Z-Wave probes share one queue, sent about one per second so real commands aren't crowded out
-private void zwEnqueue(device) {
+private void zwEnqueue(device, boolean front = false) {
     def key = device.id as String
     def q   = atomicState.zwQueue ?: []
     if (q.contains(key) || (atomicState.zwPending ?: [:]).containsKey(key)) return
-    q << key
+    if (front) q.add(0, key) else q << key
     atomicState.zwQueue = q
     def stalled = atomicState.zwDraining && (now() - ((atomicState.zwDrainTick ?: 0) as Long)) > 15000
     if (!atomicState.zwDraining || stalled) {
@@ -1256,6 +1264,8 @@ def updateStateTracking(device) {
         def id         = device.id
         def stateInfo  = getCurrentStateDisplay(device)
         if (!stateInfo) return
+        // v1.7.2: driver health attributes are the driver's opinion, not the device speaking
+        if (stateInfo.type in DRIVER_HEALTH_ATTRS) return
 
         def currentVal = stateInfo.label
         def sh         = state.stateHistory ?: [:]
@@ -1527,7 +1537,7 @@ def purgeOrphanedState(devList) {
     def activeIds = devList.collect { it.id as String } as Set
 
     ["history", "health", "verifying", "stateHistory", "fairHold",
-     "deviceCapabilities", "dropHistory", "prevHealth", "deviceLocations", "deadBattery"].each { stateKey ->
+     "deviceCapabilities", "dropHistory", "prevHealth", "deviceLocations", "deadBattery", "driverOffline"].each { stateKey ->
         def map = state[stateKey]
         if (map instanceof Map) {
             def stale = map.keySet().findAll { !((it as String) in activeIds) }
@@ -1589,14 +1599,18 @@ def processScanChunk() {
             def filtered = usesFilteredSampling(protocol)
 
             def lastActivity = device.getLastActivity()
-            def lastSeen     = (lastActivity ? safeTime(lastActivity) : null) ?: now()
+            def actMs        = lastActivity ? safeTime(lastActivity) : null
+            // v1.7.2: a driver flipping to offline bumps Last Activity, but the device didn't speak
+            def offRep       = driverOfflineReport(device)
+            if (actMs && offRep && Math.abs(actMs - (offRep.at as Long)) < 5000) actMs = (data?.lastSeen ?: actMs) as Long
+            def lastSeen     = actMs ?: now()
             // v1.5.6: also consider lastKnownStateDate from previous scans
             def capMapPre  = state.deviceCapabilities ?: [:]
             def prevKnown  = capMapPre[id as String]?.lastKnownStateDate as Long ?: 0
             if (prevKnown > lastSeen) lastSeen = prevKnown
 
             try {
-                def stateDate = device.currentStates?.collect { safeTime(it.date) }?.findAll { it }?.max()
+                def stateDate = device.currentStates?.findAll { !(it.name in DRIVER_HEALTH_ATTRS) }?.collect { safeTime(it.date) }?.findAll { it }?.max()
                 if (stateDate && stateDate > lastSeen) lastSeen = stateDate
                 // v1.5.6: store lastKnownStateDate so refresh responses advance lastSeen (Z-Wave)
                 def capMapLS  = state.deviceCapabilities ?: [:]
@@ -1752,10 +1766,52 @@ private Integer deadBatteryPct(device) {
     }
 }
 
-// v1.7.1: a dead battery is Poor at best, whatever timing says. Applied after normal scoring,
-// so it adds no verification pings and clears itself once the battery reads above the limit.
 def updateHealth(device, boolean allowProbe = true) {
     updateHealthCore(device, allowProbe)
+    applyDeadBattery(device)
+    applyDriverOffline(device, allowProbe)
+}
+
+/** [attr, at] when the driver's healthStatus or onlineStatus reads offline, else null. */
+private Map driverOfflineReport(device) {
+    for (String a in DRIVER_HEALTH_ATTRS) {
+        try {
+            if (!device.hasAttribute(a)) continue
+            def st = device.currentState(a)
+            if (st?.value?.toString()?.trim()?.toLowerCase() == "offline") return [attr: a, at: safeTime(st.date) ?: now()]
+        } catch (e) { }
+    }
+    return null
+}
+
+// v1.7.2: driver-reported offline is a lead, not proof. Poor at best until real activity or a hub radio
+// answer after the report clears it. Z-Wave/Zigbee jump the radio queue; others reach Offline by the timer.
+private void applyDriverOffline(device, boolean allowProbe) {
+    def key = device.id as String
+    def rep = driverOfflineReport(device)
+    def dm  = state.driverOffline ?: [:]
+    if (!rep) {
+        if (dm.containsKey(key)) { dm.remove(key); state.driverOffline = dm }
+        return
+    }
+    def data = state.history?.get(device.id)
+    def cap  = state.deviceCapabilities?.get(key) ?: [:]
+    long since = rep.at as Long
+    boolean responding = ((data?.lastSeen ?: 0) as Long) > since + 5000 || ((cap.zwConfirmedAt ?: 0) as Long) > since
+    dm[key] = [attr: rep.attr, since: since, responding: responding]
+    state.driverOffline = dm
+    if (responding || !data) return
+    if (!(state.health?.get(device.id) in ["Poor", "Offline"])) state.health[device.id] = "Poor"
+    if (allowProbe && zwCanProbe(device)) {
+        if (state.verifying == null) state.verifying = [:]
+        if (state.verifying[device.id] != "zw_miss") state.verifying[device.id] = "zw_probe"
+        zwEnqueue(device, true)
+    }
+}
+
+// v1.7.1: a dead battery is Poor at best, whatever timing says. Applied after normal scoring,
+// so it adds no verification pings and clears itself once the battery reads above the limit.
+private void applyDeadBattery(device) {
     def key = device.id as String
     def pct = deadBatteryPct(device)
     def db  = state.deadBattery ?: [:]
@@ -2129,6 +2185,8 @@ private Map healthInfo(device) {
     def tags = []
     def bat  = state.deadBattery?.get(id)
     if (bat != null) tags << "🪫 Battery ${bat}%".toString()
+    def drv  = state.driverOffline?.get(id)
+    if (drv) tags << (drv.responding ? "Driver reports offline, but device is responding" : "Driver reports offline")
     if (isRepeatDrops(id)) tags << "🔄 Repeat drops"
     else if (isLowActivity(id) && h in ["Fair", "Poor", "Offline"]) tags << "Low activity"
 
@@ -2178,7 +2236,10 @@ private String verificationPill(deviceId) {
     def cap = state.deviceCapabilities?.get(deviceId as String) ?: [:]
     if ((cap.zwMisses ?: 0) > 0) return bmPill("No answer", "red")
     switch (getPingStatus(deviceId)) {
-        case "verified":     return cap.pingTrustSource == "weak" ? bmPill("Verified (auto)", "blue") : bmPill("Verified", "green")
+        case "verified":
+            // v1.7.2: grayed while the battery is dead, since it may not stay reachable
+            if (state.deadBattery?.get(deviceId as String) != null) return "<span title='Battery dead'>" + bmPill("Verified", "gray") + "</span>"
+            return cap.pingTrustSource == "weak" ? bmPill("Verified (auto)", "blue") : bmPill("Verified", "green")
         case "unverifiable": return bmPill("Can't verify", "gray")
         case "declared":     return bmPill("Verifiable", "amber")
         default:             return ""
@@ -2340,7 +2401,8 @@ def serveDataEndpoint() {
                 extStateTag:     getExtendedStateTag(device),
                 verifyMethod:    verifyMethod ?: "",
                 lowActivity:     isLowActivity(device.id as String),
-                deadBattery:     state.deadBattery?.get(device.id as String)
+                deadBattery:     state.deadBattery?.get(device.id as String),
+                driverOffline:   state.driverOffline?.get(device.id as String) ? (state.driverOffline[device.id as String].responding ? "responding" : "offline") : ""
             ]
         }
 
@@ -2464,6 +2526,8 @@ function healthLabel(dev) {
 
     let suffix = '';
     if (dev.deadBattery !== null && dev.deadBattery !== undefined) suffix += ' <span style="color:#ef4444;font-size:10px;">🪫 Battery ' + dev.deadBattery + '%</span>';
+    if (dev.driverOffline === 'offline') suffix += ' <span style="color:#ef4444;font-size:10px;">Driver reports offline</span>';
+    else if (dev.driverOffline === 'responding') suffix += ' <span style="color:#94a3b8;font-size:10px;">Driver reports offline, but device is responding</span>';
     if (dev.repeatDrops) suffix += ' <span style="color:#f97316;font-size:10px;">🔄 Repeat Drops</span>';
     else if (dev.lowActivity && (h === 'Fair' || h === 'Poor' || h === 'Offline')) suffix += ' <span style="color:#94a3b8;font-size:10px;">ℹ️ Low Activity</span>';
 
@@ -2510,7 +2574,9 @@ function protoTag(dev) {
 function card(dev) {
     let locDesc = [];
     if (dev.location) locDesc.push('🏷️ ' + dev.location);
-    let pingTag = dev.pingStatus === 'verified' ? (dev.pingTrustSource === 'weak'
+    let deadBat = dev.deadBattery !== null && dev.deadBattery !== undefined;
+    let pingTag = dev.pingStatus === 'verified' && deadBat ? "<span style='color:#94a3b8;font-size:10px;'>Verified (battery dead)</span>" :
+                  dev.pingStatus === 'verified' ? (dev.pingTrustSource === 'weak'
                     ? "<span style='color:#0ea5e9;font-size:10px;'>🔄 Verified (auto)</span>"
                     : "<span style='color:#22c55e;font-size:10px;'>✅ Verified</span>") :
                   dev.pingStatus === 'unverifiable' ? "<span style='color:#94a3b8;font-size:10px;'>⚠ Cannot verify</span>" :
@@ -2743,7 +2809,9 @@ def scheduledSummary(boolean manual = false) {
                     ? ", last seen ${formatTimeAgo(state.history[device.id].lastSeen)}" : ""
                 def bat       = state.deadBattery?.get(device.id as String)
                 def batStr    = bat != null ? ", battery ${bat}%" : ""
-                sections[h].list << "${device.displayName.trim()}${stateStr}${lastStr}${batStr}"
+                def drv       = state.driverOffline?.get(device.id as String)
+                def drvStr    = drv && !drv.responding ? ", driver reports offline" : ""
+                sections[h].list << "${device.displayName.trim()}${stateStr}${lastStr}${batStr}${drvStr}"
             }
         }
     }
@@ -2816,6 +2884,7 @@ void appButtonHandler(String btn) {
         case "bulkSelClear":   app.updateSetting("bulkSelectedDevices", [value: [], type: "enum"]); break
         case "bulkApply":    runBulkAction(); break
         case "sendNow":      sendNotificationNow(); break
+        case "mainForceScan": scanAllDevices(); break
         case "btnRunDeepScan":
             if (deepScanBusy()) {
                 state.deepMsg = [tone: "warn", text: "Deep verification is already running. Results appear here when it finishes."]
@@ -2886,7 +2955,11 @@ def mainPage() {
 
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
         section {
-            paragraph rawHtml: true, dhmBannerHtml()
+            paragraph rawHtml: true, bmPageCss() + dhmBannerHtml()
+            if (devCount) {
+                input "mainForceScan", "button", title: "<i class='fa-solid fa-rotate-right' style='margin-right:6px;'></i>Force scan now",
+                      width: 3, styleClass: "bm-btn"
+            }
         }
 
         section(title: "<b>Reports</b>", sectionClass: "bm-cards bm-cards-primary") {
@@ -2920,7 +2993,7 @@ def mainPage() {
                  width: 12, style: "margin:0;")
             href(name: "toLocations", page: "locationsPage",
                  title: "<i class='fa-solid fa-tags' aria-hidden='true'></i>Locations",
-                 description: locCount ? "${locCount} defined${unassignedN ? ' · ' + stWarn("${unassignedN} unassigned") : ''}" : "None yet",
+                 description: locCount ? "${locCount} defined${unassignedN ? ' · ' + stWarn("${unassignedN} unassigned") : ''}" : "Optional, none yet",
                  width: 12, style: "margin:0;")
             href(name: "toPortal", page: "portalPage",
                  title: "<i class='fa-solid fa-globe' aria-hidden='true'></i>Web portal",
@@ -3309,6 +3382,9 @@ def locationsPage(params) {
 """ + dhmDaScript()
         }
         section(sectionClass: "bm-da-detail") {
+            paragraph rawHtml: true, "<div class='bm-msg bm-msg-muted' style='margin-bottom:8px;'><b>What locations are for:</b> optional room or area groupings " +
+                "(Kitchen, Garage, Upstairs) that make the Summary, portal, and notifications easier to scan. They aren't for multiple hubs, " +
+                "and one location holding every device doesn't add anything. Skip them if you don't need them.</div>"
             if (msg) paragraph rawHtml: true, bmMsgHtml(msg)
             if (sel == "u") {
                 def rows = unassigned.sort { a, b -> a.displayName.trim().toLowerCase() <=> b.displayName.trim().toLowerCase() }
@@ -3405,7 +3481,7 @@ def summaryPage() {
             paragraph "<div style='background-color:#e8f0fe; border-left:4px solid #1a73e8; padding:8px 12px; font-size:13px; color:#1a1a1a;'>" +
                       "<b>Health</b> compares time since the last check-in with the device's usual check-in: Excellent up to 1.5x, Good up to 3x, Fair up to 6x, then Poor. " +
                       "<b>Offline</b> means no activity for the offline threshold. <b>Quiet</b> is Fair but confirmed reachable. " +
-                      "<b>Pending</b> is still learning (3 samples needed). A battery at ${DEAD_BATTERY_PCT}% or lower shows <b>Poor</b> at best.<br><br>" +
+                      "<b>Pending</b> is still learning (3 samples needed). A battery at ${DEAD_BATTERY_PCT}% or lower, or a driver reporting offline, shows <b>Poor</b> at best.<br><br>" +
                       "Tap a count to filter, a column header to sort, or search by name, protocol, or location. <b>Issues only</b> is remembered in this browser." +
                       "</div>"
         }
@@ -4199,6 +4275,10 @@ private List tipsTopics() {
                 "<tr><td><b>Offline</b></td><td>No activity for the offline threshold (default 168 hours)</td></tr></table>" +
                 "<p><b>Dead batteries:</b> a Zigbee, Z-Wave, or Matter device reporting a battery of ${DEAD_BATTERY_PCT}% or lower shows <b>Poor</b> at best, " +
                 "whatever its timing says, with the battery level shown. It clears once a new battery reports.</p>" +
+                "<p><b>Driver reports offline:</b> some drivers publish their own <b>Health Status</b> (or <b>Online Status</b> for Echo devices). " +
+                "When it reads offline, the device shows <b>Poor</b> at best with a note. Z-Wave and Zigbee devices are checked with the hub radio right away " +
+                "and go Offline after 3 missed checks; others reach Offline through the normal timer. If the device is still active or answers the hub radio, " +
+                "DHM trusts that over the driver. These attributes never count as activity.</p>" +
                 "<p><b>Low activity</b> marks devices monitored 7+ days with fewer than 3 samples. If they can't be verified, they're capped at Poor instead of Offline.</p>"],
         [id: "baselines", label: "Usual check-in", title: "How the usual check-in is learned", group: "Health", icon: "pi-chart-line",
             body: "<p>Each time a device checks in, the time since its previous check-in becomes a smoothed sample. Up to 20 are kept, and the average is its usual check-in.</p>" +
@@ -4238,7 +4318,9 @@ private List tipsTopics() {
             body: "<p>Add your <b>Hue Bridge</b> (or CoCoHue Bridge) and <b>Konnected Alarm Panel</b> to monitored devices. " +
                 "When a bulb or sensor goes Poor or Offline, the app refreshes the bridge or panel. That's a real network round-trip, so success confirms the device immediately, even if it has sat untouched for weeks.</p>"],
         [id: "locations", label: "Locations", title: "Locations", group: "Management", icon: "pi-tags",
-            body: "<p>Define rooms under <b>Settings, Locations</b>. Assign them one device at a time in <b>Device actions</b>, several at once in <b>Bulk actions</b>, or by tapping a device in the portal. All three stay in sync.</p>"],
+            body: "<p>Locations are optional room or area groupings (Kitchen, Garage, Upstairs) that make the Summary, portal, and notifications easier to scan. " +
+                "They aren't for multiple hubs, and one location holding every device doesn't add anything.</p>" +
+                "<p>Define rooms under <b>Settings, Locations</b>. Assign them one device at a time in <b>Device actions</b>, several at once in <b>Bulk actions</b>, or by tapping a device in the portal. All three stay in sync.</p>"],
         [id: "snooze", label: "Snooze", title: "Snoozing devices", group: "Management", icon: "pi-bell-slash",
             body: "<p>Turn snooze on under <b>Settings, Snooze</b> and set its length. Then snooze a device from <b>Device actions</b> or several from <b>Bulk actions</b>. " +
                 "Snoozed devices keep being monitored but are left out of notifications until the snooze ends.</p>"],
@@ -4299,11 +4381,13 @@ private String countText(int count, String singular) {
 private void helpAndSupportSection() {
     section(title: "<b>Help & Support</b>", sectionClass: "app-main-support") {
         href name: "tips", title: "<i class='pi pi-info-circle' aria-hidden='true'></i>Tips & Troubleshooting",
-            page: "tipsPage", description: "Health ratings, verification, and known quirks", width: 4, style: "margin:8px;"
+            page: "tipsPage", description: "Health ratings, verification, and known quirks", width: 6, style: "margin:8px;"
         paragraph rawHtml: true, supportLinkHtml(COMMUNITY_URL, "pi pi-comments",
-            "Hubitat Community Thread", "Questions, feedback, and release notes"), width: 4
+            "Hubitat Community Thread", "Questions, feedback, and release notes"), width: 6
+        paragraph rawHtml: true, supportLinkHtml(BM_URL, "fa-solid fa-battery-half",
+            "Battery Monitor 2.0", "Companion app for battery levels and replacements"), width: 6
         paragraph rawHtml: true, supportLinkHtml(COFFEE_URL, "fa-solid fa-mug-hot",
-            "Buy Me a Coffee", "Support development"), width: 4
+            "Buy Me a Coffee", "Support development"), width: 6
     }
 }
 
