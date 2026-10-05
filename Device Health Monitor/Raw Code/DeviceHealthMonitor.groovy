@@ -10,7 +10,7 @@
  * v1.7.2 -- Driver-reported Health Status / Online Status is a supporting signal: offline caps a device
  * at Poor and sends Z-Wave/Zigbee to the front of the hub radio queue (3 misses = Offline). Real activity
  * or a radio answer after the report wins over the driver. Those attributes never count as activity.
- * Force scan on the main page, Battery Monitor card in Help & Support, Verified pill grays out while a
+ * Force scan row at the top of Settings (stays on the page; Force Scan page retired), Battery Monitor card in Help & Support, Verified pill grays out while a
  * battery is dead, and a Locations explainer.
  * v1.7.1 -- A Zigbee, Z-Wave or Matter device reporting a battery of 5% or lower is Poor at best,
  * whatever timing says, with its battery level shown. Clears when the battery is replaced.
@@ -103,7 +103,6 @@ preferences {
     page(name: "deviceManagePage")
     page(name: "deviceActionsPage")
     page(name: "bulkActionsPage")
-    page(name: "forceScanPage")
     page(name: "tipsPage")
 }
 
@@ -2885,6 +2884,7 @@ void appButtonHandler(String btn) {
         case "bulkApply":    runBulkAction(); break
         case "sendNow":      sendNotificationNow(); break
         case "mainForceScan": scanAllDevices(); break
+        case "summaryForceScan": scanAllDevices(); break
         case "btnRunDeepScan":
             if (deepScanBusy()) {
                 state.deepMsg = [tone: "warn", text: "Deep verification is already running. Results appear here when it finishes."]
@@ -2934,6 +2934,11 @@ private String dhmBannerHtml() {
     return statusBannerHtml(ok, ok ? "No issues found" : "Attention needed", parts.join(" &middot; "))
 }
 
+/** True while a scan is running; a scan stuck past 2 minutes doesn't count. */
+private boolean scanRunning() {
+    return state.isScanning && state.scanStartTime && (now() - (state.scanStartTime as Long)) < 120000
+}
+
 private String stOn(String t = "On")   { "<span style='color:#1e7b34;font-weight:600;'>${t}</span>" }
 private String stOff(String t = "Off") { "<span style='color:#b42318;font-weight:600;'>${t}</span>" }
 private String stWarn(String t)        { "<span style='color:#9a5b00;'>${t}</span>" }
@@ -2955,17 +2960,13 @@ def mainPage() {
 
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
         section {
-            paragraph rawHtml: true, bmPageCss() + dhmBannerHtml()
-            if (devCount) {
-                input "mainForceScan", "button", title: "<i class='fa-solid fa-rotate-right' style='margin-right:6px;'></i>Force scan now",
-                      width: 3, styleClass: "bm-btn"
-            }
+            paragraph rawHtml: true, dhmBannerHtml()
         }
 
         section(title: "<b>Reports</b>", sectionClass: "bm-cards bm-cards-primary") {
             href(name: "toSummary", page: "summaryPage",
                  title: "<i class='fa-solid fa-heart-pulse' aria-hidden='true'></i>Summary and health",
-                 description: "Needs attention, plus every device's health and state", width: 4, style: "margin:8px;")
+                 description: "Every device's health and state", width: 4, style: "margin:8px;")
             href(name: "toVerification", page: "verificationPage",
                  title: "<i class='fa-solid fa-circle-check' aria-hidden='true'></i>Verification",
                  description: "Which devices can be confirmed reachable", width: 4, style: "margin:8px;")
@@ -2975,6 +2976,18 @@ def mainPage() {
         }
 
         section(title: "<b>Settings</b>", sectionClass: "bm-settings") {
+            // v1.7.2: scan runs in place; while it runs the row reloads this page to check
+            if (devCount) {
+                if (scanRunning()) {
+                    href(name: "toScanCheck", page: "mainPage",
+                         title: "<i class='fa-solid fa-rotate' aria-hidden='true'></i>Scanning…",
+                         description: "Tap to check", width: 12, style: "margin:0;")
+                } else {
+                    def last = state.lastScanCompleted ? "Last scan ${formatTimeAgo(state.lastScanCompleted as Long)}" : "Not scanned yet"
+                    input "mainForceScan", "button", width: 12, styleClass: "bm-scan-row",
+                          title: "<i class='fa-solid fa-rotate-right' aria-hidden='true'></i>Force scan now<span class='bm-scan-when'>${last}</span>"
+                }
+            }
             href(name: "toDevices", page: "devicesPage",
                  title: "<i class='fa-solid fa-list-check' aria-hidden='true'></i>Monitored devices",
                  description: devCount ? "${devCount} selected" : stOff("None selected"),
@@ -3470,9 +3483,8 @@ def summaryPage() {
     dynamicPage(name: "summaryPage", title: "Summary and Health", install: false) {
         def rows = buildDhmRows()
         section("") {
-            href(name: "toForceScanFromSummary", page: "forceScanPage",
-                 title: "<i class='fa-solid fa-rotate-right' style='margin-right:6px;'></i>Force scan now",
-                 description: "")
+            input "summaryForceScan", "button", title: "<i class='fa-solid fa-rotate-right' style='margin-right:6px;'></i>Force scan now",
+                  width: 3, styleClass: "bm-sum-scan"
             if (state.isScanning) paragraph rawHtml: true, "<div style='font-size:13px;color:#1a56c4;'>🔄 Scan in progress. Health updates as each batch completes.</div>"
             if (!rows) { paragraph "No devices yet. Choose Monitored devices on the main page, then tap Done."; return }
             paragraph rawHtml: true, dhmSummaryHtml(rows)
@@ -3523,16 +3535,12 @@ private String dhmSummaryHtml(List rows) {
     sb << """
 <style>
   .bm-wrap { font-size: 14px; color: #1f2937; }
-  button.hrefElem[name^='_action_href_toForceScanFromSummary'] {
+  .bm-sum-scan button {
     display: inline-block; width: auto !important; min-height: 34px; padding: 0 14px; margin: 0;
     background: #fff; color: #1a56c4; border: 1px solid #cfd6de; border-radius: 4px; box-shadow: none;
-    font-family: inherit; font-size: 14px; font-weight: 500; line-height: 34px;
+    font-family: inherit; font-size: 14px; font-weight: 500; line-height: 34px; text-transform: none;
   }
-  button.hrefElem[name^='_action_href_toForceScanFromSummary']::before,
-  button.hrefElem[name^='_action_href_toForceScanFromSummary'] > br,
-  button.hrefElem[name^='_action_href_toForceScanFromSummary'] > .state-incomplete-text,
-  button.hrefElem[name^='_action_href_toForceScanFromSummary'] > .state-complete-text { display: none; }
-  button.hrefElem[name^='_action_href_toForceScanFromSummary']:hover { background: #f3f6fa; }
+  .bm-sum-scan button:hover { background: #f3f6fa; }
   .bm-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 2px 0 12px; }
   .bm-stat { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; background: #f5f7fa; border: 1.5px solid transparent; border-radius: 6px; padding: 6px 12px; cursor: pointer; user-select: none; }
   .bm-stat:hover { border-color: #c9d3df; }
@@ -4226,22 +4234,6 @@ private void runBulkAction() {
 }
 
 // ============================================================
-// ===================== FORCE SCAN PAGE =====================
-// ============================================================
-def forceScanPage() {
-    scanAllDevices()
-    def devList  = getAllMonitoredDevices().findAll { getProtocol(it) != "Unknown" }
-    def minGate  = Math.min(((settings?.scanInterval ?: "3").toFloat() * 60).toInteger() * 0.5, 30.0).toInteger()
-    dynamicPage(name: "forceScanPage", title: "Force Scan", install: false) {
-        section {
-            paragraph rawHtml: true, bmPageCss() +
-                "<div class='bm-msg bm-msg-ok'>Scan started for ${devList.size()} device(s). Health updates as each batch completes.</div>" +
-                "<div class='bm-hint' style='margin-top:8px;'>A new check-in sample is only recorded when at least ${minGate} minutes have passed since the last recorded activity.</div>"
-        }
-    }
-}
-
-// ============================================================
 // ===================== TIPS CONTENT ========================
 // ============================================================
 private List tipsTopics() {
@@ -4610,6 +4602,14 @@ private String bmCardsCss() {
   .bm-helprow a { color: #1565c0; text-decoration: none; margin: 0 10px; white-space: nowrap; }
   .bm-helprow a:hover { text-decoration: underline; }
   .bm-helprow i { margin-right: 5px; }
+  .bm-settings .bm-scan-row button {
+    display: flex; align-items: center; width: 100%; min-height: 0; margin: 0; padding: 11px 44px 11px 14px;
+    background: #f5f8fd; border: 0; border-bottom: 1px solid #eef0f3; border-radius: 0; box-shadow: none;
+    font-family: inherit; font-size: 15px; font-weight: 500; color: #1a56c4; text-align: left; text-transform: none; line-height: 1.4;
+  }
+  .bm-settings .bm-scan-row button:hover { background: #eef4fd; }
+  .bm-settings .bm-scan-row button i { width: 18px; text-align: center; margin-right: 10px; }
+  .bm-scan-when { margin-left: auto; padding-left: 16px; color: #6b7280; font-size: 14px; font-weight: 400; }
 """
 }
 
