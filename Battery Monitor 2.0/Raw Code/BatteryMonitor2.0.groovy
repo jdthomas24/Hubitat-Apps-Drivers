@@ -1,13 +1,19 @@
 /**
  * Battery Monitor 2.0
- * Version: 2.6.0
+ * Version: 2.7.0
  *
  * Tracks battery levels, drain, health, and replacements for selected devices.
- * Scans on a recurring schedule plus each device's own battery events. Health is
- * a confidence-weighted, EWMA-smoothed drain average; trend reacts faster to
- * recent readings. Replacements are auto-detected from a confirmed upward jump.
+ * Scans on a recurring schedule plus each device's own battery events. Health uses
+ * the average drain since the last replacement or step down; trend is EWMA-smoothed
+ * and reacts faster to recent readings. Replacements are auto-detected from a confirmed upward jump.
  * Optional OAuth web portal serves a live dashboard.
  *
+ * v2.7.0 -- Drain is now the average pace since the last replacement or step down, not a
+ * 10-sample per-day average. Batteries that report in steps (1% jitter, or 10-13% chunks like
+ * Iris sensors) no longer read as fast drain, and real drain is no longer hidden after the first
+ * step (the outlier guard rejected every later drop). Trend keeps the EWMA. A device with no drop
+ * shows <0.01%/day instead of 0.30. Existing devices anchor on their logged replacement, or start
+ * fresh and settle within a week. Help & Support adds a Device Health Monitor card.
  * v2.6.0 -- Li-ion cliff-drop detection (graduated from beta): urgent alert when a
  * cliff-enabled device drops by the configured threshold (default 40%) between two
  * consecutive readings. Auto-enabled for LIR types; opt-in for 18650/RCR123A/RCR2.
@@ -49,15 +55,19 @@ definition(
     importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Battery%20Monitor%202.0/Raw%20Code/BatteryMonitor2.0.groovy",
     iconUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Tests%20-%20Groovy%20RAW/Battery%20Monitor%202.0%20BETA%20Tests",
     iconX2Url: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Battery%20Monitor%202.0/Raw%20Code/BatteryMonitor2.0.groovy",
-    version: "2.6.0",
+    version: "2.7.0",
     doNotFocus: true,
     oauth: true
 )
 
-@Field static final String APP_VERSION = "2.6.0"
+@Field static final String APP_VERSION = "2.7.0"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/release-battery-monitor-2-0/162329"
 @Field static final String COFFEE_URL = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "best"
+@Field static final String DHM_URL = "https://community.hubitat.com/t/release-device-health-monitor/163229"
+@Field static final int DRAIN_MIN_SPAN_DAYS = 7
+@Field static final int ANCHOR_RISE = 3
+@Field static final int UNALIGNED_TRUST_DAYS = 30
 
 // ============================================================
 // ===================== OAUTH MAPPINGS ======================
@@ -913,18 +923,58 @@ def updateBattery(device, level) {
             }
 
             if (data.samples && data.samples.size() > 0) {
-                def avg  = data.samples.sum() / data.samples.size()
-                data.drain = Math.min(avg, 3.0)
-                updateTrend(device, data.drain)
+                def avg = Math.min(data.samples.sum() / data.samples.size(), 3.0)
+                data.ewmaDrain = avg
+                updateTrend(device, avg)
             }
         }
     }
+
+    updateSpanDrain(device.id as String, data, level)
 
     data.lastLevel    = level
     data.lastScanDate = now()
 
     state.history[device.id] = data
     state.history = state.history
+}
+
+// v2.7.0: drain is the average pace since an anchor (replacement, charge-up, or first step seen).
+// Rises under ANCHOR_RISE are jitter and keep the anchor. An unaligned anchor (upgrade, reset, new
+// device) has an unknown step start, so a first drop within UNALIGNED_TRUST_DAYS re-anchors there.
+private void updateSpanDrain(String devId, Map data, level) {
+    if (level == null || (level as Integer) <= 1) return
+    int lvl = level as Integer
+    if (data.anchorDate == null || data.anchorLevel == null) seedAnchor(devId, data, lvl)
+    int aLvl = data.anchorLevel as Integer
+    if (lvl >= aLvl + ANCHOR_RISE) { setAnchor(data, lvl, true); return }
+    def days = (now() - (data.anchorDate as Long)) / 86400000.0
+    if (!data.anchorAligned && lvl < aLvl) {
+        if (days < UNALIGNED_TRUST_DAYS) { setAnchor(data, lvl, true); return }
+        data.anchorAligned = true
+    }
+    if (days < DRAIN_MIN_SPAN_DAYS) return
+    data.drain = Math.min(Math.max(0, aLvl - lvl) / days, 3.0)
+}
+
+private void setAnchor(Map data, int lvl, boolean aligned) {
+    data.anchorLevel   = lvl
+    data.anchorDate    = now()
+    data.anchorAligned = aligned
+}
+
+/** Logged replacement level and time when known, else an unaligned anchor at the current level. */
+private void seedAnchor(String devId, Map data, int lvl) {
+    def rt  = data.replacedTime ? safeTime(data.replacedTime) : null
+    def rep = rt ? (state.replacements ?: []).find { (it.deviceId as String) == devId } : null
+    def rl  = rep?.level != null ? (rep.level as Integer) : null
+    if (rt && rl != null && rl >= lvl) {
+        data.anchorLevel   = rl
+        data.anchorDate    = rt as Long
+        data.anchorAligned = true
+    } else {
+        setAnchor(data, lvl, false)
+    }
 }
 
 // ============================================================
@@ -1151,7 +1201,7 @@ def getSampleQualityLabel(device, healthStr) {
 // ============================================================
 def getDrain(device) {
     def d = state.history?.get(device.id)?.drain
-    return (d != null && d > 0) ? d : 0.3
+    return d != null ? Math.max(0d, d as double) : 0.3
 }
 def displayDrain(device) { return String.format("%.2f", getDrain(device)) }
 
@@ -1159,7 +1209,7 @@ def estDays(device) {
     if (health(device) == "Pending") return null
     def level = device.currentValue("battery") != null ? device.currentValue("battery").toInteger() : 100
     def drain = getDrain(device)
-    if (drain <= 0) drain = 0.3
+    if (drain <= 0) return 365
     def est = Math.round(level / drain)
     return Math.min(est, 365)
 }
@@ -1360,6 +1410,7 @@ def logReplacement(device, newLevel, manual = false) {
     data.zeroCount             = 0
     state.trend[device.id]     = "Stable"
     data.lastReplacementLogged = now()
+    setAnchor(data, (newLevel != null ? newLevel : 100) as Integer, true)
 
     state.replacements = state.replacements?.findAll { it.device != device.displayName } ?: []
     state.replacements << [
@@ -1878,7 +1929,10 @@ private void resetDrainHistory(device) {
         justReplaced:  existing.justReplaced ?: false,
         drain:         0.3,
         samples:       [],
-        zeroCount:     0
+        zeroCount:     0,
+        anchorLevel:   currentLevel(device),
+        anchorDate:    now(),
+        anchorAligned: false
     ]
     state.trend[device.id] = "Stable"
     state.history = state.history
@@ -1890,7 +1944,8 @@ private void markRestored(device) {
     state.history[device.id] = [
         lastLevel: lvl, lastDate: now(), lastScanDate: now(),
         firstSeenDate: now(), replacedTime: now(), justReplaced: true,
-        drain: 0.3, samples: [], zeroCount: 0
+        drain: 0.3, samples: [], zeroCount: 0,
+        anchorLevel: lvl, anchorDate: now(), anchorAligned: true
     ]
     state.trend[device.id] = "Stable"
     state.history = state.history
@@ -2729,11 +2784,13 @@ private String countText(int count, String singular) {
 private void helpAndSupportSection() {
     section(title: "<b>Help & Support</b>", sectionClass: "app-main-support") {
         href name: "tips", title: "<i class='pi pi-info-circle' aria-hidden='true'></i>Tips & Troubleshooting",
-            page: "tipsPage", description: "Colors, health, detection, and known quirks", width: 4, style: "margin:8px;"
+            page: "tipsPage", description: "Colors, health, detection, and known quirks", width: 6, style: "margin:8px;"
         paragraph rawHtml: true, supportLinkHtml(COMMUNITY_URL, "pi pi-comments",
-            "Hubitat Community Thread", "Questions, feedback, and release notes"), width: 4
+            "Hubitat Community Thread", "Questions, feedback, and release notes"), width: 6
+        paragraph rawHtml: true, supportLinkHtml(DHM_URL, "fa-solid fa-heart-pulse",
+            "Device Health Monitor", "Companion app for device check-ins and offline alerts"), width: 6
         paragraph rawHtml: true, supportLinkHtml(COFFEE_URL, "fa-solid fa-mug-hot",
-            "Buy Me a Coffee", "Support development"), width: 4
+            "Buy Me a Coffee", "Support development"), width: 6
     }
 }
 
@@ -2836,7 +2893,9 @@ private List tipsTopics() {
                 "Smoke and CO detectors often show <b>&lt;0.01%/day</b>, meaning very slow drain. That's normal.</p>" +
                 "<p><b>Li-ion note:</b> health and trend are long-term averages and aren't built to catch a sudden end-of-life crash. See <b>Li-ion cliff alerts</b>.</p>"],
         [id: "drain", label: "Drain and estimates", title: "Drain, estimated life, and last seen", group: "Reading the report", icon: "pi-chart-line",
-            body: "<p><b>Drain</b> is %/day based on the last 10 readings. <b>Est Days</b> is current level divided by drain, capped at 365.</p>" +
+            body: "<p><b>Drain</b> is the average %/day since the battery was replaced, or since its level last stepped down. " +
+                "Batteries report in whole steps, some in 10% chunks or larger, so measuring the long-term pace keeps a single step from reading as fast drain. " +
+                "It needs about a week of data before it's used. <b>Est Days</b> is current level divided by drain, capped at 365.</p>" +
                 "<p><b>Last seen</b> is the device's last activity of any kind. Past the stale threshold (default 24 hours, set under Scan interval) it's marked <b>Stale</b>.</p>" +
                 "<p><b>Force Scan</b> reads all levels immediately. A new drain sample is only recorded when the level has changed.</p>"],
 
