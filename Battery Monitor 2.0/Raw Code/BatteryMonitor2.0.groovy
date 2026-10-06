@@ -11,7 +11,9 @@
  * v2.7.0 -- Drain is now the average pace since the last replacement or step down, not a
  * 10-sample per-day average. Batteries that report in steps (1% jitter, or 10-13% chunks like
  * Iris sensors) no longer read as fast drain, and real drain is no longer hidden after the first
- * step (the outlier guard rejected every later drop). Trend keeps the EWMA. A device with no drop
+ * step (the outlier guard rejected every later drop). A recent pace backed by 3+ new lows over 2+
+ * days takes over when faster, so a battery that starts failing is caught within days. A 3%+ rise
+ * must hold 24h before re-anchoring (cold-weather recovery). Trend keeps the EWMA. A device with no drop
  * shows <0.01%/day instead of 0.30. Existing devices anchor on their logged replacement, or start
  * fresh and settle within a week. Help & Support adds a Device Health Monitor card.
  * v2.6.0 -- Li-ion cliff-drop detection (graduated from beta): urgent alert when a
@@ -68,6 +70,11 @@ definition(
 @Field static final int DRAIN_MIN_SPAN_DAYS = 7
 @Field static final int ANCHOR_RISE = 3
 @Field static final int UNALIGNED_TRUST_DAYS = 30
+@Field static final long DAY_MS = 86400000L
+@Field static final long RISE_HOLD_MS = 86400000L
+@Field static final int RECENT_DAYS = 30
+@Field static final int RECENT_MIN_LOWS = 3
+@Field static final int RECENT_MIN_SPREAD_DAYS = 2
 
 // ============================================================
 // ===================== OAUTH MAPPINGS ======================
@@ -939,28 +946,50 @@ def updateBattery(device, level) {
     state.history = state.history
 }
 
-// v2.7.0: drain is the average pace since an anchor (replacement, charge-up, or first step seen).
-// Rises under ANCHOR_RISE are jitter and keep the anchor. An unaligned anchor (upgrade, reset, new
-// device) has an unknown step start, so a first drop within UNALIGNED_TRUST_DAYS re-anchors there.
+// v2.7.0: drain is the larger of the long-term pace since an anchor (replacement, held charge-up, or
+// first step seen) and a recent pace backed by 3+ new lows spread over 2+ days. Small rises are jitter;
+// a 3%+ rise must hold 24h before re-anchoring, so cold-weather recovery doesn't reset history.
 private void updateSpanDrain(String devId, Map data, level) {
     if (level == null || (level as Integer) <= 1) return
     int lvl = level as Integer
     if (data.anchorDate == null || data.anchorLevel == null) seedAnchor(devId, data, lvl)
     int aLvl = data.anchorLevel as Integer
-    if (lvl >= aLvl + ANCHOR_RISE) { setAnchor(data, lvl, true); return }
-    def days = (now() - (data.anchorDate as Long)) / 86400000.0
+    if (lvl >= aLvl + ANCHOR_RISE) {
+        if (!data.riseSince) data.riseSince = now()
+        else if (now() - (data.riseSince as Long) >= RISE_HOLD_MS) { setAnchor(data, lvl, true); return }
+    } else {
+        data.riseSince = null
+    }
+    def days = (now() - (data.anchorDate as Long)) / DAY_MS
     if (!data.anchorAligned && lvl < aLvl) {
         if (days < UNALIGNED_TRUST_DAYS) { setAnchor(data, lvl, true); return }
         data.anchorAligned = true
     }
-    if (days < DRAIN_MIN_SPAN_DAYS) return
-    data.drain = Math.min(Math.max(0, aLvl - lvl) / days, 3.0)
+
+    def lowMark = data.lowMark != null ? (data.lowMark as Integer) : aLvl
+    def lows    = (data.lows ?: []).findAll { now() - (it.t as Long) <= RECENT_DAYS * DAY_MS }
+    if (lvl < lowMark) {
+        data.lowMark = lvl
+        lows << [t: now(), l: lvl]
+    }
+    data.lows = lows
+
+    def recent = null
+    if (lows.size() >= RECENT_MIN_LOWS && ((lows[-1].t as Long) - (lows[0].t as Long)) / DAY_MS >= RECENT_MIN_SPREAD_DAYS) {
+        recent = Math.max(0, (lows[0].l as Integer) - lvl) / Math.max((now() - (lows[0].t as Long)) / DAY_MS, 1.0)
+    }
+    def span = days >= DRAIN_MIN_SPAN_DAYS ? Math.max(0, aLvl - lvl) / days : null
+    if (span == null && recent == null) return
+    data.drain = Math.min(Math.max(span ?: 0, recent ?: 0), 3.0)
 }
 
 private void setAnchor(Map data, int lvl, boolean aligned) {
     data.anchorLevel   = lvl
     data.anchorDate    = now()
     data.anchorAligned = aligned
+    data.lowMark       = lvl
+    data.lows          = []
+    data.riseSince     = null
 }
 
 /** Logged replacement level and time when known, else an unaligned anchor at the current level. */
@@ -972,6 +1001,8 @@ private void seedAnchor(String devId, Map data, int lvl) {
         data.anchorLevel   = rl
         data.anchorDate    = rt as Long
         data.anchorAligned = true
+        data.lowMark       = lvl
+        data.lows          = []
     } else {
         setAnchor(data, lvl, false)
     }
@@ -2895,7 +2926,7 @@ private List tipsTopics() {
         [id: "drain", label: "Drain and estimates", title: "Drain, estimated life, and last seen", group: "Reading the report", icon: "pi-chart-line",
             body: "<p><b>Drain</b> is the average %/day since the battery was replaced, or since its level last stepped down. " +
                 "Batteries report in whole steps, some in 10% chunks or larger, so measuring the long-term pace keeps a single step from reading as fast drain. " +
-                "It needs about a week of data before it's used. <b>Est Days</b> is current level divided by drain, capped at 365.</p>" +
+                "It needs about a week of data before it's used. If the level keeps setting new lows over several days, the faster recent pace takes over, so a failing battery is caught quickly. <b>Est Days</b> is current level divided by drain, capped at 365.</p>" +
                 "<p><b>Last seen</b> is the device's last activity of any kind. Past the stale threshold (default 24 hours, set under Scan interval) it's marked <b>Stale</b>.</p>" +
                 "<p><b>Force Scan</b> reads all levels immediately. A new drain sample is only recorded when the level has changed.</p>"],
 
