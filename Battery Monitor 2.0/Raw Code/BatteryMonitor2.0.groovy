@@ -15,7 +15,8 @@
  * days takes over when faster, so a battery that starts failing is caught within days. A 3%+ rise
  * must hold 24h before re-anchoring (cold-weather recovery). Trend keeps the EWMA. A device with no drop
  * shows <0.01%/day instead of 0.30. Existing devices anchor on their logged replacement, or start
- * fresh and settle within a week. Help & Support adds a Device Health Monitor card.
+ * fresh and settle within a week. Help & Support adds a Device Health Monitor card. Force scan is a
+ * row at the top of Settings with the last scan time, and runs in place (Force Scan page retired).
  * v2.6.0 -- Li-ion cliff-drop detection (graduated from beta): urgent alert when a
  * cliff-enabled device drops by the configured threshold (default 40%) between two
  * consecutive readings. Auto-enabled for LIR types; opt-in for 18650/RCR123A/RCR2.
@@ -357,7 +358,6 @@ preferences {
     page(name: "deleteHistoryPage")
     page(name: "deleteHistoryConfirmPage")
     page(name: "tipsPage")
-    page(name: "forceScanPage")
     page(name: "deviceManagePage")
     page(name: "deviceActionsPage")
     page(name: "bulkActionsPage")
@@ -422,6 +422,11 @@ def mainPage() {
         }
 
         section(title: "<b>Settings</b>", sectionClass: "bm-settings") {
+            if (devCount) {
+                def last = state.lastScanAt ? "Last scan ${formatTimeAgo(state.lastScanAt as Long)}" : "Not scanned yet"
+                input "mainForceScan", "button", width: 12, styleClass: "bm-scan-row",
+                      title: "<i class='fa-solid fa-rotate-right' aria-hidden='true'></i>Force scan now<span class='bm-scan-when'>${last}</span>"
+            }
             href(name: "toDevices", page: "devicesPage",
                  title: "<i class='fa-solid fa-list-check' aria-hidden='true'></i>Monitored devices",
                  description: devCount ? "${devCount} selected" : stOff("None selected"),
@@ -641,6 +646,7 @@ def scanAllDevices() {
     def msg = "SCAN: ${devList.size()} device(s) scanned at ${ts}."
     if (poor.size()  > 0) msg += " Low battery: ${poor.join(', ')}."
     if (stale.size() > 0) msg += " Stale: ${stale.join(', ')}."
+    state.lastScanAt = now()
     log.info "Battery Monitor: scan complete — ${devList.size()} device(s) processed"
 }
 
@@ -1578,9 +1584,8 @@ def summaryPage() {
         def rows  = buildSummaryRows()
 
         section("") {
-            href(name: "toForceScanFromSummary", page: "forceScanPage",
-                 title: "<i class='fa-solid fa-rotate-right' style='margin-right:6px;'></i>Force scan now",
-                 description: "")
+            input "summaryForceScan", "button", title: "<i class='fa-solid fa-rotate-right' style='margin-right:6px;'></i>Force scan now",
+                  width: 3, styleClass: "bm-sum-scan"
             if (!rows) { paragraph "No battery devices found."; return }
             paragraph rawHtml: true, summaryHtml(rows, hubIp)
         }
@@ -1699,16 +1704,12 @@ private String summaryHtml(List rows, String hubIp, boolean portal = false) {
     sb << """
 <style>
   .bm-wrap { font-size: 14px; color: #1f2937; }
-  button.hrefElem[name^='_action_href_toForceScanFromSummary'] {
+  .bm-sum-scan button {
     display: inline-block; width: auto !important; min-height: 34px; padding: 0 14px; margin: 0;
     background: #fff; color: #1a56c4; border: 1px solid #cfd6de; border-radius: 4px; box-shadow: none;
-    font-family: inherit; font-size: 14px; font-weight: 500; line-height: 34px;
+    font-family: inherit; font-size: 14px; font-weight: 500; line-height: 34px; text-transform: none;
   }
-  button.hrefElem[name^='_action_href_toForceScanFromSummary']::before,
-  button.hrefElem[name^='_action_href_toForceScanFromSummary'] > br,
-  button.hrefElem[name^='_action_href_toForceScanFromSummary'] > .state-incomplete-text,
-  button.hrefElem[name^='_action_href_toForceScanFromSummary'] > .state-complete-text { display: none; }
-  button.hrefElem[name^='_action_href_toForceScanFromSummary']:hover { background: #f3f6fa; }
+  .bm-sum-scan button:hover { background: #f3f6fa; }
   .bm-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 2px 0 12px; }
   .bm-stat { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; background: #f5f7fa; border: 1.5px solid transparent; border-radius: 6px; padding: 6px 12px; cursor: pointer; user-select: none; }
   .bm-stat:hover { border-color: #c9d3df; }
@@ -2040,6 +2041,14 @@ private String bmCardsCss() {
   .bm-helprow a { color: #1565c0; text-decoration: none; margin: 0 10px; white-space: nowrap; }
   .bm-helprow a:hover { text-decoration: underline; }
   .bm-helprow i { margin-right: 5px; }
+  .bm-settings .bm-scan-row button {
+    display: flex; align-items: center; width: 100%; min-height: 0; margin: 0; padding: 11px 44px 11px 14px;
+    background: #f5f8fd; border: 0; border-bottom: 1px solid #eef0f3; border-radius: 0; box-shadow: none;
+    font-family: inherit; font-size: 15px; font-weight: 500; color: #1a56c4; text-align: left; text-transform: none; line-height: 1.4;
+  }
+  .bm-settings .bm-scan-row button:hover { background: #eef4fd; }
+  .bm-settings .bm-scan-row button i { width: 18px; text-align: center; margin-right: 10px; }
+  .bm-scan-when { margin-left: auto; padding-left: 16px; color: #6b7280; font-size: 14px; font-weight: 400; }
 """
 }
 
@@ -2116,6 +2125,8 @@ void appButtonHandler(String btn) {
         case "bulkSelClear": app.updateSetting("bulkSelectedDevices", [value: [], type: "enum"]); break
         case "bulkApply":    runBulkAction(); break
         case "sendNow":      sendNotificationNow(); break
+        case "mainForceScan":    scanAllDevices(); break
+        case "summaryForceScan": scanAllDevices(); break
         case "snoozeStart":
             def days = 7
             try { days = Math.max(1, (settings?.snoozeDurationDays ?: 7) as Integer) } catch (e) { }
@@ -2723,26 +2734,6 @@ private void sendNotificationNow() {
     if (settings?.notifyDevices)   sentTo.addAll(settings.notifyDevices.collect { bmEsc(it.displayName) })
     if (settings?.pushoverDevices) sentTo.addAll(settings.pushoverDevices.collect { "${bmEsc(it.displayName)} (Pushover)".toString() })
     state.sendMsg = [tone: "ok", text: (sentTo ? "Sent to ${sentTo.join(', ')}." : "Sent via hub push.").toString()]
-}
-
-// ============================================================
-// ===================== FORCE SCAN PAGE =====================
-// ============================================================
-def forceScanPage() {
-    scanAllDevices()
-    if (debugMode) log.debug "Manual battery scan triggered by user"
-
-    dynamicPage(name: "forceScanPage", title: "Force Scan", install: false) {
-        section("<b>Scan Complete</b>") {
-            def devList = (autoDevices ?: []).findAll { !isIgnored(it) }
-            def count   = devList.size()
-            paragraph "✅ Battery scan complete — ${count} device(s) read. " +
-                      "Return to Battery Summary &amp; Trends to see updated values.<br><br>" +
-                      "<b>Note:</b> A new drain sample is only recorded if the battery level " +
-                      "has changed since the last reading. Devices reporting the same level " +
-                      "will not generate a new sample."
-        }
-    }
 }
 
 // ============================================================
