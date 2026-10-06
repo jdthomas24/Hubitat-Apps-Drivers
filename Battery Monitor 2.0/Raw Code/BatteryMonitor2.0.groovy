@@ -974,13 +974,15 @@ private void updateSpanDrain(String devId, Map data, level) {
     }
     data.lows = lows
 
-    def recent = null
+    // Explicit doubles: Groovy's Math.max/min throw on mixed BigDecimal and Integer arguments
+    Double recent = null
     if (lows.size() >= RECENT_MIN_LOWS && ((lows[-1].t as Long) - (lows[0].t as Long)) / DAY_MS >= RECENT_MIN_SPREAD_DAYS) {
-        recent = Math.max(0, (lows[0].l as Integer) - lvl) / Math.max((now() - (lows[0].t as Long)) / DAY_MS, 1.0)
+        double rDays = Math.max(((now() - (lows[0].t as Long)) / DAY_MS) as double, 1.0d)
+        recent = (Math.max(0, (lows[0].l as Integer) - lvl) as double) / rDays
     }
-    def span = days >= DRAIN_MIN_SPAN_DAYS ? Math.max(0, aLvl - lvl) / days : null
+    Double span = days >= DRAIN_MIN_SPAN_DAYS ? (Math.max(0, aLvl - lvl) as double) / (days as double) : null
     if (span == null && recent == null) return
-    data.drain = Math.min(Math.max(span ?: 0, recent ?: 0), 3.0)
+    data.drain = Math.min(Math.max(span != null ? span : 0d, recent != null ? recent : 0d), 3.0d)
 }
 
 private void setAnchor(Map data, int lvl, boolean aligned) {
