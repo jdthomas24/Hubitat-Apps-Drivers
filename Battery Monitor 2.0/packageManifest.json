@@ -1,20 +1,24 @@
 {
-  "packageName": "Battery Monitor 2.0",
-  "author": "Jdthomas24",
-  "version": "2.6.0",
-  "category": "Convenience",
-  "description": "Advanced Hubitat battery monitoring with analytics, trends and replacement tracking. Recurring scan schedule, confidence-weighted health, EWMA smoothing.",
-  "dateReleased": "4/8/26",
-  "minimumHEVersion": "2.3.0",
-  "releaseNotes": "v2.6.0 is a major UI refresh with phone-friendly pages, a Needs attention list, and a matching web portal. Adds Li-ion cliff-drop alerts and automatic detection of dead-battery swaps. Fixes bulk actions skipping combined actions and history sorting across years.",
-  "apps": [
-    {
-      "name": "Battery Monitor 2.0",
-      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Battery%20Monitor%202.0/Raw%20Code/BatteryMonitor2.0.groovy",
-      "required": true,
-      "primary": true
-    }
-  ]
+    "packageName": "Battery Monitor 2.0",
+    "releaseNotes": "v2.7.0: Drain is now measured as the long-term pace, so batteries that report in steps no longer show false high drain, and failing batteries are caught sooner. Adds a Device Health Monitor link.",
+    "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Battery%20Monitor%202.0",
+    "communityLink": "https://community.hubitat.com/t/release-battery-monitor-2-0/162329",
+    "author": "jdthomas24",
+    "version": "2.7.0",
+    "minimumHEVersion": "2.3.0",
+    "dateReleased": "2026-10-06",
+    "category": "Convenience",
+    "tags": "Monitoring",
+    "apps": [
+        {
+            "name": "Battery Monitor 2.0",
+            "namespace": "jdthomas24",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Battery%20Monitor%202.0/Raw%20Code/BatteryMonitor2.0.groovy",
+            "required": true,
+            "primary": true,
+            "description": "Tracks battery levels, drain, health, and replacements, with Li-ion cliff-drop alerts and an optional web portal."
+        }
+    ]
 }
 
 
