@@ -1,6 +1,6 @@
 /**
  * Reolink Standalone Devices (Internal Group Driver)
- * Version: 1.6.6
+ * Version: 1.6.7
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- exactly ONE instance total, shared across every
@@ -16,6 +16,8 @@
  * becomes a child of THIS device instead -- one collapsible entry holding
  * every standalone camera/doorbell's bridge, instead of N separate unnested
  * bridges.
+ *
+ * v1.6.7 -- componentSetSpotlightAuto() passthrough (spotlight auto on/off).
  *
  * v1.6.6 -- componentGetSourceSecret() passthrough: standalone bridges fetch
  * the source password from the app after a reboot or driver save, since it's
@@ -160,6 +162,7 @@ def componentPtz(child, String direction, String dni = null) { parent?.component
 def componentPtzGoToPreset(child, Integer presetId, String dni = null) { parent?.componentPtzGoToPreset(child, presetId, dni) }
 def componentSavePreset(child, Integer presetId, String name, String dni = null) { parent?.componentSavePreset(child, presetId, name, dni) }
 def componentSetSpotlight(child, Boolean on, String dni = null) { parent?.componentSetSpotlight(child, on, dni) }
+def componentSetSpotlightAuto(child, Boolean on, String dni = null) { parent?.componentSetSpotlightAuto(child, on, dni) }
 def componentSetNightVision(child, String mode, String dni = null) { parent?.componentSetNightVision(child, mode, dni) }
 def componentSetSiren(child, Boolean on, String dni = null) { parent?.componentSetSiren(child, on, dni) }
 def componentSetPir(child, Boolean on, String dni = null) { parent?.componentSetPir(child, on, dni) }
