@@ -1,6 +1,6 @@
 /**
  * Reolink Device Bridge (Internal Parent Driver)
- * Version: 1.6.7
+ * Version: 1.6.8
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- ONE instance per SOURCE (Hub/NVR or standalone).
@@ -14,7 +14,7 @@
  * every componentX() method below is a one-line passthrough up to this
  * bridge's own parent (the app).
  *
- * v1.6.7 -- componentSetSpotlightAuto() passthrough (spotlight auto on/off).
+ * v1.6.8 -- componentSetSpotlightAuto() passthrough (spotlight auto on/off).
  *
  * v1.6.6 -- The source password is no longer stored in this device's state,
  * where State Variables showed it in plain text. It's held in memory only
