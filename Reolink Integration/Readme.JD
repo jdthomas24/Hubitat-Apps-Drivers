@@ -1,108 +1,91 @@
 Reolink Integration for Hubitat
 
-An open-source Hubitat integration for Reolink cameras, doorbells, NVRs, and Home Hubs.
+Local control of Reolink cameras, doorbells, NVRs and Home Hubs from a Hubitat Elevation hub. No cloud and no Reolink account, just the device's local IP and login.
 
-Talks to Reolink devices over their local HTTP/JSON API. No cloud dependency, no Reolink account login required — just the device's IP (or the NVR/Home Hub's IP) and local credentials.
+Try the interactive demo: click through adding a Home Hub, live detections, device controls and recording presets. No hub needed.
 
-Why this exists
+Install: Hubitat Package Manager, search "Reolink Integration". Discussion and support: Hubitat Community thread
 
-Reolink doesn't have an official Hubitat integration. This project fills that gap.
-
-It's built and tested against real hardware rather than assumptions from the API docs alone. Several of the notes in this README exist specifically because Reolink's own documentation turned out to be incomplete, self-contradictory, or in one case outright buggy once checked against actual devices.
+This integration is also becoming Hubitat's built-in Reolink integration. This repo stays the source of truth, and HPM installs remain available.
 
 Features
-Motion & AI detection — motion, person, vehicle, pet, package as native Hubitat attributes
-Capability detection — a read-only supportedFeatures attribute per device, built from Reolink's own GetAbility API, tells you at a glance whether a specific device actually has PTZ, PTZ calibration, a spotlight, a siren, etc. Informational only — Hubitat has no way to hide commands on an individual device instance, so every command still shows on every device regardless; this just tells you ahead of time what's actually worth trying. Refreshable anytime via the Check Abilities command.
-Doorbell button press — exposed as a standard PushableButton event, triggers Rule Machine like any other doorbell
-Snapshot capture — pulls a still image via the camera's local API, cached on the hub so dashboard tiles don't hit the camera on every refresh
-PTZ control — pan/tilt/zoom, plus preset recall (ptzGoToPreset), save (savePresetHere), and calibration
-Spotlight, night vision, and siren control — on models that support them
-Battery % — via the standard Hubitat Battery capability (see Known limitations — field names still unconfirmed against real battery hardware)
-Sleep Status — tells "no response because asleep" apart from "no response because something's wrong"
-Multi-source architecture — any mix of standalone cameras, NVRs, and Home Hubs at once, with per-device poll intervals
-Adjustable logging — Errors Only (default), Normal, or Full, so you can dial up detail only when actively troubleshooting
+Real-time detections. Motion, person, vehicle, pet, package and doorbell press arrive within a second over a live event connection. If that connection drops, the app falls back to polling and switches back on its own.
+Last motion. lastMotionTime and lastMotionType for rules and dashboards.
+Doorbell press as a standard button (pushed 1), so Rule Machine treats it like any doorbell.
+Snapshots and live video. Cached snapshots for dashboard tiles, plus RTSP live streaming through Hubitat's video stream service on supported hubs.
+Camera controls. PTZ moves, presets and calibration; spotlight on/off and spotlight auto (whether motion turns it on at night); night vision; siren; PIR on/off for battery devices.
+Battery devices. Battery level, charging status (charging / plugged in / not charging) and a one-line Battery Wired summary. Wired devices never show battery values.
+NVR recording control. A master record switch, plus named per-channel schedule presets that Hubitat modes or rules can load (for example "Away" and "Home").
+Capability detection. A supportedFeatures attribute per device, read from the camera, shows what that model can actually do.
+Logging levels. Errors Only (default), Normal or Full. Full turns itself off after 60 minutes.
+Device commands
 
-Reolink's API has no dedicated "Home" command for PTZ cameras — ptzGoToPreset / savePresetHere are the practical equivalent.
+Commands are grouped into dropdowns so each device page stays short.
 
-Architecture
+Command	Options
+Check	battery, abilities, ptz calibration, recording schedule
+Set Interval	poll or snapshot, plus seconds
+Ptz	Left, Right, Up, Down, ZoomInc, ZoomDec, Stop, Calibrate
+Ptz Preset	go to or save here, plus preset ID
+Set Spotlight	on, off, auto on, auto off
+Set Night Vision	auto, on, off
+Set Siren	on, off
+Set Pir	on, off
+Take Snapshot	
 
-App (ParentApp.groovy) Owns all connection, auth, discovery, and polling logic. Maintains a list of sources — anything with its own IP and login: a standalone camera, an NVR, or a Home Hub.
+Doorbells have Check, Set Interval, Set Pir and Take Snapshot. Hubitat shows every command on every device, so check supportedFeatures to see what a given model supports. Rules written before 1.6.8 with the older command names (Pir Off, Ptz Go To Preset, Spotlight On and so on) keep working.
 
-Component drivers (CameraDriver.groovy, DoorbellDriver.groovy) Thin — no HTTP logic of their own. Every command delegates back to the parent app via parent.componentX(...).
-
-Sources and channels A source with N paired channels (NVR/Home Hub) exposes channels 0..N-1. A standalone camera is a source with exactly one channel: 0. Each child device is tagged internally with (sourceId, channel).
-
-Why it's built this way Moving a camera from standalone to behind an NVR/Home Hub later is a re-discovery and channel-remap — not a driver rewrite.
-
-Polling A single central scheduler drives every device's poll/snapshot timing independently, self-heals after a hub reboot, and isolates one device's failure from affecting any other.
-
+How it works
+Sources. A source is anything with its own IP and login: a standalone camera, an NVR or a Home Hub. A Hub or NVR has one channel per paired camera; a standalone camera has one channel.
+Reolink Device Bridge. Each source gets a bridge device that holds its live event connection and is the parent of its camera and doorbell devices, so they group together in the Devices list. Standalone cameras' bridges group under a single "Reolink Standalone Devices" device.
+The app (ParentApp.groovy) handles login, discovery, polling and every camera command. The camera and doorbell drivers are thin and pass everything to the app.
+Hub health. One central scheduler times all polling and skips any source with a healthy event connection. Battery devices poll slowly by default, since polling harder doesn't get fresher data and only costs battery.
 Installation
-Via Hubitat Package Manager (HPM)
-In HPM, choose Install → From a URL.
-Point it at this repo's packageManifest.json.
-HPM installs the app and both drivers together.
-Manual install
-Drivers Code → New Driver → paste CameraDriver.groovy → Save.
-Repeat for DoorbellDriver.groovy.
-Apps Code → New App → paste ParentApp.groovy → Save.
-Apps → Add User App → search "Reolink Integration" (grouped under Integrations).
+
+Hubitat Package Manager (recommended): Install, search "Reolink Integration". HPM installs the app and all four drivers.
+
+Manual: add these in order, then add the app under Apps, Add User App:
+
+Drivers Code: ReolinkDeviceBridge.groovy, StandaloneDevices.groovy, CameraDriver.groovy, DoorbellDriver.groovy
+Apps Code: ParentApp.groovy
 Setup
-On the camera itself first — check its Network > Advanced (or Server) settings and make sure HTTP, HTTPS, and ONVIF are enabled.
+On the camera, Hub or NVR first: enable HTTP, HTTPS and ONVIF under Network > Advanced (or Server) settings. They are often off by default, and this is the most common reason a source won't connect. On a Home Hub, these toggles are only in the Reolink desktop Client. Once a camera is paired to a Hub, manage these settings on the Hub.
+Open the app and add a source with its IP address or hostname, port (default 443), username and password.
+Discovery lists the channels. Turn on the ones you want and apply.
+The live event connection uses port 9000. If a firewall blocks it, the source still works by polling.
 
-These are often off by default on every model tested so far — not just Reolink's E1 line. This is the single most common reason a source fails to connect.
+To change a source's address or login later, use Edit connection settings on its page. There's no need to remove and re-add it.
 
-Open the app → Add a source... → enter the IP, port (default 443), username, and password.
-Check "This is an NVR or Home Hub" if it has multiple channels.
-Click into the new source — discovery runs automatically, no separate button click needed. Use "Re-run discovery" later if you pair a new camera to an NVR/Home Hub and need to refresh the channel list.
-Create the device(s):
-Single-channel (standalone) source — toggling the channel on creates the device immediately.
-Multi-channel source (NVR/Home Hub) — select the channels you want, then toggle Create selected devices.
-Check each device's new supportedFeatures attribute to see what that specific unit actually supports before trying PTZ/spotlight/siren commands.
+The in-app Tips & Troubleshooting page covers device quirks, polling, battery behavior, PTZ, spotlight and recording presets, and is kept current with each release.
 
-See the in-app Tips, limitations & what works so far page (linked from the Sources list) for troubleshooting and device-specific quirks. It's kept current as things are discovered on real hardware, rather than duplicated here and left to drift out of sync.
+Compatibility
+Device	Status
+Home Hub Pro	✅ Working, with multiple paired cameras on one event connection
+Reolink NVRs (e.g. RLN16-410)	✅ Working, confirmed by community users, including recording control
+E1 Pro, E1 Zoom, Trackmix	✅ Working, PTZ confirmed
+RLC-1240A, Duo 3V PoE	✅ Working
+RLC-410W	✅ Working (older model, motion only, no AI detection)
+E1 Outdoor	✅ Working. Some ~2021 firmware units give false "asleep" reports (see Tips)
+Video Doorbell WiFi (wired)	✅ Working, package detection confirmed
+Argus 4 Pro and other battery cameras/doorbells	✅ Working behind a Home Hub or NVR. ❌ Not standalone (see below)
+Base E1, Lumus	❓ Untested. Check the camera's own network settings for HTTP/HTTPS
 
-Device compatibility
-Model	Status
-E1 Pro	✅ Working standalone — HTTP had to be manually enabled under Network > Advanced (off by default on this unit)
-Trackmix	✅ Working standalone — full PTZ confirmed
-RLC-1240A	✅ Working standalone
-RLC-410W	✅ Working standalone — older/basic model, predates AI detection entirely (motion only, no person/vehicle/pet)
-Duo 3V PoE / Duo 3 PoE	✅ Working standalone — has a built-in spotlight
-E1 Outdoor	✅ Working standalone, full PTZ confirmed — ⚠️ some ~2021-era firmware units have a known bug causing intermittent false "asleep" reports; confirmed absent on newer (2024-era) firmware. See Known limitations
-Reolink Video Doorbell WiFi-W (wired, not battery)	✅ Working standalone — package detection confirmed
-Doorbell 2K Gen 2	❌ No local HTTP/ONVIF server standalone, confirmed — battery-class device, requires a Home Hub/NVR
-Battery-class (Argus line, Doorbell Battery, Gen 2 doorbells)	❌ No local HTTP/ONVIF server, confirmed — see Known limitations
-Base E1, Lumus	❓ Untested — Reolink's docs claim no local HTTP support, unconfirmed
-Home Hub Pro	❓ Untested — needed to confirm NVR-style channel importing/selection and per-channel capability behavior
-Argus Pro (Black)	❓ Untested — needed to confirm WiFi battery relay behavior through a Hub at a distance, and battery-status detection
-
-PoE cameras and WiFi cameras outside the E1/battery lines are expected to work standalone without issue.
+Other PoE and WiFi cameras outside the battery line are expected to work standalone.
 
 Known limitations
+Battery-class devices need a Home Hub or NVR. Confirmed on real hardware: a standalone Argus 4 Pro refuses both the HTTP API and the event port, even on a DC adapter. Add the Hub or NVR as the source and the device shows up as one of its channels.
+Many standalone cameras. Each standalone camera keeps its own connection to the hub. Past roughly 10, a Home Hub or NVR is the better setup: one connection and one login for every channel.
+Recording control is NVR/Hub only, and the master record switch applies to every channel at once (a Reolink API limitation). Use presets to control individual channels.
+Spotlight auto in Hubitat updates right away when changed from Hubitat. A change made in the Reolink app shows after a Refresh (read at most every 10 minutes) or Check > abilities.
+Security
 
-Battery-class devices Argus line, Doorbell Battery, Gen 2 doorbells. This is a deliberate, permanent firmware exclusion across Reolink's entire battery-powered product line — confirmed via Reolink's own community forum, not a timing/sleep issue and not something that varies by power source. Even a battery-class device running continuously on a DC adapter (not just trickle-charging) still has no local API, because the firmware itself never includes that server stack on battery models. Only reachable once paired to a Home Hub or NVR.
+The source password is stored only in the app on your hub. It is never written to logs, and the Device Bridge page shows only "Password: Saved, N characters" plus the last login result. Like most Hubitat apps, credentials live in the app's own settings, which are included in hub backups.
 
-E1 / E1 Pro / Lumus Reolink's own documentation is inconsistent about which of these support local HTTP/HTTPS. Don't trust the model name — check the camera's own Network > Advanced (or Server) settings directly.
+Contributing and testing
 
-Known older-firmware bug: false "asleep" on some E1 Outdoor units Some E1-series cameras on ~2021-era firmware have a documented bug (independently confirmed via community reports and Reolink's own support docs) where the camera's web server intermittently returns corrupted/garbled data instead of a real response — not encryption, not a real connectivity problem, just bad data from the camera itself. Confirmed via testing: several garbled responses captured were byte-for-byte identical across completely different login sessions hours apart, which real per-session encryption could never produce, ruling that out in favor of a firmware bug. The integration automatically retries once when this specific failure is detected, which helps but doesn't fully eliminate it since the underlying bug is intermittent. See the in-app Tips page for recognition and remediation steps (toggle HTTP/HTTPS + reboot first, firmware update or a Reolink support request if that doesn't help).
+Testing on more hardware helps, especially:
 
-Capability detection (supportedFeatures) is informational only Built from real GetAbility data gathered across 8+ devices spanning multiple models and firmware years. It does not hide or disable any command — Hubitat can't do that for an individual device instance. A few fields required correction after real-world testing contradicted the initial mapping (notably PTZ Calibration and Spotlight detection both needed a different underlying field than first assumed) — this is expected to keep refining as more hardware gets tested. Package detection is only confirmed on doorbells (cameras don't have it); battery-status detection via GetAbility is not yet wired in (the existing GetBatteryInfo-based detection remains the source of truth, unconfirmed against real battery hardware); NVR/Home Hub per-channel ability behavior is untested — everything confirmed so far is a directly-connected standalone camera.
+A true external or accessory floodlight
+Newer battery doorbell firmware, including whether any battery model now exposes a local API
 
-Motion/AI detection field names GetAiState/GetMdState parsing (motion, person, vehicle, pet, package, doorbell button press) is built from a consistent API pattern but hasn't yet been confirmed against a real triggered event on hardware — GetAbility testing has confirmed which AI categories a given device supports, but not that the live-trigger field parsing itself fires correctly during an actual motion/person/vehicle event. If motion/AI attributes aren't updating as expected, this is the first place to check — see parseReolinkState in the driver files.
-
-Unverified commands SetPtzPreset, SetWhiteLed, SetIrLights, AudioAlarmPlay, GetBatteryInfo are built from consistent patterns across independent Reolink API references, but actual command execution isn't yet confirmed against every model (capability presence is, via supportedFeatures — that's a different thing from confirming the command works when called). See TODO comments in the app source for specifics.
-
-Security note
-
-Camera/NVR/Hub credentials (username and password) are stored in the app's state, unencrypted — this is standard practice for Hubitat community apps, since the platform has no built-in secrets vault, but it's worth knowing before entering credentials for anything you wouldn't want readable from the hub's own backup/state data.
-
-Contributing / testing
-
-Testing against additional hardware is genuinely useful, particularly:
-
-A Home Hub/NVR — multi-channel discovery, channel importing, per-channel capability behavior
-Argus Pro or any true battery-class device paired to a Hub/NVR — confirming relay-through-sleep behavior and real battery-status detection
-Any device with a true external/accessory floodlight (not the built-in spotlight most models have) — the top-level floodLight ability field has shown unreliable/absent on every device tested so far, including confirmed spotlight-equipped ones, and hasn't been tested against genuine floodlight hardware
-
-A standalone test tool for dumping a device's raw GetAbility data (no connection to the production app, safe to run against any camera) is available in this repo's Tests - Groovy RAW folder if you want to contribute capability data for a model not yet covered above.
-
+The Tests - Groovy RAW folder has standalone tools for dumping a device's raw API data. Reports and logs are welcome in the community thread.
