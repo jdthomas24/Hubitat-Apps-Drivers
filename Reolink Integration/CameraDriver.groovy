@@ -1,11 +1,15 @@
 /**
  * Reolink Camera (Component Driver)
- * Version: 1.6.6
+ * Version: 1.6.7
  *
  * Thin device: no HTTP of its own. Delegates everything to the parent app via
  * parent.componentX(this, ...), using data values sourceId/channel to
  * identify which source/channel this device maps to.
  *
+ * v1.6.7 -- spotlightAutoOn/spotlightAutoOff: stop or allow the spotlight turning
+ * on by itself for motion at night (Reolink app: Spotlight > Modes). New
+ * spotlightAuto attribute (on/off), filled in by Refresh or Check Abilities on
+ * Spotlight cameras. Spotlight On/Off still work either way.
  * v1.6.6 -- PIR fixes. pirOn()/pirOff() never changed the camera (it rejected
  * every request) but updated PIR Enabled anyway. They now just ask the app,
  * and receivePirState() updates PIR Enabled only once the camera confirms it.
@@ -66,6 +70,7 @@ metadata {
         // Whether the most recent state update came from an event push or a poll.
         attribute "lastUpdateSource", "enum", ["event", "poll"]
         attribute "spotlight", "enum", ["on", "off"]
+        attribute "spotlightAuto", "enum", ["on", "off"]
         attribute "nightVision", "enum", ["auto", "on", "off"]
         attribute "siren", "enum", ["on", "off"]
         attribute "ptzCalibrationStatus", "enum", ["unknown", "required", "running", "done"]
@@ -94,6 +99,8 @@ metadata {
         // ---- Accessories (model-dependent -- not every camera has these) ----
         command "spotlightOn", [[name: "Spotlight-equipped cameras only"]]
         command "spotlightOff", [[name: "Spotlight-equipped cameras only"]]
+        command "spotlightAutoOn", [[name: "Spotlight turns on by itself for motion at night (Night Smart Mode)"]]
+        command "spotlightAutoOff", [[name: "Spotlight no longer turns on for motion. Spotlight On/Off still work"]]
         command "setNightVision", [[name: "mode", type: "ENUM", constraints: ["auto", "on", "off"]]]
         command "sirenOn", [[name: "Siren-equipped cameras only"]]
         command "sirenOff", [[name: "Siren-equipped cameras only"]]
@@ -275,6 +282,22 @@ def spotlightOn() {
 def spotlightOff() {
     parent?.componentSetSpotlight(this, false, device.deviceNetworkId)
     sendEvent(name: "spotlight", value: "off")
+}
+
+/** v1.6.7: optional arg is ignored (Rule Machine Custom Action may pass the description slot). */
+def spotlightAutoOn(ignored = null) {
+    parent?.componentSetSpotlightAuto(this, true, device.deviceNetworkId)
+}
+
+def spotlightAutoOff(ignored = null) {
+    parent?.componentSetSpotlightAuto(this, false, device.deviceNetworkId)
+}
+
+/** v1.6.7: called by the app with the camera's confirmed mode (0 = off). Remembers the last auto mode. */
+def receiveSpotlightAuto(Integer mode) {
+    if (mode == null) return
+    if (mode > 0) device.updateDataValue("spotlightAutoMode", mode.toString())
+    sendIfChanged("spotlightAuto", mode > 0 ? "on" : "off")
 }
 
 def setNightVision(mode) {
