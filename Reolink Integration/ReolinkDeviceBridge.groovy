@@ -1,6 +1,6 @@
 /**
  * Reolink Device Bridge (Internal Parent Driver)
- * Version: 1.6.6
+ * Version: 1.6.7
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- ONE instance per SOURCE (Hub/NVR or standalone).
@@ -13,6 +13,8 @@
  * parent?.componentX(...) calls resolve to THIS device (their real parent);
  * every componentX() method below is a one-line passthrough up to this
  * bridge's own parent (the app).
+ *
+ * v1.6.7 -- componentSetSpotlightAuto() passthrough (spotlight auto on/off).
  *
  * v1.6.6 -- The source password is no longer stored in this device's state,
  * where State Variables showed it in plain text. It's held in memory only
@@ -266,6 +268,7 @@ def componentPtz(child, String direction, String dni = null) { parent?.component
 def componentPtzGoToPreset(child, Integer presetId, String dni = null) { parent?.componentPtzGoToPreset(child, presetId, dni) }
 def componentSavePreset(child, Integer presetId, String name, String dni = null) { parent?.componentSavePreset(child, presetId, name, dni) }
 def componentSetSpotlight(child, Boolean on, String dni = null) { parent?.componentSetSpotlight(child, on, dni) }
+def componentSetSpotlightAuto(child, Boolean on, String dni = null) { parent?.componentSetSpotlightAuto(child, on, dni) }
 def componentSetNightVision(child, String mode, String dni = null) { parent?.componentSetNightVision(child, mode, dni) }
 def componentSetSiren(child, Boolean on, String dni = null) { parent?.componentSetSiren(child, on, dni) }
 def componentSetPir(child, Boolean on, String dni = null) { parent?.componentSetPir(child, on, dni) }
