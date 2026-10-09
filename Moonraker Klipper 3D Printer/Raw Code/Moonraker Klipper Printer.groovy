@@ -2,8 +2,8 @@
  *  Moonraker / Klipper 3D Printer Driver for Hubitat
  *
  *  Author:  jdthomas24
- *  Version: 1.0.48
- *  Date:    2026-05-25
+ *  Version: 1.0.49
+ *  Date:    2026-10-09
  *
  *  Copyright 2026
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
@@ -35,14 +35,21 @@
  *    marcolivierarsenault - moonraker-home-assistant
  *    Arksine - Moonraker
  *
+ *  Changes in 1.0.49:
+ *    - Dashboard tiles now display. Hubitat dashboards only show attribute values up to
+ *      1024 characters, and the status tile is ~3700. Each tile is saved to the hub's
+ *      File Manager (moonraker-<device id>-<tile>.html) and the attribute holds a short
+ *      iframe to it. Falls back to inline HTML if the file can't be written. Files are
+ *      removed when the device is deleted.
+ *
  *  Changes in 1.0.48:
  *    - Consecutive failure threshold before marking offline (3 failures required)
  *      Transient timeouts and brief Moonraker restarts no longer immediately flip status
  *      Failure counter resets on any successful poll
  *    - Auto-reconnect: statusCallback now detects a successful 200 response while
  *      marked offline and calls getInfo() to properly restore online state without
- *      manual intervention — hub fully self-heals after internet or Moonraker outage
- *    - Status tile now correctly reflects offline state — tile rebuilds immediately
+ *      manual intervention. Hub fully self-heals after internet or Moonraker outage
+ *    - Status tile now correctly reflects offline state. Tile rebuilds immediately
  *      when setOffline() fires showing offline badge instead of stuck "online"
  *    - Offline tile rebuilds with last known temps and state rather than blank values
  *
@@ -52,7 +59,7 @@
  *    - aaStatusTile fingerprint suppression (Option D)
  *    - filesListTile suppressed when content unchanged
  */
-public static String version() { return "1.0.48" }
+public static String version() { return "1.0.49" }
 
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
@@ -92,15 +99,15 @@ metadata {
 
 preferences {
     input(name: "setupTip", type: "hidden", title: """<div style='background:#fff3cd;border:1px solid #ffc107;border-radius:4px;padding:8px;margin-bottom:8px;font-size:12px;'>
-        <b>⚠️ Setup Tip:</b> Name this Hubitat device to match your printer <i>before</i> saving preferences — e.g. "3D - CR10 Pro 1".<br>
+        <b>⚠️ Setup Tip:</b> Name this Hubitat device to match your printer <i>before</i> saving preferences, e.g. "3D - CR10 Pro 1".<br>
         The device name appears in <b>Printer Info</b> so you can confirm you have the correct port assigned to the right printer.<br>
         <b>Sonicpad users:</b> create one Hubitat device per printer, each with the same IP but a different port.
         </div>""")
     input(name: "ipAddress",      type: "string",   title: "<b>Printer IP Address:</b>",
-          description: "<i>IP address of your Moonraker host.<br>Sonicpad users: all printers share the same IP — use Port to differentiate.</i>",
+          description: "<i>IP address of your Moonraker host.<br>Sonicpad users: all printers share the same IP. Use Port to differentiate.</i>",
           required: true, width: 4)
     input(name: "port",           type: "string",   title: "<b>Moonraker Port:</b>",
-          description: "<i>Default is 7125.<br><b>Sonicpad (4 USB ports):</b> Port 1=7125, Port 2=7126, Port 3=7127, Port 4=7128<br>Use the port matching your printer's USB port — unconnected ports will show offline.<br><b>Standard install:</b> check your moonraker.conf for the configured port</i>",
+          description: "<i>Default is 7125.<br><b>Sonicpad (4 USB ports):</b> Port 1=7125, Port 2=7126, Port 3=7127, Port 4=7128<br>Use the port matching your printer's USB port. Unconnected ports will show offline.<br><b>Standard install:</b> check your moonraker.conf for the configured port</i>",
           defaultValue: "7125", required: true, width: 4)
     input(name: "useSSL",         type: "bool",     title: "<b>Use HTTPS:</b>",
           description: "<i>Enable only if your Moonraker uses SSL. Most local installs do not.</i>",
@@ -111,7 +118,7 @@ preferences {
     input(name: "pollInterval",   type: "enum",     title: "<b>Poll Interval:</b>",
           options: ["10": "10 Seconds", "30": "30 Seconds", "60": "1 Minute", "300": "5 Minutes"],
           defaultValue: "30", required: true, width: 4,
-          description: "<i>Standby poll rate — how often to check when the printer is idle.<br>While printing or paused, the driver automatically switches to 30s regardless of this setting.</i>")
+          description: "<i>Standby poll rate, how often to check when the printer is idle.<br>While printing or paused, the driver automatically switches to 30s regardless of this setting.</i>")
     input(name: "offlineThreshold", type: "number", title: "<b>Offline Failure Threshold:</b>",
           description: "<i>Number of consecutive failed polls before marking printer offline. Default 3. Increase to tolerate brief Moonraker restarts without flipping status.</i>",
           defaultValue: 3, required: true, width: 4)
@@ -129,6 +136,12 @@ preferences {
 // ============================================================
 def installed() {
     initialize()
+}
+
+def uninstalled() {
+    ["aaStatusTile", "filesListTile"].each { attr ->
+        try { deleteHubFile(tileFileName(attr)) } catch (e) { }
+    }
 }
 
 def updated() {
@@ -298,7 +311,7 @@ void serverInfoCallback(resp, data) {
         Map result = json?.result ?: [:]
         String version = result?.moonraker_version ?: result?.api_version_string ?: ""
         if (version && version != "?") { logDebug "moonraker version: $version" }
-        else { logDebug "moonraker version unavailable (Sonicpad returns ? — this is normal)" }
+        else { logDebug "moonraker version unavailable (Sonicpad returns ?, this is normal)" }
     } catch (e) {
         logWarn "serverInfoCallback() parse error: $e"
     }
@@ -336,7 +349,7 @@ void recordFailure() {
 
 void recordSuccess() {
     if ((state.consecutiveFailures ?: 0) > 0) {
-        logDebug "consecutive failures reset — poll succeeded"
+        logDebug "consecutive failures reset, poll succeeded"
     }
     state.consecutiveFailures = 0
 }
@@ -387,10 +400,10 @@ void statusCallback(resp, data) {
 
     recordSuccess()
 
-    // v1.0.48: auto-reconnect — if we get a successful response while marked offline,
+    // v1.0.48: auto-reconnect. If we get a successful response while marked offline,
     // call getInfo() to properly restore online state without manual intervention
     if (device.currentValue("healthStatus") == "offline") {
-        logInfo "printer responding again — re-establishing online state"
+        logInfo "printer responding again, re-establishing online state"
         getInfo()
         return
     }
@@ -513,9 +526,9 @@ void statusCallback(resp, data) {
                             hotendVal, hotendTarg, bedVal, bedTarg,
                             fanPct, filamentDetected, filamentUsed,
                             printTimeMin, remainingNow, etaNow)
-            logDebug "tile updated — fingerprint: ${tileFingerprint}"
+            logDebug "tile updated, fingerprint: ${tileFingerprint}"
         } else {
-            logDebug "tile suppressed — fingerprint unchanged: ${tileFingerprint}"
+            logDebug "tile suppressed, fingerprint unchanged: ${tileFingerprint}"
         }
 
     } catch (e) {
@@ -603,7 +616,7 @@ void buildOnlineTile(String printState, String filenameClean, Integer progressIn
     tile.append("</span>")
     tile.append("</div></div></div>")
 
-    sendEvent(name: "aaStatusTile", value: tile.toString(), displayed: false)
+    publishTile("aaStatusTile", tile.toString())
 }
 
 void buildOfflineTile() {
@@ -618,7 +631,7 @@ void buildOfflineTile() {
     StringBuilder tile = new StringBuilder()
     tile.append("<div style=\"font-family:sans-serif;font-size:12px;background:#1a1a2e;border-radius:10px;overflow:hidden;\">")
 
-    // Header — offline badge
+    // Header, offline badge
     tile.append("<div style=\"background:#0f3460;padding:8px 12px;display:flex;align-items:center;justify-content:space-between;\">")
     tile.append("<div><div style=\"color:#00b4d8;font-weight:bold;font-size:13px;\">${printerName}</div>")
     if (hostname) tile.append("<div style=\"color:#aaa;font-size:10px;\">${hostname} &middot; port ${port}</div>")
@@ -629,7 +642,7 @@ void buildOfflineTile() {
 
     // Offline banner
     tile.append("<div style=\"background:#3d0000;border-left:3px solid #ff6b6b;padding:8px 12px;\">")
-    tile.append("<span style=\"color:#ffaaaa;font-size:11px;\">&#9888; Printer is offline — attempting to reconnect</span>")
+    tile.append("<span style=\"color:#ffaaaa;font-size:11px;\">&#9888; Printer is offline, attempting to reconnect</span>")
     tile.append("</div>")
 
     // Last known temps
@@ -643,8 +656,28 @@ void buildOfflineTile() {
     tile.append("<div style=\"color:#888;font-size:16px;font-weight:bold;\">${bedStr}</div></div>")
     tile.append("</div></div></div>")
 
-    sendEvent(name: "aaStatusTile", value: tile.toString(), displayed: false)
+    publishTile("aaStatusTile", tile.toString())
     logDebug "offline tile built"
+}
+
+// ============================================================
+//  DASHBOARD TILES
+// ============================================================
+String tileFileName(String attr) { return "moonraker-${device.id}-${attr}.html" }
+
+// Dashboards cap attribute values at 1024 chars, so the full tile lives in a hub file
+// and the attribute is a short iframe. The ?t= value makes dashboards reload the frame.
+void publishTile(String attr, String html) {
+    String fname = tileFileName(attr)
+    String page = "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>" +
+        "<style>html,body{margin:0;padding:0;background:transparent;}</style></head><body>${html}</body></html>"
+    try {
+        uploadHubFile(fname, page.getBytes("UTF-8"))
+        sendEvent(name: attr, value: "<iframe src='/local/${fname}?t=${now()}' style='width:100%;height:100%;border:0;' scrolling='auto'></iframe>", displayed: false)
+    } catch (e) {
+        logWarn "couldn't save ${fname} (${e.message}), sending inline HTML (too long for dashboard tiles)"
+        sendEvent(name: attr, value: html, displayed: false)
+    }
 }
 
 // ============================================================
@@ -889,10 +922,10 @@ void filesCallback(resp, data) {
         String lastHash = state?.lastFilesListHash ?: ""
         if (newHash != lastHash) {
             state.lastFilesListHash = newHash
-            sendEventX(name: "filesListTile", value: newHtml)
-            logDebug "filesListTile updated — ${displayList.size()} files"
+            publishTile("filesListTile", newHtml)
+            logDebug "filesListTile updated, ${displayList.size()} files"
         } else {
-            logDebug "filesListTile suppressed — content unchanged"
+            logDebug "filesListTile suppressed, content unchanged"
         }
 
     } catch (e) {
@@ -903,7 +936,7 @@ void filesCallback(resp, data) {
 def startPrint(String filename) {
     if (!filename) { logWarn "startPrint() no filename provided"; return }
     if (device.currentValue("printState") == "printing") {
-        logWarn "startPrint() rejected — printer is already printing"
+        logWarn "startPrint() rejected, printer is already printing"
         return
     }
     String resolvedFile = filename.trim()
@@ -914,7 +947,7 @@ def startPrint(String filename) {
             logInfo "startPrint() resolved #${resolvedFile} -> ${mapped}"
             resolvedFile = mapped
         } else {
-            logWarn "startPrint() no file found for number ${resolvedFile} — run refreshFileList first"
+            logWarn "startPrint() no file found for number ${resolvedFile}, run refreshFileList first"
             return
         }
     }
