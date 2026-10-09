@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sofabaton Integration Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Source+Sans+3:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: step rail, then a split stage (remote on the left, Hubitat on the right), live MQTT log below on narrow screens */
+:root{
+  --bg:#f4f3f8; --panel:#ffffff; --sunk:#ebe9f3; --line:#d9d5e6;
+  --fg:#1d1a29; --muted:#625c78; --accent:#6d4ae0; --accent-soft:#ece6fd;
+  --he:#1f6fd1; --he-soft:#e2edfb; --ok:#1d7a4c; --ok-soft:#dcf1e4; --warn:#9a5a00; --warn-soft:#fbeed8;
+  --remote:#23202d; --remote-key:#3a3648; --remote-fg:#eeeaf8;
+  --display:"Sora",ui-sans-serif,system-ui,sans-serif;
+  --body:"Source Sans 3",ui-sans-serif,system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#12111a; --panel:#1b1925; --sunk:#252232; --line:#363247;
+  --fg:#ebe8f5; --muted:#a29cb8; --accent:#a58bff; --accent-soft:#2c2447;
+  --he:#7fb2f2; --he-soft:#1b2a40; --ok:#62cf95; --ok-soft:#173425; --warn:#f0b35a; --warn-soft:#3a2b13;
+  --remote:#0d0c13; --remote-key:#2b2838; --remote-fg:#eeeaf8; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#12111a; --panel:#1b1925; --sunk:#252232; --line:#363247;
+  --fg:#ebe8f5; --muted:#a29cb8; --accent:#a58bff; --accent-soft:#2c2447;
+  --he:#7fb2f2; --he-soft:#1b2a40; --ok:#62cf95; --ok-soft:#173425; --warn:#f0b35a; --warn-soft:#3a2b13;
+  --remote:#0d0c13; --remote-key:#2b2838; --remote-fg:#eeeaf8; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 var(--body);padding-inline:16px;padding-block:24px 48px}
+.wrap{max-width:1100px;margin:0 auto;display:grid;gap:20px}
+header{display:grid;gap:6px}
+.eyebrow{font:500 12px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+h1{font:700 clamp(28px,4.5vw,40px)/1.1 var(--display);margin:0;text-wrap:balance}
+h2{font:600 20px var(--display);margin:0}
+.lede{color:var(--muted);max-width:66ch;margin:0}
+.sim{display:inline-flex;align-items:center;gap:6px;font:500 12px var(--mono);color:var(--muted);background:var(--sunk);border:1px solid var(--line);border-radius:999px;padding:3px 10px;width:max-content;max-width:100%}
+.sim::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);flex:none}
+nav.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+nav.steps button{all:unset;cursor:pointer;display:grid;gap:2px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+nav.steps button span{font:500 11px var(--mono);color:var(--muted)}
+nav.steps button b{font:600 15px var(--body)}
+nav.steps button[aria-current="true"]{border-color:var(--accent);box-shadow:inset 0 -3px 0 var(--accent)}
+button:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;display:grid;gap:16px;min-width:0}
+.why{color:var(--muted);margin:0;max-width:66ch}
+.btn{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;font:600 15px var(--body);background:var(--accent);color:var(--panel)}
+.btn.ghost{background:var(--sunk);color:var(--fg);border:1px solid var(--line)}
+.btn.he{background:var(--he);color:var(--panel)}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.pill{display:inline-block;font:500 12px var(--mono);padding:2px 8px;border-radius:999px;background:var(--sunk);color:var(--muted);white-space:nowrap}
+.pill.ok{background:var(--ok-soft);color:var(--ok)} .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.sb{background:var(--accent-soft);color:var(--accent)} .pill.he{background:var(--he-soft);color:var(--he)}
+.split{display:grid;grid-template-columns:260px minmax(0,1fr);gap:20px;align-items:start}
+/* Remote */
+.remote{background:var(--remote);color:var(--remote-fg);border-radius:40px 40px 32px 32px;padding:22px 20px 26px;display:grid;gap:14px;justify-items:center;box-shadow:0 10px 30px rgba(0,0,0,.18)}
+.remote .lcd{width:100%;background:#0b0a10;border:1px solid #3d3950;border-radius:10px;padding:10px;text-align:center;font:500 13px var(--mono);color:#cbbfff;min-height:42px;display:grid;place-items:center}
+.rk{all:unset;cursor:pointer;background:var(--remote-key);color:var(--remote-fg);border-radius:10px;padding:8px 10px;font:600 13px var(--body);text-align:center;transition:transform .08s,background .15s}
+.rk:active{transform:scale(.95)}
+.rk.pressed{background:#6d4ae0;color:#fff}
+.rk:focus-visible{outline:2px solid #cbbfff;outline-offset:2px}
+.rk.power{background:#b3261e;color:#fff;border-radius:50%;width:44px;height:44px;padding:0;display:grid;place-items:center;font-size:18px}
+.acts{display:grid;grid-template-columns:1fr;gap:6px;width:100%}
+.abc{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;width:100%}
+.dpad{display:grid;grid-template-columns:repeat(3,40px);grid-template-rows:repeat(3,40px);gap:4px}
+.dpad .rk{padding:0;display:grid;place-items:center;font-size:13px}
+.rlabel{font:500 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:#9b94b8;justify-self:start}
+/* Hubitat side */
+.he-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.devs{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.dev{border:1px solid var(--line);border-radius:10px;padding:12px;display:grid;gap:8px;background:var(--panel);transition:border-color .2s,background .2s}
+.dev.flash{border-color:var(--accent);background:var(--accent-soft)}
+.dev .top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.dev h3{font:600 15px var(--body);margin:0;overflow-wrap:anywhere}
+.dev small{color:var(--muted);font:12px var(--mono)}
+.sw{all:unset;cursor:pointer;width:44px;height:24px;border-radius:999px;background:var(--line);position:relative;flex:none}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:var(--panel);transition:left .15s}
+.sw[aria-pressed="true"]{background:var(--ok)}
+.sw[aria-pressed="true"]::after{left:23px}
+.sw.busy{background:var(--warn)}
+.lamp{width:30px;height:30px;border-radius:50%;background:var(--sunk);border:1px solid var(--line);flex:none;transition:background .2s,box-shadow .2s}
+.lamp.on{background:#ffd76a;border-color:#e7b93d;box-shadow:0 0 16px 4px rgba(255,200,80,.55)}
+.rule{border:1px dashed var(--line);border-radius:10px;padding:12px;font:14px var(--body);display:grid;gap:4px}
+.rule b{font-weight:700}
+.rule .fired{color:var(--ok);font:12px var(--mono)}
+.rule .wait{color:var(--muted);font:12px var(--mono)}
+.map{display:grid;gap:8px}
+.mrow{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1.4fr) auto;gap:10px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--sunk)}
+.mrow small{display:block;color:var(--muted);font:12px var(--mono)}
+.mrow select{font:14px var(--body);padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg);min-width:0}
+.found{display:grid;gap:8px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--sunk)}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:520px;font-size:15px}
+th,td{text-align:left;padding:10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:600 13px var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+/* Log */
+aside.log{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;display:grid;gap:10px;min-width:0}
+aside.log h2{font-size:15px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.entries{display:grid;gap:6px;max-height:300px;overflow-y:auto;font:12.5px/1.45 var(--mono);align-content:start}
+.entries p{margin:0;padding:6px 8px;border-radius:6px;background:var(--sunk);overflow-wrap:anywhere}
+.entries time{color:var(--muted);margin-right:6px}
+.entries .mq{background:var(--accent-soft);color:var(--accent)}
+.entries .mq b{font-weight:500}
+.entries .act{background:var(--ok-soft);color:var(--ok)}
+.entries .he{background:var(--he-soft);color:var(--he)}
+.empty{color:var(--muted);font:14px var(--body)}
+.note{font-size:14px;color:var(--muted)}
+footer{color:var(--muted);font-size:14px}
+footer a{color:var(--accent)}
+@media (max-width:820px){.split{grid-template-columns:minmax(0,1fr)} .remote{max-width:300px;justify-self:center;width:100%}}
+@media (max-width:560px){nav.steps{grid-template-columns:repeat(2,1fr)} .mrow{grid-template-columns:minmax(0,1fr)}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Hubitat Elevation × Sofabaton X2</span>
+    <h1>Sofabaton Integration Demo</h1>
+    <p class="lede">A click-through of what the integration does on a Hubitat hub: find an X2 hub on the network, keep every activity in sync both ways over local MQTT, and turn spare remote keys into buttons that control Hubitat lights. No hub needed.</p>
+    <span class="sim">Simulated, example hub and activities</span>
+  </header>
+
+  <nav class="steps" aria-label="Demo steps">
+    <button data-step="0"><span>Step 1</span><b>Add an X2 hub</b></button>
+    <button data-step="1"><span>Step 2</span><b>Two-way activities</b></button>
+    <button data-step="2"><span>Step 3</span><b>Remote buttons</b></button>
+    <button data-step="3"><span>Step 4</span><b>X2 and X1S</b></button>
+  </nav>
+
+  <section class="panel" id="stage"></section>
+
+  <aside class="log" aria-live="polite">
+    <h2>Hub log, with local MQTT traffic <button class="btn ghost" id="clear" style="padding:2px 10px;font-size:12px">Clear</button></h2>
+    <div class="entries" id="entries"><p class="empty">MQTT messages, activity changes and Hubitat actions appear here as they happen.</p></div>
+  </aside>
+
+  <footer>Built by JD Thomas for the Hubitat community. Source and install: <a href="https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/SofaBaton%20Integration" target="_blank" rel="noopener">GitHub</a>. Sofabaton is a trademark of its owner; this is an independent community integration.</footer>
+</div>
+
+<script>
+const MAC="AABBCCDDEEFF";
+const S={
+  step:0, found:false, added:false, hubName:"Living Room",
+  acts:[
+    {id:101, name:"Watch Apple TV", on:false, busy:null},
+    {id:102, name:"Watch LG Smart TV", on:false, busy:null},
+    {id:103, name:"Listen to Music", on:false, busy:null}
+  ],
+  keys:{1:"HE Button 1",2:"HE Button 2",3:"HE Button 3"},
+  keyMap:{A:1,B:2,C:3},
+  lights:[{id:"lamp",name:"Living Room Lamp",on:false},{id:"c3",name:"Canopy 3",on:false},{id:"c4",name:"Canopy 4",on:false},{id:"dim",name:"Living Room Lights",on:true}],
+  actions:{1:{devs:["lamp"],act:"toggle"},2:{devs:["c3","c4"],act:"toggle"},3:{devs:["lamp","c3","c4"],act:"off"}},
+  movieRuns:0, learned:false
+};
+const $=s=>document.querySelector(s);
+const now=()=>new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit",second:"2-digit"});
+function log(msg,cls=""){
+  const box=$("#entries"); box.querySelector(".empty")?.remove();
+  const p=document.createElement("p"); if(cls) p.className=cls;
+  p.innerHTML=`<time>${now()}</time>${msg}`; box.prepend(p);
+}
+function mq(dir,topic,payload){ log(`${dir==="up"?"⇧ hub → Hubitat":"⇩ Hubitat → hub"} <b>${topic}</b> ${payload}`,"mq"); }
+$("#clear").onclick=()=>{$("#entries").innerHTML='<p class="empty">MQTT messages, activity changes and Hubitat actions appear here as they happen.</p>'};
+const label=a=>`${S.hubName}-${a.name}`;
+const running=()=>S.acts.find(a=>a.on);
+
+function go(n){
+  if(n>0 && !S.added){ n=0; log("Add the X2 hub first.","he"); }
+  S.step=n;
+  document.querySelectorAll("nav.steps button").forEach(b=>b.setAttribute("aria-current", +b.dataset.step===n));
+  render();
+}
+document.querySelectorAll("nav.steps button").forEach(b=>b.onclick=()=>go(+b.dataset.step));
+function render(){ [stepAdd,stepActs,stepButtons,stepModels][S.step](); }
+
+/* ---------- Step 1 ---------- */
+function stepAdd(){
+  $("#stage").innerHTML=`
+    <h2>Add an X2 hub</h2>
+    <p class="why">The X2 talks to Hubitat's built-in MQTT broker, so nothing leaves your network. Point the X2 at the broker once in the Sofabaton app, then let Hubitat find it. No MAC address to look up.</p>
+    <div class="row">
+      <span class="pill ok">Hubitat MQTT broker: running</span>
+      <span class="pill sb">Sofabaton app: connected to broker</span>
+    </div>
+    ${!S.found?`
+      <div class="found">
+        <b>Find My X2</b>
+        <span class="note">Start or switch any activity on the remote, then check again. Volume and channel presses never touch the network, so they won't show up.</span>
+        <div class="row"><button class="btn" id="press">Press "Watch Apple TV" on the remote</button><button class="btn ghost" id="check">Check Again</button></div>
+      </div>`:`
+      <div class="found">
+        <b>X2 hubs found</b>
+        <div class="row"><span class="pill sb">${MAC}</span><span class="note">seen on activity/${MAC}/activity_control_up</span></div>
+        <div class="row">${S.added?`<span class="pill ok">Added as "${S.hubName}"</span>`:`<button class="btn" id="add">Add This Hub</button>`}</div>
+      </div>`}
+    ${S.added?`
+      <div class="devs">${S.acts.map(a=>`<div class="dev"><div class="top"><h3>${label(a)}</h3><span class="pill ${a.on?"ok":""}">${a.on?"on":"off"}</span></div><small>activity_id ${a.id} · created automatically</small></div>`).join("")}</div>
+      <p class="note">Activities are named Hub-Activity so they group together in Room Lighting and other device pickers.</p>
+      <div class="row"><button class="btn ghost" id="next">Next: two-way activities</button></div>`:""}`;
+  const pr=$("#press"); if(pr) pr.onclick=()=>{ S.acts[0].on=true; S.pressedOnce=true; mq("up",`activity/${MAC}/activity_control_up`,'{"activity_id":101,"state":"on"}'); log("Bridge: new X2 seen, MAC "+MAC,"he"); };
+  const ck=$("#check"); if(ck) ck.onclick=()=>{ if(!S.pressedOnce){ log("Find My X2: nothing yet. Start an activity on the remote first.","he"); return; } S.found=true; render(); };
+  const ad=$("#add"); if(ad) ad.onclick=()=>{
+    S.added=true;
+    mq("down",`activity/${MAC}/list_request`,'{"data":"activity_list"}');
+    setTimeout(()=>{
+      mq("up",`activity/${MAC}/list`,`{"data":[${S.acts.map(a=>`{"activity_id":${a.id},"activity_name":"${a.name}","state":"${a.on?"on":"off"}"}`).join(",")}]}`);
+      S.acts.forEach(a=>log(`Created activity "${label(a)}"`,"act"));
+      render();
+    },350);
+    render();
+  };
+  const nx=$("#next"); if(nx) nx.onclick=()=>go(1);
+}
+
+/* ---------- Remote ---------- */
+function remoteHtml(opts){
+  const r=running();
+  return `<div class="remote" aria-label="Simulated remote">
+    <div class="lcd" id="lcd">${r?r.name:"Off"}</div>
+    ${opts.activities?`<span class="rlabel">Activities</span><div class="acts">${S.acts.map(a=>`<button class="rk ${a.on?"pressed":""}" data-ract="${a.id}">${a.name}</button>`).join("")}</div>`:""}
+    <div class="dpad" aria-hidden="true"><span></span><button class="rk" tabindex="-1" data-nav>▲</button><span></span><button class="rk" tabindex="-1" data-nav>◀</button><button class="rk" tabindex="-1" data-nav>OK</button><button class="rk" tabindex="-1" data-nav>▶</button><span></span><button class="rk" tabindex="-1" data-nav>▼</button><span></span></div>
+    <span class="rlabel">Custom keys</span>
+    <div class="abc">${["A","B","C"].map(k=>`<button class="rk" data-key="${k}">${k}</button>`).join("")}</div>
+    <button class="rk power" data-power aria-label="Power Off">⏻</button>
+  </div>`;
+}
+function bindRemote(){
+  document.querySelectorAll("[data-ract]").forEach(b=>b.onclick=()=>remoteActivity(+b.dataset.ract));
+  document.querySelectorAll("[data-power]").forEach(b=>b.onclick=powerOff);
+  document.querySelectorAll("[data-key]").forEach(b=>b.onclick=()=>pressKey(b.dataset.key));
+  document.querySelectorAll("[data-nav]").forEach(b=>b.onclick=()=>log("Remote: navigation key. Sent to the TV over IR, nothing on the network.","he"));
+}
+function setOnly(id){ S.acts.forEach(a=>{a.on=(a.id===id); a.busy=null;}); }
+function remoteActivity(id){
+  const a=S.acts.find(x=>x.id===id);
+  mq("up",`activity/${MAC}/activity_control_up`,`{"activity_id":${id},"state":"on"}`);
+  const prev=running();
+  setOnly(id);
+  log(`${label(a)} → on${prev&&prev.id!==id?`, ${label(prev)} → off`:""}`,"act");
+  movieRule(a);
+  render(); flash("act-"+id);
+}
+function powerOff(){
+  mq("up",`activity/${MAC}/activity_control_up`,'{"activity_id":255,"state":"off"}');
+  S.acts.forEach(a=>{a.on=false;a.busy=null;});
+  log("255 = hub-wide off. Every activity → off","act");
+  render();
+}
+function heToggle(id){
+  const a=S.acts.find(x=>x.id===id);
+  if(a.busy) return;
+  const turnOn=!a.on;
+  if(!turnOn && !a.on) return;
+  a.busy=turnOn?"starting":"stopping";
+  log(`Hubitat: ${label(a)} ${turnOn?"on()":"off()"}`,"he");
+  mq("down",`activity/${MAC}/activity_control_down`,`{"data":{"activity_id":${id},"state":"${turnOn?"on":"off"}"}}`);
+  render();
+  setTimeout(()=>{
+    if(turnOn){ mq("up",`activity/${MAC}/activity_control_up`,`{"activity_id":${id},"state":"on"}`); const prev=running(); setOnly(id); log(`Hub confirmed: ${label(a)} → on${prev&&prev.id!==id?`, ${label(prev)} → off`:""}`,"act"); movieRule(a); }
+    else { mq("up",`activity/${MAC}/activity_control_up`,'{"activity_id":255,"state":"off"}'); S.acts.forEach(x=>{x.on=false;x.busy=null;}); log("Hub confirmed: off (255, hub-wide)","act"); }
+    render(); flash("act-"+id);
+  },2600);
+}
+function movieRule(a){
+  if(a.id===101){ const d=S.lights.find(l=>l.id==="dim"); S.movieRuns++; d.on=false; log("Rule ran: Movie time. Living Room Lights → 10%","he"); }
+}
+function flash(id){const el=document.getElementById(id); if(!el) return; el.classList.add("flash"); setTimeout(()=>el.classList.remove("flash"),1400);}
+
+/* ---------- Step 2 ---------- */
+function stepActs(){
+  $("#stage").innerHTML=`
+    <h2>Two-way activities</h2>
+    <p class="why">Each activity is a Hubitat switch. Start one from the remote and Hubitat knows instantly. Turn one on from Hubitat and the X2 runs it. Only one activity runs at a time, and Power Off turns everything off.</p>
+    <div class="split">
+      ${remoteHtml({activities:true})}
+      <div style="display:grid;gap:14px;min-width:0">
+        <div class="he-head"><span class="pill he">Hubitat devices</span><span class="note">Tap a switch to control the X2 from Hubitat</span></div>
+        <div class="devs">${S.acts.map(a=>`<div class="dev" id="act-${a.id}"><div class="top"><h3>${label(a)}</h3>
+          <button class="sw ${a.busy?"busy":""}" data-he="${a.id}" aria-pressed="${a.on}" aria-label="${label(a)}"></button></div>
+          <small>activityStatus: ${a.busy||(a.on?"on":"off")}</small></div>`).join("")}</div>
+        <div class="rule"><b>Rule: Movie time</b>When ${S.hubName}-Watch Apple TV turns on → dim Living Room Lights to 10%
+          <span class="${S.movieRuns?"fired":"wait"}">${S.movieRuns?`Ran ${S.movieRuns}×`:"Waiting"}</span></div>
+        <p class="note">Commands from Hubitat confirm after the X2 finishes its start or stop sequence, about 8 to 10 seconds on a real hub (shortened here). Until then the activity shows starting or stopping.</p>
+        <div class="row"><button class="btn ghost" id="next">Next: remote buttons</button></div>
+      </div>
+    </div>`;
+  bindRemote();
+  document.querySelectorAll("[data-he]").forEach(b=>b.onclick=()=>heToggle(+b.dataset.he));
+  $("#next").onclick=()=>go(2);
+}
+
+/* ---------- Step 3 ---------- */
+function pressKey(k){
+  const r=running();
+  if(!r){ log(`Remote: key ${k} isn't assigned outside an activity, so nothing is sent. Start an activity first.`,"he"); return; }
+  const btn=S.keyMap[k];
+  mq("up",`${MAC}/up`,`{"device_id":4,"key_id":${btn}}`);
+  if(!S.learned){ S.learned=true; log("Hub learned the Hubitat Control remote and imported its command names","he"); }
+  log(`${S.hubName}: button ${btn} pushed (${S.keys[btn]})`,"he");
+  const m=S.actions[btn];
+  if(m && m.devs.length){
+    const devs=S.lights.filter(l=>m.devs.includes(l.id));
+    let act=m.act; if(act==="toggle") act=devs.some(d=>d.on)?"off":"on";
+    devs.forEach(d=>d.on=(act==="on"));
+    log(`Button Actions: turned ${act} ${devs.map(d=>d.name).join(", ")}`,"act");
+  }
+  if(S.step===2) render();
+  document.querySelectorAll(`[data-key="${k}"]`).forEach(b=>{b.classList.add("pressed"); setTimeout(()=>b.classList.remove("pressed"),250);});
+}
+function stepButtons(){
+  const choices=S.lights.filter(l=>l.id!=="dim");
+  const groups={"lamp":"Living Room Lamp","c3,c4":"Canopy 3 + Canopy 4","lamp,c3,c4":"All three"};
+  $("#stage").innerHTML=`
+    <h2>Remote buttons that control Hubitat</h2>
+    <p class="why">In the Sofabaton app, add a "Hubitat Control" remote with a few commands and assign them to spare keys. Each press arrives in Hubitat as a button, and the Button Actions page decides what it controls. No rules needed.</p>
+    <div class="split">
+      ${remoteHtml({activities:true})}
+      <div style="display:grid;gap:14px;min-width:0">
+        <div class="he-head"><span class="pill he">Button Actions</span><span class="note">${running()?`Activity running: ${running().name}`:"Start an activity first. Keys only send inside an activity they're assigned in."}</span></div>
+        <div class="map">${[1,2,3].map(b=>{const m=S.actions[b]; const key=Object.keys(S.keyMap).find(k=>S.keyMap[k]===b);
+          return `<div class="mrow"><div><b>Key ${key} · ${S.keys[b]}</b><small>button ${b}</small></div>
+            <select data-devs="${b}" aria-label="Devices for button ${b}">${Object.entries(groups).map(([v,t])=>`<option value="${v}" ${m.devs.join(",")===v?"selected":""}>${t}</option>`).join("")}</select>
+            <select data-act="${b}" aria-label="Action for button ${b}">${[["toggle","Toggle"],["on","Turn on"],["off","Turn off"]].map(([v,t])=>`<option value="${v}" ${m.act===v?"selected":""}>${t}</option>`).join("")}</select></div>`;}).join("")}</div>
+        <div class="devs">${choices.map(l=>`<div class="dev"><div class="top"><h3>${l.name}</h3><span class="lamp ${l.on?"on":""}" role="img" aria-label="${l.on?"on":"off"}"></span></div><small>switch: ${l.on?"on":"off"}</small></div>`).join("")}</div>
+        <p class="note">Toggle works as a group: if any are on, all turn off, otherwise all turn on. Button events also fire on the hub device, so Rule Machine and Button Controller can use them too.</p>
+        <div class="row"><button class="btn ghost" id="next">Next: X2 and X1S</button></div>
+      </div>
+    </div>`;
+  bindRemote();
+  document.querySelectorAll("[data-devs]").forEach(s=>s.onchange=()=>{S.actions[s.dataset.devs].devs=s.value.split(","); log(`Button Actions: button ${s.dataset.devs} → ${s.options[s.selectedIndex].text}`,"he");});
+  document.querySelectorAll("[data-act]").forEach(s=>s.onchange=()=>{S.actions[s.dataset.act].act=s.value; log(`Button Actions: button ${s.dataset.act} → ${s.options[s.selectedIndex].text}`,"he");});
+  $("#next").onclick=()=>go(3);
+}
+
+/* ---------- Step 4 ---------- */
+function stepModels(){
+  $("#stage").innerHTML=`
+    <h2>X2 and X1S</h2>
+    <p class="why">Both models work with the integration. The X2 is fully local and two-way over MQTT. The X1S reports activity changes locally, and Hubitat can start and stop its activities through Sofabaton's cloud webhook if you add one.</p>
+    <div class="tbl"><table>
+      <thead><tr><th>Hub</th><th>Hubitat knows the activity</th><th>Hubitat starts/stops it</th><th>Activities</th><th>Remote buttons</th></tr></thead>
+      <tbody>
+        <tr><td><b>X2</b></td><td>Yes, local MQTT</td><td>Yes, local MQTT</td><td>Added automatically</td><td>Yes, with Button Actions</td></tr>
+        <tr><td><b>X1S</b></td><td>Yes, local HTTP</td><td>Optional, cloud webhook</td><td>Added by you</td><td>Button events for rules</td></tr>
+        <tr><td><b>X1</b></td><td colspan="4">Not supported. Its IP control can only send to a port Hubitat doesn't listen on.</td></tr>
+      </tbody>
+    </table></div>
+    <div class="rule"><b>X1S in practice</b>The X1S sends a short message to Hubitat when an activity starts (for example a body of <code>watchappletv</code>), and the matching activity switch turns on. Without a webhook, the activity shows "Follow only": Hubitat knows what's running and can trigger rules from it.</div>
+    <div class="row"><button class="btn" id="x1s">Simulate an X1S activity starting</button></div>
+    <p class="note">Requirements for X2: Hubitat 2.5.2.126 or newer, with the built-in MQTT broker enabled through MQTT Import Integration.</p>`;
+  $("#x1s").onclick=()=>{ log('⇧ X1S → Hubitat <b>PUT http://[hub]:39501/</b> body: watchappletv',"mq"); log("Den-Watch Apple TV → on (Follow only)","act"); };
+}
+go(0);
+</script>
+</body>
+</html>
