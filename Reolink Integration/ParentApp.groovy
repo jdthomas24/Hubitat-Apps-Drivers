@@ -1005,8 +1005,9 @@ private List tipsTopics() {
             ].join("")]
     ]
     def order = ["sources", "network", "compatibility", "removal", "ids", "polling", "events",
-                 "sleep", "firmware", "ptz", "calibration", "pir", "recording", "snapshots", "logging"]
-    order.collect { id -> topics.find { it.id == id } }
+                 "sleep", "firmware", "ptz", "calibration", "pir", "spotlight", "recording", "snapshots", "logging"]
+    // Topics missing from "order" are appended rather than silently dropped.
+    order.collect { id -> topics.find { it.id == id } }.findAll() + topics.findAll { !order.contains(it.id) }
 }
 
 /** Checks the minimum firmware that includes native source discovery.
