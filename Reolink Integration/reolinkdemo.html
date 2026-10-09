@@ -75,7 +75,14 @@ nav.steps button:focus-visible,.btn:focus-visible,.tog:focus-visible{outline:2px
 .attrs div:nth-child(odd){color:var(--muted);background:var(--sunk)}
 .attrs div.chg{color:var(--accent);font-weight:500}
 .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
-.cmds{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;align-content:start}
+.cmds{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;align-content:start}
+.cmd2{display:grid;gap:6px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--sunk);min-width:0}
+.cmd2 b{font:600 13.5px var(--body)}
+.cmd2 .ctl{display:flex;gap:6px;align-items:center;min-width:0}
+.cmd2 select,.cmd2 input{font:13px var(--mono);padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg);min-width:0;flex:1}
+.cmd2 input{max-width:70px;flex:none}
+.cmd2 .btn{padding:6px 12px;font-size:13px}
+.patio{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--sunk);width:max-content;max-width:100%}
 .rule{border:1px dashed var(--line);border-radius:10px;padding:12px;font:13px var(--mono);display:grid;gap:4px}
 .rule b{font:600 14px var(--body)}
 .rule .fired{color:var(--ok)}
@@ -105,7 +112,7 @@ footer a{color:var(--accent)}
 </style>
 </head>
 <body>
-
+ 
 <div class="wrap">
   <header>
     <span class="eyebrow">Hubitat Elevation × Reolink</span>
@@ -113,14 +120,14 @@ footer a{color:var(--accent)}
     <p class="lede">A click-through of what the integration does on a Hubitat hub: add a Reolink Home Hub, bring its cameras in, react to detections in real time, and drive NVR recording from home modes. No hub needed.</p>
     <span class="sim">Simulated, example devices and events</span>
   </header>
-
+ 
   <nav class="steps" aria-label="Demo steps">
     <button data-step="0"><span>Step 1</span><b>Add a source</b></button>
     <button data-step="1"><span>Step 2</span><b>Live detections</b></button>
     <button data-step="2"><span>Step 3</span><b>Device controls</b></button>
     <button data-step="3"><span>Step 4</span><b>Recording presets</b></button>
   </nav>
-
+ 
   <div class="main">
     <section class="panel" id="stage"></section>
     <aside class="log" aria-live="polite">
@@ -128,10 +135,10 @@ footer a{color:var(--accent)}
       <div class="entries" id="entries"><p class="empty">Events and rule actions appear here as they happen.</p></div>
     </aside>
   </div>
-
+ 
   <footer>Built by JD Thomas. Community thread: <a href="https://community.hubitat.com/t/165352" target="_blank" rel="noopener">community.hubitat.com/t/165352</a> · Source: <a href="https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration" target="_blank" rel="noopener">GitHub</a></footer>
 </div>
-
+ 
 <script>
 const S = {
   step:0, discovered:false, created:false,
@@ -139,11 +146,11 @@ const S = {
     {id:"fd", name:"Front Door", model:"Video Doorbell WiFi", type:"doorbell", on:true},
     {id:"dw", name:"Driveway", model:"RLC-1240A", type:"camera", on:true},
     {id:"by", name:"Back Yard Cam", model:"Argus 4 Pro", type:"camera", battery:true, on:true},
-    {id:"gw", name:"Garage West", model:"Duo 3V PoE", type:"camera", on:true},
+    {id:"gw", name:"Back Porch", model:"Duo 3V PoE", type:"camera", on:true},
     {id:"tm", name:"Side Gate", model:"Trackmix", type:"camera", ptz:true, on:false}
   ],
   attr:{}, lastChg:{}, mode:"Home", recEnabled:false, sel:"by",
-  rules:{porch:0, notify:0, arm:0}
+  rules:{porch:0, notify:0, arm:0, patio:0}, patio:false
 };
 function initAttrs(){
   S.chans.forEach(c=>{
@@ -151,7 +158,7 @@ function initAttrs(){
       batteryWired: c.battery ? "Battery, plugged in" : "Wired", supportedFeatures: feats(c)};
     if(c.battery){a.battery="100%"; a.chargingStatus="plugged_in"; a.pirEnabled="true";}
     if(c.type==="doorbell"){a.pushed="0"; a.package="inactive";}
-    if(c.type==="camera" && !c.battery){a.spotlight="off"; a.nightVision="auto";}
+    if(c.type==="camera" && !c.battery){a.spotlight="off"; a.spotlightAuto="on"; a.nightVision="auto";}
     if(c.ptz) a.ptzPreset="Home";
     S.attr[c.id]=a;
   });
@@ -176,7 +183,7 @@ $("#clear").onclick=()=>{$("#entries").innerHTML='<p class="empty">Events and ru
 function setA(id,k,v){S.attr[id][k]=v; S.lastChg[id]=S.lastChg[id]||{}; S.lastChg[id][k]=Date.now();}
 const chan=id=>S.chans.find(c=>c.id===id);
 const active=()=>S.chans.filter(c=>c.on);
-
+ 
 function go(n){
   if(n>0 && !S.created){n=0; log("Add the Home Hub and create devices first.","cmd");}
   S.step=n;
@@ -184,9 +191,9 @@ function go(n){
   render();
 }
 document.querySelectorAll("nav.steps button").forEach(b=>b.onclick=()=>go(+b.dataset.step));
-
+ 
 function render(){ [stepAdd,stepLive,stepDevice,stepRec][S.step](); }
-
+ 
 function stepAdd(){
   $("#stage").innerHTML=`
     <h2>Add a Reolink source</h2>
@@ -209,10 +216,10 @@ function stepAdd(){
   const cr=$("#create"); if(cr) cr.onclick=()=>{S.created=true; active().forEach(c=>log(`Created device "${c.name}"`)); log("Live event connection opened to Home Hub Pro"); render();};
   const nx=$("#next"); if(nx) nx.onclick=()=>go(1);
 }
-
+ 
 function camCard(c){
   const a=S.attr[c.id];
-  const show=["motion","lastMotionType","lastMotionTime","batteryWired"];
+  const show=["motion","lastMotionType","lastMotionTime"].concat(a.spotlightAuto ? ["spotlight","spotlightAuto"] : ["batteryWired"]);
   return `<article class="dev" id="d-${c.id}">
     <header><div><h3>${c.name}</h3><small>${c.model}</small></div><span class="pill ${a.motion==="active"?"hot":""}">${a.motion==="active"?"motion":"idle"}</span></header>
     <div class="cam"><span class="box" style="left:38%;top:30%;width:18%;height:52%"></span><span class="stamp">${c.name} · snapshot</span></div>
@@ -220,7 +227,7 @@ function camCard(c){
   </article>`;
 }
 function recent(id,k){return S.lastChg[id]?.[k] && Date.now()-S.lastChg[id][k]<4000;}
-
+ 
 function stepLive(){
   const devs=active();
   $("#stage").innerHTML=`
@@ -230,70 +237,125 @@ function stepLive(){
       ${devs.some(c=>c.id==="dw")?'<button class="btn" data-ev="dw:person">Person at Driveway</button><button class="btn ghost" data-ev="dw:vehicle">Car in Driveway</button>':""}
       ${devs.some(c=>c.id==="fd")?'<button class="btn" data-ev="fd:ring">Ring the doorbell</button>':""}
       ${devs.some(c=>c.id==="by")?'<button class="btn ghost" data-ev="by:pet">Dog in Back Yard</button>':""}
+      ${devs.some(c=>c.id==="gw")?'<button class="btn ghost" data-ev="gw:night">Someone on Back Porch at night</button>':""}
     </div>
+    ${devs.some(c=>c.id==="gw")?`<div class="patio"><button class="tog" id="patio" aria-pressed="${S.patio}" aria-label="Patio switch"></button><span><b>Patio switch</b> (sitting outside)</span></div>`:""}
     <div class="devgrid">${devs.map(camCard).join("")}</div>
     <div class="two">
       <div class="rule"><b>Rule: Driveway person at night</b>When Driveway person becomes active → turn on Porch Light, notify phone<span class="${S.rules.porch?"fired":""}">${S.rules.porch?`Ran ${S.rules.porch}×`:"Waiting"}</span></div>
       <div class="rule"><b>Rule: Doorbell pressed</b>When Front Door button 1 pushed → chime Kitchen speaker, flash hallway lights<span class="${S.rules.notify?"fired":""}">${S.rules.notify?`Ran ${S.rules.notify}×`:"Waiting"}</span></div>
+      ${devs.some(c=>c.id==="gw")?`<div class="rule"><b>Rule: Patio time</b>When Patio switch turns on → Back Porch setSpotlight "auto off". When it turns off → "auto on".<span class="${S.rules.patio?"fired":""}">${S.rules.patio?`Ran ${S.rules.patio}×`:"Waiting"}</span></div>`:""}
     </div>
     <div class="row"><button class="btn ghost" id="next">Next: device controls</button></div>`;
   document.querySelectorAll("[data-ev]").forEach(b=>b.onclick=()=>fire(b.dataset.ev));
+  const pt=$("#patio"); if(pt) pt.onclick=()=>{
+    S.patio=!S.patio; S.rules.patio++;
+    log(`Patio switch turned ${S.patio?"on":"off"}`);
+    setA("gw","spotlightAuto",S.patio?"off":"on");
+    log(`Rule ran: Back Porch setSpotlight "${S.patio?"auto off":"auto on"}"`,"rule");
+    log(`Back Porch: spotlight auto set to ${S.patio?"Off":"Night Smart Mode"}`,"cmd");
+    render();
+  };
   $("#next").onclick=()=>go(2);
 }
 function fire(ev){
   const [id,kind]=ev.split(":"); const c=chan(id); const t=now();
-  const type = kind==="ring" ? "visitor" : kind;
+  const type = kind==="ring" ? "visitor" : kind==="night" ? "person" : kind;
   setA(id,"motion","active"); setA(id,"lastMotionType",type); setA(id,"lastMotionTime",t);
-  if(kind!=="ring") setA(id,kind,"active"); else setA(id,"pushed","1");
+  if(kind==="ring") setA(id,"pushed","1"); else setA(id,type,"active");
   log(`${c.name}: motion active (${type})`);
   if(kind==="person"){ S.rules.porch++; log("Rule ran: Porch Light on, phone notified","rule"); }
   if(kind==="ring"){ S.rules.notify++; log(`${c.name}: button 1 pushed`); log("Rule ran: Kitchen chime, hallway lights flashed","rule"); }
+  if(kind==="night"){
+    if(S.attr[id].spotlightAuto==="on"){ setA(id,"spotlight","on"); log(`${c.name}: spotlight turned on by itself (Night Smart Mode)`); }
+    else log(`${c.name}: spotlight stays off (auto off)`,"rule");
+  }
   render(); flash(id);
-  setTimeout(()=>{ setA(id,"motion","inactive"); if(kind!=="ring") S.attr[id][kind]="inactive"; log(`${c.name}: motion inactive`); if(S.step===1){render();} },3500);
+  setTimeout(()=>{ setA(id,"motion","inactive"); if(kind!=="ring") S.attr[id][type]="inactive";
+    if(kind==="night" && S.attr[id].spotlight==="on"){ setA(id,"spotlight","off"); log(`${c.name}: spotlight off (timer)`); }
+    log(`${c.name}: motion inactive`); if(S.step===1){render();} },3500);
 }
 function flash(id){const el=$("#d-"+id); if(!el) return; el.classList.add("flash"); setTimeout(()=>el.classList.remove("flash"),1600);}
-
+ 
+function cmdsFor(c){
+  const L=[];
+  if(c.type==="doorbell"){
+    L.push({id:"check",label:"Check",opts:["battery","abilities","recording schedule"]});
+    L.push({id:"setInterval",label:"Set Interval",opts:["poll","snapshot"],num:"sec"});
+    L.push({id:"setPir",label:"Set Pir",opts:["on","off"]});
+  } else {
+    L.push({id:"check",label:"Check",opts:["battery","abilities","ptz calibration","recording schedule"]});
+    L.push({id:"setInterval",label:"Set Interval",opts:["poll","snapshot"],num:"sec"});
+    L.push({id:"ptz",label:"Ptz",opts:["Left","Right","Up","Down","ZoomInc","ZoomDec","Stop","Calibrate"]});
+    L.push({id:"ptzPreset",label:"Ptz Preset",opts:["go to","save here"],num:"ID"});
+    L.push({id:"setSpotlight",label:"Set Spotlight",opts:["on","off","auto on","auto off"]});
+    L.push({id:"setNightVision",label:"Set Night Vision",opts:["auto","on","off"]});
+    L.push({id:"setSiren",label:"Set Siren",opts:["on","off"]});
+    L.push({id:"setPir",label:"Set Pir",opts:["on","off"]});
+  }
+  L.push({id:"takeSnapshot",label:"Take Snapshot"});
+  return L;
+}
 function stepDevice(){
-  const devs=active(); if(!devs.find(c=>c.id===S.sel)) S.sel=devs[0].id;
+  const devs=active(); if(!devs.find(d=>d.id===S.sel)) S.sel=devs[0].id;
   const c=chan(S.sel), a=S.attr[c.id];
-  const cmds=[];
-  cmds.push(["take","Take Snapshot"],["refresh","Refresh"]);
-  if(c.type==="camera" && !c.battery) cmds.push(["spot","Spotlight "+(a.spotlight==="on"?"off":"on")],["siren","Sound Siren"],["nv","Night Vision: "+(a.nightVision==="auto"?"on":"auto")]);
-  if(c.battery) cmds.push(["pir","PIR "+(a.pirEnabled==="true"?"off":"on")],["bat","Check Battery"]);
-  if(c.ptz) cmds.push(["ptz","Go to preset: "+(a.ptzPreset==="Home"?"Gate":"Home")]);
-  if(c.type==="doorbell") cmds.push(["led","Status LED off"]);
+  const L=cmdsFor(c);
   $("#stage").innerHTML=`
     <h2>One device, all its controls</h2>
-    <p class="why">Every camera and doorbell is a normal Hubitat device. The app reads what each model supports and only offers what it can do.</p>
+    <p class="why">Every camera and doorbell is a normal Hubitat device. Commands are grouped into dropdowns so the page stays short, and Supported Features shows what each model can actually do.</p>
     <div class="row">${devs.map(d=>`<button class="btn ${d.id===S.sel?"":"ghost"}" data-sel="${d.id}">${d.name}</button>`).join("")}</div>
     <div class="two">
       <div class="attrs" style="align-self:start">${Object.entries(a).map(([k,v])=>`<div>${k}</div><div class="${recent(c.id,k)?"chg":""}">${v}</div>`).join("")}</div>
-      <div style="display:grid;gap:10px;align-content:start">
-        <span class="eyebrow" style="color:var(--muted)">Commands</span>
-        <div class="cmds">${cmds.map(([k,l])=>`<button class="btn ghost" data-cmd="${k}">${l}</button>`).join("")}</div>
+      <div style="display:grid;gap:10px;align-content:start;min-width:0">
+        <span class="eyebrow" style="color:var(--muted)">Commands (${L.length + 1} with Refresh)</span>
+        <div class="cmds">${L.map(k=>`<div class="cmd2"><b>${k.label}</b><div class="ctl">
+          ${k.opts?`<select id="sel-${k.id}" aria-label="${k.label} option">${k.opts.map(o=>`<option>${o}</option>`).join("")}</select>`:""}
+          ${k.num?`<input id="num-${k.id}" type="number" min="0" value="${k.num==="ID"?1:30}" aria-label="${k.num}">`:""}
+          <button class="btn ghost" data-run="${k.id}">Run</button></div></div>`).join("")}</div>
       </div>
     </div>
     <div class="row"><button class="btn ghost" id="next">Next: recording presets</button></div>`;
   document.querySelectorAll("[data-sel]").forEach(b=>b.onclick=()=>{S.sel=b.dataset.sel; render();});
-  document.querySelectorAll("[data-cmd]").forEach(b=>b.onclick=()=>cmd(c,b.dataset.cmd));
+  document.querySelectorAll("[data-run]").forEach(b=>b.onclick=()=>{
+    const k=b.dataset.run;
+    run(c,k,$("#sel-"+k)?.value,$("#num-"+k)?.value);
+  });
   $("#next").onclick=()=>go(3);
 }
-function cmd(c,k){
-  const a=S.attr[c.id], id=c.id;
-  const map={
-    take:()=>log(`${c.name}: snapshot saved`,"cmd"),
-    refresh:()=>log(`${c.name}: state refreshed`,"cmd"),
-    spot:()=>{setA(id,"spotlight",a.spotlight==="on"?"off":"on"); log(`${c.name}: spotlight ${a.spotlight}`,"cmd");},
-    siren:()=>log(`${c.name}: siren sounded`,"cmd"),
-    nv:()=>{setA(id,"nightVision",a.nightVision==="auto"?"on":"auto"); log(`${c.name}: night vision ${a.nightVision}`,"cmd");},
-    pir:()=>{setA(id,"pirEnabled",a.pirEnabled==="true"?"false":"true"); log(`${c.name}: PIR ${a.pirEnabled==="true"?"enabled":"disabled"}, confirmed by camera`,"cmd");},
-    bat:()=>{setA(id,"battery","100%"); setA(id,"chargingStatus","plugged_in"); log(`${c.name}: battery 100%, plugged in`,"cmd");},
-    ptz:()=>{setA(id,"ptzPreset",a.ptzPreset==="Home"?"Gate":"Home"); log(`${c.name}: moved to preset ${a.ptzPreset}`,"cmd");},
-    led:()=>log(`${c.name}: status LED off`,"cmd")
-  };
-  map[k](); render();
+function run(c,k,v,n){
+  const a=S.attr[c.id], id=c.id, f=a.supportedFeatures;
+  const has=x=>f.includes(x);
+  const no=what=>log(`${c.name}: no ${what} on this model, nothing changed`,"cmd");
+  const tag=`${k}${v?` "${v}"`:""}${n!==undefined?` ${n}`:""}`;
+  log(`${c.name}: ${tag}`,"cmd");
+  switch(k){
+    case "takeSnapshot": log(`${c.name}: snapshot saved`); break;
+    case "check":
+      if(v==="battery"){ if(!c.battery){ log(`${c.name}: wired device, battery check skipped`); break; } setA(id,"battery","100%"); setA(id,"chargingStatus","plugged_in"); log(`${c.name}: battery 100%, plugged in`); }
+      else if(v==="abilities"){ setA(id,"supportedFeatures",f); log(`${c.name}: capabilities rechecked: ${f}`); }
+      else if(v==="ptz calibration"){ if(!has("PTZ")) return no("PTZ"); setA(id,"ptzCalibration","done"); log(`${c.name}: PTZ calibration done`); }
+      else log(`${c.name}: recording schedule logged (Full logging)`);
+      break;
+    case "setInterval": log(`${c.name}: ${v} interval set to ${n}s`); break;
+    case "ptz": if(!has("PTZ")) return no("PTZ");
+      if(v==="Calibrate"){ setA(id,"ptzCalibration","running"); log(`${c.name}: calibration started, checking progress`); setTimeout(()=>{ setA(id,"ptzCalibration","done"); log(`${c.name}: PTZ calibration done`); if(S.step===2) render(); },2500); }
+      else log(`${c.name}: moved ${v}`);
+      break;
+    case "ptzPreset": if(!has("PTZ")) return no("PTZ");
+      if(v==="save here") log(`${c.name}: current position saved as preset ${n}`);
+      else { setA(id,"ptzPreset",`ID ${n}`); log(`${c.name}: moved to preset ${n}`); }
+      break;
+    case "setSpotlight": if(!has("Spotlight")) return no("spotlight");
+      if(v==="on"||v==="off"){ setA(id,"spotlight",v); log(`${c.name}: spotlight ${v}`); }
+      else { const on=v==="auto on"; setA(id,"spotlightAuto",on?"on":"off"); log(`${c.name}: spotlight auto set to ${on?"Night Smart Mode":"Off"}, confirmed by camera`); }
+      break;
+    case "setNightVision": setA(id,"nightVision",v); log(`${c.name}: night vision ${v}`); break;
+    case "setSiren": if(!has("Siren")) return no("siren"); setA(id,"siren",v); log(`${c.name}: siren ${v}`); break;
+    case "setPir": if(!has("PIR")) return no("PIR sensor"); setA(id,"pirEnabled",v==="on"?"true":"false"); log(`${c.name}: PIR ${v==="on"?"enabled":"disabled"}, confirmed by camera`); break;
+  }
+  render();
 }
-
+ 
 const PRESETS={
   Home:{by:"none", dw:[20,6], gw:[22,6], fd:"skip", tm:[22,6]},
   Away:{by:"all", dw:"all", gw:"all", fd:"skip", tm:"all"}
@@ -329,3 +391,4 @@ go(0);
 </script>
 </body>
 </html>
+ 
