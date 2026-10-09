@@ -1,15 +1,18 @@
 /**
  * Reolink Camera (Component Driver)
- * Version: 1.6.7
+ * Version: 1.6.8
  *
  * Thin device: no HTTP of its own. Delegates everything to the parent app via
  * parent.componentX(this, ...), using data values sourceId/channel to
  * identify which source/channel this device maps to.
  *
- * v1.6.7 -- spotlightAutoOn/spotlightAutoOff: stop or allow the spotlight turning
- * on by itself for motion at night (Reolink app: Spotlight > Modes). New
- * spotlightAuto attribute (on/off), filled in by Refresh or Check Abilities on
- * Spotlight cameras. Spotlight On/Off still work either way.
+ * v1.6.8 -- Commands grouped into dropdowns (21 to 9): Check, Set Interval,
+ * Ptz (now includes Calibrate, which follows up on its own status), Ptz Preset,
+ * Set Spotlight, Set Siren, Set Pir. The old command names are kept as plain
+ * methods (not listed on the page) so existing rules keep working.
+ * Set Spotlight "auto on"/"auto off" control whether the spotlight turns on by
+ * itself for motion at night (Reolink app: Spotlight > Modes). New spotlightAuto
+ * attribute (on/off), filled in by Refresh or Check > abilities on Spotlight cameras.
  * v1.6.6 -- PIR fixes. pirOn()/pirOff() never changed the camera (it rejected
  * every request) but updated PIR Enabled anyway. They now just ask the app,
  * and receivePirState() updates PIR Enabled only once the camera confirms it.
@@ -77,35 +80,25 @@ metadata {
         attribute "supportedFeatures", "string"
         attribute "pirEnabled", "enum", ["true", "false"]
 
-        // ---- Core ----
+        // v1.6.8: grouped into dropdowns. Pre-1.6.8 names still work as methods (see Legacy below).
         command "takeSnapshot"
-        command "checkBattery", [[name: "Battery-mode devices only"]]
-        command "checkAbilities", [[name: "Refreshes the supportedFeatures attribute from the camera's current GetAbility data"]]
-        command "checkRecordingSchedule", [[name: "Diagnostic only -- reads and logs this channel's current NVR recording schedule, does NOT change anything. Set logging to Full to see the result."]]
-        command "setPollInterval", [[name: "seconds", type: "NUMBER"]]
-        command "setSnapshotInterval", [[name: "seconds", type: "NUMBER"]]
-
-        // ---- PTZ (pan/tilt/zoom cameras only, e.g. Trackmix, E1 Zoom) ----
-        command "ptz", [[name: "direction", type: "ENUM",
-            constraints: ["Left", "Right", "Up", "Down", "ZoomInc", "ZoomDec", "Stop"]]]
-        command "ptzGoToPreset", [[name: "presetId", type: "NUMBER",
-            description: "Preset ID set up in the Reolink app (e.g. 1 for your 'home' position)"]]
-        command "savePresetHere", [[name: "presetId", type: "NUMBER",
-            description: "Saves the camera's CURRENT position as this preset ID"],
-            [name: "name", type: "STRING", description: "Optional preset name"]]
-        command "calibratePtz", [[name: "PTZ cameras only -- recalibrates pan/tilt to fix preset drift over time"]]
-        command "checkPtzCalibrationStatus", [[name: "PTZ cameras only"]]
-
-        // ---- Accessories (model-dependent -- not every camera has these) ----
-        command "spotlightOn", [[name: "Spotlight-equipped cameras only"]]
-        command "spotlightOff", [[name: "Spotlight-equipped cameras only"]]
-        command "spotlightAutoOn", [[name: "Spotlight turns on by itself for motion at night (Night Smart Mode)"]]
-        command "spotlightAutoOff", [[name: "Spotlight no longer turns on for motion. Spotlight On/Off still work"]]
+        command "check", [[name: "item", type: "ENUM",
+            description: "Reads from the camera, changes nothing. Battery wakes a battery camera; recording schedule logs at Full.",
+            constraints: ["battery", "abilities", "ptz calibration", "recording schedule"]]]
+        command "setInterval", [[name: "interval", type: "ENUM", constraints: ["poll", "snapshot"]],
+            [name: "seconds", type: "NUMBER"]]
+        command "ptz", [[name: "action", type: "ENUM", description: "PTZ cameras only. Calibrate fixes preset drift.",
+            constraints: ["Left", "Right", "Up", "Down", "ZoomInc", "ZoomDec", "Stop", "Calibrate"]]]
+        command "ptzPreset", [[name: "action", type: "ENUM", constraints: ["go to", "save here"]],
+            [name: "presetId", type: "NUMBER", description: "Preset ID (e.g. 1 for your home position)"],
+            [name: "name", type: "STRING", description: "Optional, used by save here"]]
+        command "setSpotlight", [[name: "mode", type: "ENUM",
+            description: "Auto on/off: whether motion turns the light on at night",
+            constraints: ["on", "off", "auto on", "auto off"]]]
         command "setNightVision", [[name: "mode", type: "ENUM", constraints: ["auto", "on", "off"]]]
-        command "sirenOn", [[name: "Siren-equipped cameras only"]]
-        command "sirenOff", [[name: "Siren-equipped cameras only"]]
-        command "pirOn", [[name: "Enables the PIR motion trigger"]]
-        command "pirOff", [[name: "Disables the PIR motion trigger -- does not stop an in-progress recording"]]
+        command "setSiren", [[name: "state", type: "ENUM", constraints: ["on", "off"]]]
+        command "setPir", [[name: "state", type: "ENUM", description: "PIR motion trigger (battery cameras)",
+            constraints: ["on", "off"]]]
     }
     preferences {
         // Each header is the FIRST of its own 3-item row in this 3-column grid
@@ -114,7 +107,7 @@ metadata {
         input name: "batteryCheckEnabled", type: "bool", title: "Enable auto battery check", defaultValue: false,
             description: "Battery devices only, OFF by default. When ON, auto-checks and updates battery level " +
                 "on the interval below. Checking briefly wakes the device (negligible power at default " +
-                "interval). Ignored for wired devices. Check Battery still works manually any time regardless " +
+                "interval). Ignored for wired devices. Check > battery still works manually any time regardless " +
                 "of this setting."
         input name: "batteryCheckIntervalHours", type: "number", title: "Auto battery check interval (hours)", defaultValue: 12,
             description: "Only used if the setting above is ON."
@@ -262,9 +255,71 @@ def takeSnapshot() {
     parent?.componentTakeSnapshot(this, device.deviceNetworkId)
 }
 
-def ptz(direction) {
-    parent?.componentPtz(this, direction, device.deviceNetworkId)
+// ---- v1.6.8 grouped commands ----
+
+def check(item) {
+    switch (item?.toString()?.toLowerCase()) {
+        case "battery": checkBattery(); break
+        case "abilities": checkAbilities(); break
+        case "ptz calibration": checkPtzCalibrationStatus(); break
+        case "recording schedule": checkRecordingSchedule(); break
+        default: log.warn "${device.displayName}: unknown check '${item}'"
+    }
 }
+
+def setInterval(interval, seconds) {
+    Integer secs = toWholeNumber(seconds, "seconds", 1)
+    if (secs == null) return
+    if (interval?.toString()?.toLowerCase() == "snapshot") setSnapshotInterval(secs)
+    else setPollInterval(secs)
+}
+
+def ptz(action) {
+    if (action?.toString()?.equalsIgnoreCase("Calibrate")) { calibratePtz(); return }
+    parent?.componentPtz(this, action, device.deviceNetworkId)
+}
+
+def ptzPreset(action, presetId, name = null) {
+    Integer id = toWholeNumber(presetId, "preset ID", 0)
+    if (id == null) return
+    if (action?.toString()?.toLowerCase() == "save here") savePresetHere(id, name)
+    else ptzGoToPreset(id)
+}
+
+def setSpotlight(mode) {
+    switch (mode?.toString()?.toLowerCase()) {
+        case "on": spotlightOn(); break
+        case "off": spotlightOff(); break
+        case "auto on": parent?.componentSetSpotlightAuto(this, true, device.deviceNetworkId); break
+        case "auto off": parent?.componentSetSpotlightAuto(this, false, device.deviceNetworkId); break
+        default: log.warn "${device.displayName}: unknown spotlight mode '${mode}'"
+    }
+}
+
+def setNightVision(mode) {
+    parent?.componentSetNightVision(this, mode, device.deviceNetworkId)
+    sendEvent(name: "nightVision", value: mode)
+}
+
+def setSiren(value) {
+    if (value?.toString()?.toLowerCase() == "on") sirenOn() else sirenOff()
+}
+
+def setPir(value) {
+    if (value?.toString()?.toLowerCase() == "on") pirOn() else pirOff()
+}
+
+/** Rule Machine sends NUMBER args as BigDecimal; returns null (and warns) if missing or below min. */
+private Integer toWholeNumber(value, String label, int min) {
+    try {
+        Integer n = new BigDecimal(value.toString()).intValue()
+        if (n >= min) return n
+    } catch (e) { }
+    log.warn "${device.displayName}: ${label} must be a number of at least ${min} (got '${value}')"
+    return null
+}
+
+// ---- Legacy (pre-1.6.8) command names: no longer listed, kept so existing rules keep working ----
 
 def ptzGoToPreset(presetId) {
     parent?.componentPtzGoToPreset(this, presetId as Integer, device.deviceNetworkId)
@@ -284,27 +339,6 @@ def spotlightOff() {
     sendEvent(name: "spotlight", value: "off")
 }
 
-/** v1.6.7: optional arg is ignored (Rule Machine Custom Action may pass the description slot). */
-def spotlightAutoOn(ignored = null) {
-    parent?.componentSetSpotlightAuto(this, true, device.deviceNetworkId)
-}
-
-def spotlightAutoOff(ignored = null) {
-    parent?.componentSetSpotlightAuto(this, false, device.deviceNetworkId)
-}
-
-/** v1.6.7: called by the app with the camera's confirmed mode (0 = off). Remembers the last auto mode. */
-def receiveSpotlightAuto(Integer mode) {
-    if (mode == null) return
-    if (mode > 0) device.updateDataValue("spotlightAutoMode", mode.toString())
-    sendIfChanged("spotlightAuto", mode > 0 ? "on" : "off")
-}
-
-def setNightVision(mode) {
-    parent?.componentSetNightVision(this, mode, device.deviceNetworkId)
-    sendEvent(name: "nightVision", value: mode)
-}
-
 def sirenOn() {
     parent?.componentSetSiren(this, true, device.deviceNetworkId)
     sendEvent(name: "siren", value: "on")
@@ -315,7 +349,7 @@ def sirenOff() {
     sendEvent(name: "siren", value: "off")
 }
 
-/** Disables the PIR motion trigger. Does NOT stop an in-progress or scheduled recording. */
+/** Does NOT stop an in-progress or scheduled recording. */
 def pirOff() {
     parent?.componentSetPir(this, false, device.deviceNetworkId)
 }
@@ -324,15 +358,59 @@ def pirOn() {
     parent?.componentSetPir(this, true, device.deviceNetworkId)
 }
 
-/** v1.6.6: called by the app once the device confirms the change (failures are logged by the app). */
+def checkBattery() {
+    parent?.componentCheckBattery(this, device.deviceNetworkId)
+}
+
+def checkAbilities() {
+    parent?.componentCheckAbilities(this, device.deviceNetworkId)
+}
+
+/** Diagnostic only: logs this channel's NVR recording schedule (Full logging). */
+def checkRecordingSchedule() {
+    parent?.componentCheckRecordingSchedule(this, device.deviceNetworkId)
+}
+
+/** v1.6.8: also checks progress on its own (every 60s while running, at most 5 times). */
+def calibratePtz() {
+    parent?.componentCalibratePtz(this, device.deviceNetworkId)
+    runIn(60, "ptzCalibrationFollowUp", [data: [n: 1]])
+}
+
+def ptzCalibrationFollowUp(Map data) {
+    checkPtzCalibrationStatus()
+    int n = (data?.n ?: 1) as Integer
+    if (device.currentValue("ptzCalibrationStatus") == "running" && n < 5) {
+        runIn(60, "ptzCalibrationFollowUp", [data: [n: n + 1]])
+    }
+}
+
+def checkPtzCalibrationStatus() {
+    parent?.componentCheckPtzCalibrationStatus(this, device.deviceNetworkId)
+}
+
+def setPollInterval(seconds) {
+    parent?.componentSetPollInterval(this, seconds as Integer, device.deviceNetworkId)
+}
+
+def setSnapshotInterval(seconds) {
+    parent?.componentSetSnapshotInterval(this, seconds as Integer, device.deviceNetworkId)
+}
+
+// ---- Called by the app ----
+
+/** v1.6.8: the camera's confirmed spotlight mode (0 = off). Remembers the last auto mode. */
+def receiveSpotlightAuto(Integer mode) {
+    if (mode == null) return
+    if (mode > 0) device.updateDataValue("spotlightAutoMode", mode.toString())
+    sendIfChanged("spotlightAuto", mode > 0 ? "on" : "off")
+}
+
+/** v1.6.6: called once the device confirms the change (failures are logged by the app). */
 def receivePirState(Boolean enabled, String error = null) {
     if (error) return
     sendEvent(name: "pirEnabled", value: enabled ? "true" : "false")
     if (!enabled) log.warn "${device.displayName}: PIR disabled -- motion trigger suppressed until turned back on"
-}
-
-def checkBattery() {
-    parent?.componentCheckBattery(this, device.deviceNetworkId)
 }
 
 /**
@@ -400,15 +478,6 @@ private void updatePowerSummary(pct = null, String charging = null) {
     sendIfChanged("batteryWired", text)
 }
 
-def checkAbilities() {
-    parent?.componentCheckAbilities(this, device.deviceNetworkId)
-}
-
-/** Diagnostic only: reads and logs this channel's current NVR recording schedule (Full logging). */
-def checkRecordingSchedule() {
-    parent?.componentCheckRecordingSchedule(this, device.deviceNetworkId)
-}
-
 /**
  * Called by the app after GetAbility. Informational only (see the app's Tips
  * page); does not hide or disable any command on this device.
@@ -417,26 +486,10 @@ def receiveSupportedFeatures(List features) {
     sendEvent(name: "supportedFeatures", value: features ? features.join(", ") : "None detected")
 }
 
-def calibratePtz() {
-    parent?.componentCalibratePtz(this, device.deviceNetworkId)
-}
-
-def checkPtzCalibrationStatus() {
-    parent?.componentCheckPtzCalibrationStatus(this, device.deviceNetworkId)
-}
-
 /** Called by the app after GetPtzCheckState. 0=required, 1=running, 2=done. */
 def receivePtzCalibrationState(state) {
     def statusMap = [0: "required", 1: "running", 2: "done"]
     sendEvent(name: "ptzCalibrationStatus", value: statusMap[state] ?: "unknown")
-}
-
-def setPollInterval(seconds) {
-    parent?.componentSetPollInterval(this, seconds as Integer, device.deviceNetworkId)
-}
-
-def setSnapshotInterval(seconds) {
-    parent?.componentSetSnapshotInterval(this, seconds as Integer, device.deviceNetworkId)
 }
 
 /** Called by the app after a poll (source "poll") or a real-time event push (source "event"). */
