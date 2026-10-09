@@ -29,6 +29,7 @@
  *    device's spotlightAutoMode data value), else Night Smart Mode.
  *  - Called with on == null it only reads the mode; Refresh and Check
  *    Abilities do this for Spotlight devices so spotlightAuto fills in.
+ *  - New "Spotlight" Tips topic (Camera controls) with the patio use case.
  *
  * v1.6.6 -- Source password no longer shown in plain text:
  *  - Each bridge kept the source password in its state, so State Variables
@@ -947,6 +948,21 @@ private List tipsTopics() {
                 "removing the device. Does NOT stop an in-progress recording -- it removes the trigger that " +
                 "would have woken a battery camera to record. Manual only, no auto-revert timer -- build " +
                 "battery-threshold automation with Rule Machine using the existing battery attribute.") + "</p>"
+            ].join("")],
+        [id: "spotlight", label: "Spotlight", title: "Spotlight and motion", group: "Camera controls", icon: "pi-sun",
+            body: [
+                "<p>" + ("Spotlight cameras have two separate controls. <b>spotlightOn</b>/<b>spotlightOff</b> turn " +
+                "the light on or off right now. <b>spotlightAutoOn</b>/<b>spotlightAutoOff</b> control whether the " +
+                "camera turns the light on by itself for motion at night (Spotlight > Modes in the Reolink app: " +
+                "Night Smart Mode or Off). The <b>spotlightAuto</b> attribute shows the current setting and updates " +
+                "on Refresh.") + "</p>",
+                "<p>" + ("<b>Example:</b> keep the patio light from switching on every time you move while you're " +
+                "sitting outside. In Rule Machine, when a Patio switch turns on, use <b>Run Custom Action</b> to " +
+                "send <b>spotlightAutoOff</b> to that camera. When it turns off, send <b>spotlightAutoOn</b>. " +
+                "One action can target several cameras at once.") + "</p>",
+                "<p>" + ("Turning auto off doesn't turn off a light that's already on; it goes off on its normal " +
+                "timer, or send <b>spotlightOff</b> in the same rule. Auto on restores the mode the camera had " +
+                "before (for example a schedule), not always Night Smart Mode.") + "</p>"
             ].join("")],
         [id: "recording", label: "Recording presets", title: "Recording presets", group: "Recording & snapshots", icon: "pi-video",
             body: [
