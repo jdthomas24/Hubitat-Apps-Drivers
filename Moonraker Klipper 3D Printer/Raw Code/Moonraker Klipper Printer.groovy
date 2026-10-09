@@ -40,7 +40,7 @@
  *      1024 characters, and the status tile is ~3700. Each tile is saved to the hub's
  *      File Manager (moonraker-<device id>-<tile>.html) and the attribute holds a short
  *      iframe to it. Falls back to inline HTML if the file can't be written. Files are
- *      removed when the device is deleted. Tiles scale to fit any tile size.
+ *      removed when the device is deleted. The status tile scales and stretches to fill any tile size.
  *    - "Buy me a coffee" link at the top of Preferences, under the setup tip.
  *
  *  Changes in 1.0.48:
@@ -669,21 +669,27 @@ String tileFileName(String attr) { return "moonraker-${device.id}-${attr}.html" 
 
 // Dashboards cap attribute values at 1024 chars, so the full tile lives in a hub file
 // and the attribute is a short iframe. The ?t= value makes dashboards reload the frame.
-// The page scales its 380px layout to the tile: status fits width and height, files fits width and scrolls.
+// The page scales its 380px layout to the tile. Status fills the whole tile (content spreads out to
+// the extra height); files fits the width and scrolls.
 void publishTile(String attr, String html) {
     String fname = tileFileName(attr)
-    boolean fitHeight = (attr == "aaStatusTile")
+    boolean fill = (attr == "aaStatusTile")
+    String css = "html,body{margin:0;padding:0;background:transparent;height:100%;overflow-x:hidden;overflow-y:${fill ? 'hidden' : 'auto'};scrollbar-width:thin;}" +
+        "#fit{width:380px;transform-origin:0 0;}" +
+        (fill ? "#fit>div{height:100%;box-sizing:border-box;display:flex;flex-direction:column;}" +
+                "#fit>div>div:last-child{flex:1;display:flex;flex-direction:column;justify-content:space-evenly;}" : "")
+    String js = fill ?
+        "function fit(){var e=document.getElementById('fit');e.style.transform='none';e.style.width='380px';e.style.height='auto';" +
+        "var s=Math.min(window.innerWidth/e.offsetWidth,window.innerHeight/e.offsetHeight,2);" +
+        "e.style.width=(window.innerWidth/s)+'px';e.style.height=(window.innerHeight/s)+'px';e.style.transform='scale('+s+')';}" :
+        "function fit(){var e=document.getElementById('fit');e.style.transform='none';" +
+        "var s=Math.min(window.innerWidth/e.offsetWidth,2);e.style.transform='scale('+s+')';document.body.style.height=(e.offsetHeight*s)+'px';}"
     String page = "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>" +
-        "<style>html,body{margin:0;padding:0;background:transparent;height:100%;overflow-x:hidden;overflow-y:${fitHeight ? 'hidden' : 'auto'};scrollbar-width:thin;}" +
-        "#fit{width:380px;transform-origin:0 0;}</style></head><body><div id='fit'>${html}</div>" +
-        "<script>function fit(){var e=document.getElementById('fit');e.style.transform='none';" +
-        "var s=window.innerWidth/e.offsetWidth;${fitHeight ? "s=Math.min(s,window.innerHeight/e.offsetHeight);" : ""}" +
-        "s=Math.min(s,2);e.style.transform='scale('+s+')';" +
-        "document.body.style.height=${fitHeight ? "'100%'" : "(e.offsetHeight*s)+'px'"};}" +
-        "window.addEventListener('resize',fit);window.addEventListener('load',fit);fit();</script></body></html>"
+        "<style>${css}</style></head><body><div id='fit'>${html}</div>" +
+        "<script>${js}window.addEventListener('resize',fit);window.addEventListener('load',fit);fit();</script></body></html>"
     try {
         uploadHubFile(fname, page.getBytes("UTF-8"))
-        sendEvent(name: attr, value: "<iframe src='/local/${fname}?t=${now()}' style='width:100%;height:100%;border:0;' scrolling='${fitHeight ? 'no' : 'auto'}'></iframe>", displayed: false)
+        sendEvent(name: attr, value: "<iframe src='/local/${fname}?t=${now()}' style='width:100%;height:100%;border:0;' scrolling='${fill ? 'no' : 'auto'}'></iframe>", displayed: false)
     } catch (e) {
         logWarn "couldn't save ${fname} (${e.message}), sending inline HTML (too long for dashboard tiles)"
         sendEvent(name: attr, value: html, displayed: false)
