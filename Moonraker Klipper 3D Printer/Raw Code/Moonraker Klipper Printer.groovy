@@ -36,11 +36,10 @@
  *    Arksine - Moonraker
  *
  *  Changes in 1.0.49:
- *    - Dashboard tiles now display. Hubitat dashboards only show attribute values up to
- *      1024 characters, and the status tile is ~3700. Each tile is saved to the hub's
- *      File Manager (moonraker-<device id>-<tile>.html) and the attribute holds a short
- *      iframe to it. Falls back to inline HTML if the file can't be written. Files are
- *      removed when the device is deleted. The status tile scales and stretches to fill any tile size.
+ *    - Dashboard tiles now display. Dashboards only show attribute values up to 1024 bytes,
+ *      and the old tiles were ~3700. aaStatusTile and filesListTile are now compact tiles that
+ *      stay under the limit (works on local and remote dashboards), scaling with tile width.
+ *      Standby shows the last completed print. Files list shows as many recent prints as fit.
  *    - "Buy me a coffee" link at the top of Preferences, under the setup tip.
  *
  *  Changes in 1.0.48:
@@ -140,16 +139,18 @@ def installed() {
     initialize()
 }
 
-def uninstalled() {
-    ["aaStatusTile", "filesListTile"].each { attr ->
-        try { deleteHubFile(tileFileName(attr)) } catch (e) { }
-    }
-}
-
 def updated() {
     cleanStaleState()
     cleanStaleAttributes()
+    cleanStaleTileFiles()
     initialize()
+}
+
+// Pre-release 1.0.49 builds saved tiles to File Manager; remove any left behind.
+void cleanStaleTileFiles() {
+    ["aaStatusTile", "aaStatusTileFull", "filesListTile", "filesListTileFull"].each { a ->
+        try { deleteHubFile("moonraker-${device.id}-${a}.html") } catch (e) { }
+    }
 }
 
 void cleanStaleState() {
@@ -546,154 +547,84 @@ void buildOnlineTile(String printState, String filenameClean, Integer progressIn
                      Double bedVal, Double bedTarg, Integer fanPct,
                      String filamentDetected, Double filamentUsed,
                      Integer printTimeMin, Integer remainingNow, String etaNow) {
-
-    String klipperStateNow = state?.lastKlipperState ?: device.currentValue("klipperState") ?: "unknown"
-    String printerName     = device.displayName
-    String hostname        = state?.hostname ?: ""
-    String port            = settings?.port ?: ""
-    String filenameNow     = filenameClean ?: "none"
-
-    String stateBg    = printState == "printing" ? "#1b4332" : printState == "paused" ? "#3d2b00" : printState == "error" ? "#3d0000" : "#16213e"
-    String stateColor = printState == "printing" ? "#00ff87" : printState == "paused" ? "#ffd166" : printState == "error" ? "#ff6b6b" : "#aaa"
-    String stateIcon  = printState == "printing" ? "&#9654; " : printState == "paused" ? "&#9646;&#9646; " : printState == "error" ? "&#9888; " : ""
-    String klipperBg  = klipperStateNow == "ready" ? "#16213e" : "#3d0000"
-    String klipperCol = klipperStateNow == "ready" ? "#00b4d8" : "#ff6b6b"
-
-    StringBuilder tile = new StringBuilder()
-    tile.append("<div style=\"font-family:sans-serif;font-size:12px;background:#1a1a2e;border-radius:10px;overflow:hidden;\">")
-
-    tile.append("<div style=\"background:#0f3460;padding:8px 12px;display:flex;align-items:center;justify-content:space-between;\">")
-    tile.append("<div><div style=\"color:#00b4d8;font-weight:bold;font-size:13px;\">${printerName}</div>")
-    if (hostname) tile.append("<div style=\"color:#aaa;font-size:10px;\">${hostname} &middot; port ${port}</div>")
-    tile.append("</div>")
-    tile.append("<div style=\"display:flex;gap:6px;align-items:center;\">")
-    tile.append("<span style=\"background:#1b4332;color:#00ff87;font-size:10px;padding:2px 8px;border-radius:10px;\">&#9679; online</span>")
-    tile.append("<span style=\"background:${klipperBg};color:${klipperCol};font-size:10px;padding:2px 8px;border-radius:10px;\">klipper: ${klipperStateNow}</span>")
-    tile.append("</div></div>")
-
-    tile.append("<div style=\"background:#16213e;border-bottom:1px solid #0f3460;padding:6px 12px;display:flex;align-items:center;gap:8px;\">")
-    tile.append("<span style=\"background:${stateBg};color:${stateColor};font-size:10px;padding:2px 10px;border-radius:10px;font-weight:bold;\">${stateIcon}${printState}</span>")
-    if (filenameNow != "none") tile.append("<span style=\"color:#eee;font-size:11px;font-weight:bold;\">${filenameNow}</span>")
-    tile.append("</div>")
-
+    boolean ready = (state?.lastKlipperState ?: device.currentValue("klipperState")) == "ready"
     String errorVal = device.currentValue("error") ?: "none"
-    if (errorVal && errorVal != "none") {
-        tile.append("<div style=\"background:#3d0000;border-left:3px solid #ff6b6b;padding:6px 12px;\">")
-        tile.append("<span style=\"color:#ffaaaa;font-size:11px;\">&#9888; ${errorVal}</span>")
-        tile.append("</div>")
-    }
-
-    tile.append("<div style=\"padding:8px 12px;\">")
-    tile.append("<div style=\"display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;\">")
-    tile.append("<div style=\"background:#0f3460;border-radius:6px;padding:6px 10px;\">")
-    tile.append("<div style=\"color:#aaa;font-size:9px;margin-bottom:2px;\">HOTEND</div>")
-    tile.append("<div style=\"display:flex;align-items:baseline;gap:4px;\"><span style=\"color:#ff6b6b;font-size:16px;font-weight:bold;\">${hotendVal}°</span>")
-    tile.append("<span style=\"color:#888;font-size:10px;\">/ ${hotendTarg}° target</span></div></div>")
-    tile.append("<div style=\"background:#0f3460;border-radius:6px;padding:6px 10px;\">")
-    tile.append("<div style=\"color:#aaa;font-size:9px;margin-bottom:2px;\">BED</div>")
-    tile.append("<div style=\"display:flex;align-items:baseline;gap:4px;\"><span style=\"color:#ffa94d;font-size:16px;font-weight:bold;\">${bedVal}°</span>")
-    tile.append("<span style=\"color:#888;font-size:10px;\">/ ${bedTarg}° target</span></div></div>")
-    tile.append("</div>")
-
-    if (printState in ["printing", "paused"]) {
-        tile.append("<div style=\"margin-bottom:6px;\">")
-        tile.append("<div style=\"display:flex;justify-content:space-between;margin-bottom:3px;\"><span style=\"color:#aaa;font-size:10px;\">progress</span><span style=\"color:#eee;font-size:10px;font-weight:bold;\">${progressRounded}%</span></div>")
-        tile.append("<div style=\"background:#0f3460;border-radius:3px;height:5px;\"><div style=\"background:#00b4d8;width:${progressRounded}%;height:5px;border-radius:3px;\"></div></div></div>")
-
-        tile.append("<div style=\"display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-bottom:8px;\">")
-        tile.append("<div style=\"background:#0f3460;border-radius:5px;padding:5px 8px;text-align:center;\"><div style=\"color:#aaa;font-size:9px;\">elapsed</div><div style=\"color:#eee;font-size:11px;font-weight:bold;\">${printTimeMin} min</div></div>")
-        tile.append("<div style=\"background:#0f3460;border-radius:5px;padding:5px 8px;text-align:center;\"><div style=\"color:#aaa;font-size:9px;\">remaining</div><div style=\"color:#00ff87;font-size:11px;font-weight:bold;\">${remainingNow} min</div></div>")
-        tile.append("<div style=\"background:#0f3460;border-radius:5px;padding:5px 8px;text-align:center;\"><div style=\"color:#aaa;font-size:9px;\">ETA</div><div style=\"color:#eee;font-size:11px;font-weight:bold;\">${etaNow}</div></div>")
-        tile.append("</div>")
-    }
-
-    String filamentStatus = filamentDetected == "true" ? "OK" : filamentDetected == "false" ? "RUNOUT!" : "unknown"
-    String filamentCol    = filamentDetected == "false" ? "#ff6b6b" : "#888"
-    Integer filamentInt   = filamentUsed.toInteger()
-    tile.append("<div style=\"border-top:1px solid #0f3460;padding:5px 12px;display:flex;justify-content:space-between;align-items:center;margin-top:2px;\">")
-    tile.append("<span style=\"color:#888;font-size:9px;\">fan: ${fanPct}% &nbsp;&middot;&nbsp; filament: <span style=\"color:${filamentCol}\">${filamentStatus}</span> &nbsp;&middot;&nbsp; ${filamentInt}mm used</span>")
-    tile.append("<span style=\"color:#888;font-size:9px;\">")
-    Integer completedCount = state?.completedCount ?: 0
-    if (completedCount > 0) tile.append("${completedCount} prints done")
-    tile.append("</span>")
-    tile.append("</div></div></div>")
-
-    publishTile("aaStatusTile", tile.toString())
+    Map m = [state: printState, file: filenameClean, progress: progressRounded, hotend: hotendVal, hotendTarg: hotendTarg,
+             bed: bedVal, bedTarg: bedTarg, elapsed: printTimeMin, remaining: remainingNow, eta: etaNow,
+             filament: filamentDetected, ready: ready, error: errorVal]
+    String html = compactStatusTile(m, 26, 40)
+    if (html.getBytes("UTF-8").length > 1024) html = compactStatusTile(m, 12, 0)
+    sendCompact("aaStatusTile", html)
 }
 
 void buildOfflineTile() {
-    String printerName = device.displayName
-    String hostname    = state?.hostname ?: ""
-    String port        = settings?.port ?: ""
-
-    // Use last known temps if available, otherwise show --
-    String hotendStr = state?.lastHotendVal != null ? "${state.lastHotendVal}°" : "--"
-    String bedStr    = state?.lastBedVal    != null ? "${state.lastBedVal}°"    : "--"
-
-    StringBuilder tile = new StringBuilder()
-    tile.append("<div style=\"font-family:sans-serif;font-size:12px;background:#1a1a2e;border-radius:10px;overflow:hidden;\">")
-
-    // Header, offline badge
-    tile.append("<div style=\"background:#0f3460;padding:8px 12px;display:flex;align-items:center;justify-content:space-between;\">")
-    tile.append("<div><div style=\"color:#00b4d8;font-weight:bold;font-size:13px;\">${printerName}</div>")
-    if (hostname) tile.append("<div style=\"color:#aaa;font-size:10px;\">${hostname} &middot; port ${port}</div>")
-    tile.append("</div>")
-    tile.append("<div style=\"display:flex;gap:6px;align-items:center;\">")
-    tile.append("<span style=\"background:#3d0000;color:#ff6b6b;font-size:10px;padding:2px 8px;border-radius:10px;\">&#9679; offline</span>")
-    tile.append("</div></div>")
-
-    // Offline banner
-    tile.append("<div style=\"background:#3d0000;border-left:3px solid #ff6b6b;padding:8px 12px;\">")
-    tile.append("<span style=\"color:#ffaaaa;font-size:11px;\">&#9888; Printer is offline, attempting to reconnect</span>")
-    tile.append("</div>")
-
-    // Last known temps
-    tile.append("<div style=\"padding:8px 12px;\">")
-    tile.append("<div style=\"display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;\">")
-    tile.append("<div style=\"background:#0f3460;border-radius:6px;padding:6px 10px;\">")
-    tile.append("<div style=\"color:#aaa;font-size:9px;margin-bottom:2px;\">HOTEND (last known)</div>")
-    tile.append("<div style=\"color:#888;font-size:16px;font-weight:bold;\">${hotendStr}</div></div>")
-    tile.append("<div style=\"background:#0f3460;border-radius:6px;padding:6px 10px;\">")
-    tile.append("<div style=\"color:#aaa;font-size:9px;margin-bottom:2px;\">BED (last known)</div>")
-    tile.append("<div style=\"color:#888;font-size:16px;font-weight:bold;\">${bedStr}</div></div>")
-    tile.append("</div></div></div>")
-
-    publishTile("aaStatusTile", tile.toString())
+    String hotendStr = state?.lastHotendVal != null ? "${state.lastHotendVal}&deg;" : "--"
+    String bedStr    = state?.lastBedVal    != null ? "${state.lastBedVal}&deg;"    : "--"
+    sendCompact("aaStatusTile", compactWrap(
+        "<div><b style='color:#00b4d8'>${shorten(device.displayName, 28)}</b> <span style='color:#ff6b6b'>&#9679;</span></div>" +
+        "<div style='color:#ff6b6b'>&#9888; Offline, reconnecting</div>" +
+        "<div style='color:#888'>Last known: Hotend ${hotendStr} &middot; Bed ${bedStr}</div>"))
     logDebug "offline tile built"
 }
 
 // ============================================================
 //  DASHBOARD TILES
 // ============================================================
-String tileFileName(String attr) { return "moonraker-${device.id}-${attr}.html" }
+// Dashboards only show attribute values up to 1024 bytes, so tiles are kept compact and inline.
+// Font scales with tile width (cqw); older browsers fall back to 12px.
+String compactWrap(String inner) {
+    return "<div style='height:100%;box-sizing:border-box;container-type:inline-size;background:#1a1a2e;color:#ddd;" +
+        "border-radius:10px;padding:5%;font-family:sans-serif;font-size:12px;font-size:4.6cqw;line-height:1.35;text-align:left;" +
+        "display:flex;flex-direction:column;justify-content:space-around'>${inner}</div>"
+}
 
-// Dashboards cap attribute values at 1024 chars, so the full tile lives in a hub file
-// and the attribute is a short iframe. The ?t= value makes dashboards reload the frame.
-// The page scales its 380px layout to the tile. Status fills the whole tile (content spreads out to
-// the extra height); files fits the width and scrolls.
-void publishTile(String attr, String html) {
-    String fname = tileFileName(attr)
-    boolean fill = (attr == "aaStatusTile")
-    String css = "html,body{margin:0;padding:0;background:transparent;height:100%;overflow-x:hidden;overflow-y:${fill ? 'hidden' : 'auto'};scrollbar-width:thin;}" +
-        "#fit{width:380px;transform-origin:0 0;}" +
-        (fill ? "#fit>div{height:100%;box-sizing:border-box;display:flex;flex-direction:column;}" +
-                "#fit>div>div:last-child{flex:1;display:flex;flex-direction:column;justify-content:space-evenly;}" : "")
-    String js = fill ?
-        "function fit(){var e=document.getElementById('fit');e.style.transform='none';e.style.width='380px';e.style.height='auto';" +
-        "var s=Math.min(window.innerWidth/e.offsetWidth,window.innerHeight/e.offsetHeight,2);" +
-        "e.style.width=(window.innerWidth/s)+'px';e.style.height=(window.innerHeight/s)+'px';e.style.transform='scale('+s+')';}" :
-        "function fit(){var e=document.getElementById('fit');e.style.transform='none';" +
-        "var s=Math.min(window.innerWidth/e.offsetWidth,2);e.style.transform='scale('+s+')';document.body.style.height=(e.offsetHeight*s)+'px';}"
-    String page = "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>" +
-        "<style>${css}</style></head><body><div id='fit'>${html}</div>" +
-        "<script>${js}window.addEventListener('resize',fit);window.addEventListener('load',fit);fit();</script></body></html>"
-    try {
-        uploadHubFile(fname, page.getBytes("UTF-8"))
-        sendEvent(name: attr, value: "<iframe src='/local/${fname}?t=${now()}' style='width:100%;height:100%;border:0;' scrolling='${fill ? 'no' : 'auto'}'></iframe>", displayed: false)
-    } catch (e) {
-        logWarn "couldn't save ${fname} (${e.message}), sending inline HTML (too long for dashboard tiles)"
-        sendEvent(name: attr, value: html, displayed: false)
+String shorten(String text, int max) {
+    if (!text || max <= 0) return ""
+    return text.length() > max ? text.substring(0, max - 1) + "&hellip;" : text
+}
+
+// fileMax/errorMax shrink on a second pass if the tile would pass 1024 bytes.
+String compactStatusTile(Map m, int fileMax, int errorMax) {
+    String st = m.state
+    String stateCol = st == "printing" ? "#00ff87" : st == "paused" ? "#ffd166" : st == "error" ? "#ff6b6b" : "#aaa"
+    String icon = st == "printing" ? "&#9654; " : st == "paused" ? "&#9646;&#9646; " : ""
+    boolean active = st in ["printing", "paused"]
+    StringBuilder t = new StringBuilder()
+    t.append("<div><b style='color:#00b4d8'>${shorten(device.displayName, 28)}</b> <span style='color:${m.ready ? '#00ff87' : '#ffd166'}'>&#9679;</span></div>")
+    t.append("<div style='color:${stateCol};white-space:nowrap;overflow:hidden;text-overflow:ellipsis'>${icon}${st}")
+    if (active && m.file && m.file != "none") t.append(" &middot; <span style='color:#eee'>${shorten(m.file, fileMax)}</span>")
+    t.append("</div>")
+    t.append("<div>Hotend <b style='color:#ff6b6b'>${m.hotend}&deg;</b>/${(m.hotendTarg as Double).toInteger()} &middot; " +
+             "Bed <b style='color:#ffa94d'>${m.bed}&deg;</b>/${(m.bedTarg as Double).toInteger()}</div>")
+    if (active) {
+        t.append("<div style='background:#0f3460;height:.4em;border-radius:1em'><div style='background:#00b4d8;width:${m.progress}%;height:100%;border-radius:1em'></div></div>")
+        t.append("<div>${m.progress}% &middot; ${m.elapsed}m &middot; <span style='color:#00ff87'>${m.remaining}m left</span> &middot; ${m.eta}</div>")
+    } else {
+        String last = device.currentValue("lastPrint") ?: ""
+        if (last && last != "none") t.append("<div style='color:#888'>Last: <span style='color:#ddd'>${shorten(last, fileMax)}</span></div>")
     }
+    if (m.filament == "false") t.append("<div style='color:#ff6b6b'>&#9888; Filament runout</div>")
+    if (errorMax > 0 && m.error && m.error != "none") t.append("<div style='color:#ff6b6b'>&#9888; ${shorten(m.error, errorMax)}</div>")
+    return compactWrap(t.toString())
+}
+
+// Adds rows until the next one would pass the limit.
+String compactFilesTile(List files, Integer total) {
+    String head = "<div style='color:#00b4d8;font-weight:bold'>Recent prints <span style='color:#888;font-weight:normal'>(${total} jobs)</span></div>"
+    StringBuilder rows = new StringBuilder()
+    for (int i = 0; i < files.size(); i++) {
+        Map f = files[i]
+        String row = "<div><span style='color:#00b4d8'>${i + 1}</span> ${shorten(f.name, 30)}${f.status == 'in_progress' ? ' &#9654;' : ''}</div>"
+        if (compactWrap(head + rows + row).getBytes("UTF-8").length > 1000) break
+        rows.append(row)
+    }
+    return compactWrap(head + rows)
+}
+
+void sendCompact(String attr, String html) {
+    int size = html.getBytes("UTF-8").length
+    if (size > 1024) logWarn "${attr} is ${size} bytes, over the dashboard limit"
+    sendEventX(name: attr, value: html)
 }
 
 // ============================================================
@@ -903,42 +834,11 @@ void filesCallback(resp, data) {
         sendEventX(name: "filesList (11-20)", value: (secondTen ? secondTen.join(" | ") : "none"))
 
         Integer totalJobCount = totalJobs ?: totalCount
-        StringBuilder html = new StringBuilder()
-        html.append("<div style=\"font-family:sans-serif;font-size:11px;background:#1a1a2e;color:#eee;border-radius:8px;padding:8px;\">")
-        html.append("<div style=\"text-align:center;font-weight:bold;font-size:12px;color:#00b4d8;margin-bottom:6px;\">")
-        html.append("&#128438; Recent Prints <span style=\"color:#aaa;font-size:10px;\">(top ${recentFilesForTile.size()} of ${totalJobCount} jobs)</span></div>")
-
-        String lastPrintVal        = device.currentValue("lastPrint") ?: ""
-        String currentPrintState   = device.currentValue("printState") ?: "standby"
-        if (lastPrintVal && lastPrintVal != "none" && !(currentPrintState in ["printing", "paused"])) {
-            html.append("<div style=\"background:#16213e;border-left:3px solid #00ff87;padding:4px 8px;margin-bottom:6px;\">")
-            html.append("<div style=\"font-size:9px;color:#aaa;\">last completed &middot; use startLastPrint to reprint</div>")
-            html.append("<div style=\"color:#00ff87;font-weight:bold;font-size:11px;margin-top:1px;\">${lastPrintVal}</div>")
-            html.append("</div>")
-        }
-
-        html.append("<table style=\"width:100%;border-collapse:collapse;\">")
-        recentFilesForTile.eachWithIndex { file, idx ->
-            String number      = (idx + 1).toString()
-            Boolean isPrinting = file.status == "in_progress"
-            String rowBg       = isPrinting ? "#1b4332" : (idx % 2 == 0 ? "#16213e" : "#0f3460")
-            String numColor    = isPrinting ? "#00ff87" : "#00b4d8"
-            String nameColor   = isPrinting ? "#00ff87" : "#eee"
-            String indicator   = isPrinting ? " &#9654; printing" : ""
-            html.append("<tr style=\"background:${rowBg};\">")
-            html.append("<td style=\"padding:3px 5px;color:${numColor};font-weight:bold;width:24px;min-width:24px;text-align:center;\">${number}</td>")
-            html.append("<td style=\"padding:3px 5px;color:${nameColor};\">${file.name}${indicator}</td></tr>")
-        }
-        html.append("</table>")
-        html.append("<div style=\"color:#888;font-size:9px;margin-top:4px;text-align:center;\">Use number with startPrint command</div>")
-        html.append("</div>")
-
-        String newHtml = html.toString()
+        String newHtml  = compactFilesTile(recentFilesForTile, totalJobCount)
         String newHash  = newHtml.hashCode().toString()
-        String lastHash = state?.lastFilesListHash ?: ""
-        if (newHash != lastHash) {
+        if (newHash != (state?.lastFilesListHash ?: "")) {
             state.lastFilesListHash = newHash
-            publishTile("filesListTile", newHtml)
+            sendCompact("filesListTile", newHtml)
             logDebug "filesListTile updated, ${displayList.size()} files"
         } else {
             logDebug "filesListTile suppressed, content unchanged"
