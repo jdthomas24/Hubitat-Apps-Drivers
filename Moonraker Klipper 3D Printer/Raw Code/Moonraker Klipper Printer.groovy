@@ -41,7 +41,7 @@
  *      File Manager (moonraker-<device id>-<tile>.html) and the attribute holds a short
  *      iframe to it. Falls back to inline HTML if the file can't be written. Files are
  *      removed when the device is deleted.
- *    - "Buy me a coffee" link at the bottom of Preferences.
+ *    - "Buy me a coffee" link at the top of Preferences, under the setup tip.
  *
  *  Changes in 1.0.48:
  *    - Consecutive failure threshold before marking offline (3 failures required)
@@ -104,6 +104,7 @@ preferences {
         The device name appears in <b>Printer Info</b> so you can confirm you have the correct port assigned to the right printer.<br>
         <b>Sonicpad users:</b> create one Hubitat device per printer, each with the same IP but a different port.
         </div>""")
+    input(name: "supportLink", type: "hidden", title: """<div style='font-size:13px;color:#555;margin:-2px 0 8px;'>Enjoying this driver? <a href='https://www.paypal.com/paypalme/jdthomas24' target='_blank' rel='noopener'>Buy me a coffee &#9749;</a></div>""")
     input(name: "ipAddress",      type: "string",   title: "<b>Printer IP Address:</b>",
           description: "<i>IP address of your Moonraker host.<br>Sonicpad users: all printers share the same IP. Use Port to differentiate.</i>",
           required: true, width: 4)
@@ -130,7 +131,6 @@ preferences {
           options: ["F": "Fahrenheit (°F)", "C": "Celsius (°C)"],
           defaultValue: "C", required: true, width: 4)
     input(name: "deviceDebugEnable",  type: "bool", title: "Enable Debug logging:", description: "<i>Auto-disables after 30 minutes.</i>", defaultValue: false, width: 4)
-    input(name: "supportLink", type: "hidden", title: """<div style='font-size:13px;color:#555;margin-top:8px;'>Enjoying this driver? <a href='https://www.paypal.com/paypalme/jdthomas24' target='_blank' rel='noopener'>Buy me a coffee &#9749;</a></div>""")
 }
 
 // ============================================================
