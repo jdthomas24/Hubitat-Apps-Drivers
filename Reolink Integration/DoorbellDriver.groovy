@@ -1,11 +1,12 @@
 /**
  * Reolink Doorbell (Component Driver)
- * Version: 1.6.6
+ * Version: 1.6.7
  *
  * Same delegation pattern as Reolink Camera, plus a "visitor" (button press)
  * event so Rule Machine can trigger straight off "pushed 1" for a doorbell
  * ring, separate from AI person/motion detection.
  *
+ * v1.6.7 -- Version bump only (spotlight auto is camera-only).
  * v1.6.6 -- pirOn/pirOff added (battery doorbells have PIR), same as the
  * camera driver: PIR Enabled updates only once the doorbell confirms it.
  * batteryWired drops the percentage, which the Battery row already shows.
