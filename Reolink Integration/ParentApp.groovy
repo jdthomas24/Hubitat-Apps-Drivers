@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.6.6
+ * Version: 1.6.7
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -19,6 +19,16 @@
  * in-app Tips page, not duplicated here. TODO markers mark spots needing
  * exact command/param names verified against firmware (field names can
  * drift by version). Full history prior to 1.3.6 is in GitHub commit history.
+ *
+ * v1.6.7 -- Spotlight auto (motion) on/off:
+ *  - componentSetSpotlightAuto() sets WhiteLed "mode" (the Reolink app's
+ *    Spotlight > Modes: 0 = Off, 1 = Night Smart Mode, other values on some
+ *    models), separate from the on/off "state" Spotlight On/Off already uses.
+ *    Partial write {channel, mode}, so the light's current on/off is untouched.
+ *    Turning auto back on restores the mode the camera had before (kept in the
+ *    device's spotlightAutoMode data value), else Night Smart Mode.
+ *  - Called with on == null it only reads the mode; Refresh and Check
+ *    Abilities do this for Spotlight devices so spotlightAuto fills in.
  *
  * v1.6.6 -- Source password no longer shown in plain text:
  *  - Each bridge kept the source password in its state, so State Variables
@@ -280,7 +290,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.6.6"
+@Field static final String APP_VERSION = "1.6.7"
 
 // v1.6.5: power mode migration key; changing it re-runs migrateBatteryModes().
 @Field static final String POWER_MIGRATION_KEY = "batteryWired"
@@ -3871,6 +3881,9 @@ def componentRefresh(child, String dni = null) {
             log.warn "Reolink ${effectiveDni}: power mode backfill failed -- ${e.message}"
         }
     }
+    if (hasSpotlight(c)) {
+        try { componentSetSpotlightAuto(c, null, effectiveDni) } catch (e) { logFull "Reolink ${effectiveDni}: spotlight mode read failed -- ${e.message}" }
+    }
     pollChild([dni: effectiveDni])
 }
 
@@ -4012,6 +4025,53 @@ def componentSetSpotlight(child, Boolean on, String dni = null) {
     reolinkApiCall(sourceId, "SetWhiteLed", [WhiteLed: [channel: channel, state: (on ? 1 : 0)]], null)
 }
 
+/**
+ * v1.6.7: spotlight auto (motion) mode on/off; on == null reads only. Reads
+ * WhiteLed first to remember the current auto mode, then writes {channel, mode}.
+ */
+def componentSetSpotlightAuto(child, Boolean on, String dni = null) {
+    def c = resolveChild(child, dni)
+    def sourceId = c.getDataValue("sourceId") as Integer
+    def channel = c.getDataValue("channel") as Integer
+    def current = reolinkApiCall(sourceId, "GetWhiteLed", [:], channel)
+    String key = (current instanceof Map) ? current.keySet().find { it.toString().equalsIgnoreCase("WhiteLed") } : null
+    Integer mode = (key && current[key] instanceof Map) ? toIntOrNull(current[key].mode) : null
+    if (mode == null) {
+        if (on == null) {
+            logFull "Reolink ${c.displayName}: no spotlight mode returned -- raw: ${current?.toString()?.take(300)}"
+        } else {
+            log.warn "Reolink ${c.displayName}: spotlight auto not changed -- the camera returned no spotlight settings (no spotlight, or it didn't answer)"
+        }
+        return
+    }
+    if (on == null || (on ? mode > 0 : mode == 0)) {
+        c.receiveSpotlightAuto(mode)
+        if (on != null) logNormal "Reolink ${c.displayName}: spotlight auto already ${spotlightModeName(mode)}"
+        return
+    }
+    if (mode > 0) c.receiveSpotlightAuto(mode)
+    Integer saved = toIntOrNull(c.getDataValue("spotlightAutoMode"))
+    int target = on ? ((saved != null && saved > 0) ? saved : 1) : 0
+    def result = reolinkApiCall(sourceId, "SetWhiteLed", [WhiteLed: [channel: channel, mode: target]], null)
+    if (result?.rspCode == 200 || result?.rspCode == 0) {
+        logNormal "Reolink ${c.displayName}: spotlight auto set to ${spotlightModeName(target)}"
+        c.receiveSpotlightAuto(target)
+    } else {
+        log.warn "Reolink ${c.displayName}: spotlight auto not changed -- the camera rejected the request (Full logging shows its reply)"
+    }
+}
+
+private String spotlightModeName(Integer mode) {
+    if (mode == 0) return "Off"
+    if (mode == 1) return "Night Smart Mode"
+    return "mode ${mode}"
+}
+
+private Integer toIntOrNull(v) {
+    if (v == null) return null
+    try { return v as Integer } catch (e) { return null }
+}
+
 def componentSetNightVision(child, String mode, String dni = null) {
     def c = resolveChild(child, dni)
     def sourceId = c.getDataValue("sourceId") as Integer
@@ -4085,6 +4145,12 @@ def componentCheckAbilities(child, String dni = null) {
     def features = computeSupportedFeatures(abilityChnList?.getAt(channel))
     c.receiveSupportedFeatures(features)
     logNormal "Reolink source ${sourceId} ch ${channel}: capabilities rechecked -- ${features ? features.join(', ') : 'none detected'}"
+    if (features?.contains("Spotlight") && c.hasCommand("spotlightAutoOn")) componentSetSpotlightAuto(c, null, dni)
+}
+
+/** v1.6.7: Spotlight devices on the camera driver (doorbells have no spotlight commands). */
+private boolean hasSpotlight(c) {
+    return c?.hasCommand("spotlightAutoOn") && c.currentValue("supportedFeatures")?.toString()?.contains("Spotlight")
 }
 
 def componentCalibratePtz(child, String dni = null) {
