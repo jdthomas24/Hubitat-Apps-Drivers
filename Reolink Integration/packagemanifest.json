@@ -1,10 +1,10 @@
 {
     "packageName": "Reolink Integration",
-    "releaseNotes": "v1.6.7: New Spotlight Auto On/Off commands on cameras with a spotlight, to stop or allow the spotlight turning on by itself for motion at night (Reolink's Night Smart Mode). New spotlightAuto attribute shows the current setting after a Refresh. Spotlight On/Off still work either way. v1.6.6: Your source password is no longer shown on the Device Bridge page; it now shows 'Saved, N characters' plus the last login result (also on Edit connection settings). PIR on/off now actually works on battery cameras and doorbells, and PIR Enabled updates only once the device confirms it. Battery Wired no longer repeats the battery percentage. No Done needed after updating.",
+    "releaseNotes": "v1.6.8: Camera and doorbell device pages are much shorter. Commands are grouped into dropdowns: Check, Set Interval, Ptz (now includes Calibrate), Ptz Preset, Set Spotlight, Set Siren and Set Pir. Rules using the old command names keep working. New: Set Spotlight auto on/off stops or allows the spotlight turning on by itself for motion at night, with a new Spotlight Auto attribute. No Done needed after updating. v1.6.6: Your source password is no longer shown on the Device Bridge page; it now shows 'Saved, N characters' plus the last login result (also on Edit connection settings). PIR on/off now actually works on battery cameras and doorbells, and PIR Enabled updates only once the device confirms it. Battery Wired no longer repeats the battery percentage. No Done needed after updating.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "communityLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "author": "jdthomas24",
-    "version": "1.6.7",
+    "version": "1.6.8",
     "minimumHEVersion": "2.3.0",
     "dateReleased": "2026-08-14",
     "category": "Integrations",
