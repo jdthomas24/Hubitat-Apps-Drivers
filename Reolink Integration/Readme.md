@@ -1,4 +1,3 @@
-[README (4).md](https://github.com/user-attachments/files/33257231/README.4.md)
 # Reolink Integration for Hubitat
 
 Local control of Reolink cameras, doorbells, NVRs and Home Hubs from a Hubitat Elevation hub. No cloud and no Reolink account, just the device's local IP and login.
