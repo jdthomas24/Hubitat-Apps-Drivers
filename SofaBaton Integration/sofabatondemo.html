@@ -106,10 +106,29 @@ aside.log h2{font-size:15px;display:flex;justify-content:space-between;align-ite
 .entries .he{background:var(--he-soft);color:var(--he)}
 .empty{color:var(--muted);font:14px var(--body)}
 .note{font-size:14px;color:var(--muted)}
+/* Guided tasks */
+.guide{display:grid;gap:10px;padding:14px 16px;border:1px solid var(--accent);border-radius:10px;background:var(--accent-soft)}
+.guide b.t{font:600 13px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
+.guide ol{margin:0;padding:0;list-style:none;display:grid;gap:6px}
+.guide li{display:flex;gap:10px;align-items:baseline;font-size:15px}
+.guide li .ck{flex:none;width:20px;height:20px;border-radius:50%;border:2px solid var(--accent);display:inline-grid;place-items:center;font-size:12px;font-weight:700;color:var(--panel);transform:translateY(4px)}
+.guide li.done{color:var(--muted)}
+.guide li.done .ck{background:var(--ok);border-color:var(--ok)}
+.guide li.cur{font-weight:700}
+.happened{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:8px;background:var(--panel);border:1px solid var(--line);font-size:15px}
+.happened::before{content:"→";color:var(--accent);font-weight:700}
+.allset{color:var(--ok);font-weight:700}
+.next{outline:3px solid var(--accent)!important;outline-offset:3px;animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{0%,100%{outline-color:var(--accent)}50%{outline-color:transparent}}
+@media (prefers-reduced-motion:reduce){.next{animation:none}}
 footer{color:var(--muted);font-size:14px}
 footer a{color:var(--accent)}
 @media (max-width:820px){.split{grid-template-columns:minmax(0,1fr)} .remote{max-width:300px;justify-self:center;width:100%}}
 @media (max-width:560px){nav.steps{grid-template-columns:repeat(2,1fr)} .mrow{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:820px){
+  .happened{position:fixed;left:12px;right:12px;bottom:calc(10px + env(safe-area-inset-bottom,0px));z-index:10;box-shadow:0 6px 24px rgba(0,0,0,.25);border-color:var(--accent)}
+  body{padding-bottom:120px}
+}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -152,7 +171,7 @@ const S={
   keyMap:{A:1,B:2,C:3},
   lights:[{id:"lamp",name:"Living Room Lamp",on:false},{id:"c3",name:"Canopy 3",on:false},{id:"c4",name:"Canopy 4",on:false},{id:"dim",name:"Living Room Lights",on:true}],
   actions:{1:{devs:["lamp"],act:"toggle"},2:{devs:["c3","c4"],act:"toggle"},3:{devs:["lamp","c3","c4"],act:"off"}},
-  movieRuns:0, learned:false
+  movieRuns:0, learned:false, done:new Set(), happened:""
 };
 const $=s=>document.querySelector(s);
 const now=()=>new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit",second:"2-digit"});
@@ -170,10 +189,39 @@ function go(n){
   if(n>0 && !S.added){ n=0; log("Add the X2 hub first.","he"); }
   S.step=n;
   document.querySelectorAll("nav.steps button").forEach(b=>b.setAttribute("aria-current", +b.dataset.step===n));
+  S.happened="";
   render();
 }
 document.querySelectorAll("nav.steps button").forEach(b=>b.onclick=()=>go(+b.dataset.step));
-function render(){ [stepAdd,stepActs,stepButtons,stepModels][S.step](); }
+const TASKS=[
+  [{id:"press",text:"Press <b>Watch Apple TV</b> on the remote",sel:"#press"},
+   {id:"check",text:"Tap <b>Check Again</b> so Hubitat looks for the X2",sel:"#check"},
+   {id:"add",text:"Tap <b>Add This Hub</b>",sel:"#add"}],
+  [{id:"ract",text:"Start any activity on the <b>remote</b> (left)",sel:"[data-ract]"},
+   {id:"heon",text:"Turn on a <b>different</b> activity with a Hubitat switch (right)",sel:"[data-he]"},
+   {id:"power",text:"Press the red <b>Power Off</b> key on the remote",sel:"[data-power]"}],
+  [{id:"run",text:"Start an activity on the remote (keys only work inside one)",sel:"[data-ract]",check:()=>!!running()},
+   {id:"keyA",text:"Press key <b>A</b>. The lamp toggles",sel:'[data-key="A"]'},
+   {id:"keyB",text:"Press key <b>B</b>. Both canopies toggle together",sel:'[data-key="B"]'},
+   {id:"changed",text:"Change an action (for example B to <b>Turn off</b>), then press that key again",sel:"[data-act]"}],
+  [{id:"x1s",text:"Simulate an X1S activity starting",sel:"#x1s"}]
+];
+const isDone=t=>t.check?t.check():S.done.has(t.id);
+function done(id){S.done.add(id);}
+function say(msg){S.happened=msg; const h=$("#happened"); if(h) h.innerHTML=msg;}
+function guideHtml(){
+  const L=TASKS[S.step]; const cur=L.find(t=>!isDone(t));
+  return `<div class="guide"><b class="t">Try this</b><ol>${L.map(t=>`<li class="${isDone(t)?"done":t===cur?"cur":""}"><span class="ck">${isDone(t)?"✓":""}</span><span>${t.text}</span></li>`).join("")}</ol>
+    ${!cur?`<span class="allset">All done on this step.${S.step<3?" Use the Next button to continue.":""}</span>`:""}
+    <div class="happened" id="happened">${S.happened||"Follow the highlighted control."}</div></div>`;
+}
+function render(){
+  [stepAdd,stepActs,stepButtons,stepModels][S.step]();
+  const why=$("#stage .why"); if(why) why.insertAdjacentHTML("afterend",guideHtml());
+  const cur=TASKS[S.step].find(t=>!isDone(t));
+  if(cur) document.querySelectorAll(cur.sel).forEach(el=>el.classList.add("next"));
+  else { const nx=$("#next"); if(nx) nx.classList.add("next"); }
+}
 
 /* ---------- Step 1 ---------- */
 function stepAdd(){
@@ -199,14 +247,17 @@ function stepAdd(){
       <div class="devs">${S.acts.map(a=>`<div class="dev"><div class="top"><h3>${label(a)}</h3><span class="pill ${a.on?"ok":""}">${a.on?"on":"off"}</span></div><small>activity_id ${a.id} · created automatically</small></div>`).join("")}</div>
       <p class="note">Activities are named Hub-Activity so they group together in Room Lighting and other device pickers.</p>
       <div class="row"><button class="btn ghost" id="next">Next: two-way activities</button></div>`:""}`;
-  const pr=$("#press"); if(pr) pr.onclick=()=>{ S.acts[0].on=true; S.pressedOnce=true; mq("up",`activity/${MAC}/activity_control_up`,'{"activity_id":101,"state":"on"}'); log("Bridge: new X2 seen, MAC "+MAC,"he"); };
-  const ck=$("#check"); if(ck) ck.onclick=()=>{ if(!S.pressedOnce){ log("Find My X2: nothing yet. Start an activity on the remote first.","he"); return; } S.found=true; render(); };
+  const pr=$("#press"); if(pr) pr.onclick=()=>{ S.acts[0].on=true; S.pressedOnce=true; done("press"); mq("up",`activity/${MAC}/activity_control_up`,'{"activity_id":101,"state":"on"}'); log("Bridge: new X2 seen, MAC "+MAC,"he");
+    say("The remote started Watch Apple TV, and the X2 announced it on the local network. Hubitat spotted a hub it doesn't know yet."); render(); };
+  const ck=$("#check"); if(ck) ck.onclick=()=>{ if(!S.pressedOnce){ log("Find My X2: nothing yet. Start an activity on the remote first.","he"); say("Nothing found yet. Find My X2 only sees a hub after an activity changes, so press the activity button first."); return; }
+    S.found=true; done("check"); say("Found it. Hubitat read the X2's ID from that message, so there's nothing to type in."); render(); };
   const ad=$("#add"); if(ad) ad.onclick=()=>{
-    S.added=true;
+    S.added=true; done("add");
     mq("down",`activity/${MAC}/list_request`,'{"data":"activity_list"}');
     setTimeout(()=>{
       mq("up",`activity/${MAC}/list`,`{"data":[${S.acts.map(a=>`{"activity_id":${a.id},"activity_name":"${a.name}","state":"${a.on?"on":"off"}"}`).join(",")}]}`);
       S.acts.forEach(a=>log(`Created activity "${label(a)}"`,"act"));
+      say("Hubitat asked the X2 for its activity list and created a switch for each one, already showing which is running.");
       render();
     },350);
     render();
@@ -240,12 +291,16 @@ function remoteActivity(id){
   setOnly(id);
   log(`${label(a)} → on${prev&&prev.id!==id?`, ${label(prev)} → off`:""}`,"act");
   movieRule(a);
+  done("ract");
+  say(`You started ${a.name} on the remote. Its Hubitat switch turned on${prev&&prev.id!==id?` and ${prev.name} turned off`:""}.${a.id===101?" The Movie time rule also dimmed the lights.":""}`);
   render(); flash("act-"+id);
 }
 function powerOff(){
   mq("up",`activity/${MAC}/activity_control_up`,'{"activity_id":255,"state":"off"}');
   S.acts.forEach(a=>{a.on=false;a.busy=null;});
   log("255 = hub-wide off. Every activity → off","act");
+  done("power");
+  say("Power Off sends one hub-wide off message, so every activity switch in Hubitat turned off at once.");
   render();
 }
 function heToggle(id){
@@ -255,11 +310,15 @@ function heToggle(id){
   if(!turnOn && !a.on) return;
   a.busy=turnOn?"starting":"stopping";
   log(`Hubitat: ${label(a)} ${turnOn?"on()":"off()"}`,"he");
+  say(`Hubitat sent ${turnOn?"start":"stop"} to the X2. The switch shows ${a.busy} until the X2 confirms, about 8 to 10 seconds on a real hub.`);
   mq("down",`activity/${MAC}/activity_control_down`,`{"data":{"activity_id":${id},"state":"${turnOn?"on":"off"}"}}`);
   render();
   setTimeout(()=>{
-    if(turnOn){ mq("up",`activity/${MAC}/activity_control_up`,`{"activity_id":${id},"state":"on"}`); const prev=running(); setOnly(id); log(`Hub confirmed: ${label(a)} → on${prev&&prev.id!==id?`, ${label(prev)} → off`:""}`,"act"); movieRule(a); }
-    else { mq("up",`activity/${MAC}/activity_control_up`,'{"activity_id":255,"state":"off"}'); S.acts.forEach(x=>{x.on=false;x.busy=null;}); log("Hub confirmed: off (255, hub-wide)","act"); }
+    if(turnOn){ mq("up",`activity/${MAC}/activity_control_up`,`{"activity_id":${id},"state":"on"}`); const prev=running(); setOnly(id); log(`Hub confirmed: ${label(a)} → on${prev&&prev.id!==id?`, ${label(prev)} → off`:""}`,"act"); movieRule(a);
+      if(prev&&prev.id!==id) done("heon");
+      say(`The X2 confirmed. ${a.name} is running${prev&&prev.id!==id?` and ${prev.name} switched off`:""}, and the remote's screen shows it too.`); }
+    else { mq("up",`activity/${MAC}/activity_control_up`,'{"activity_id":255,"state":"off"}'); S.acts.forEach(x=>{x.on=false;x.busy=null;}); log("Hub confirmed: off (255, hub-wide)","act");
+      say("The X2 confirmed off. Turning off any activity powers off the whole system, like the remote's Power Off key."); }
     render(); flash("act-"+id);
   },2600);
 }
@@ -294,7 +353,8 @@ function stepActs(){
 /* ---------- Step 3 ---------- */
 function pressKey(k){
   const r=running();
-  if(!r){ log(`Remote: key ${k} isn't assigned outside an activity, so nothing is sent. Start an activity first.`,"he"); return; }
+  if(!r){ log(`Remote: key ${k} isn't assigned outside an activity, so nothing is sent. Start an activity first.`,"he");
+    say(`Nothing happened, and that's expected: custom keys only send while an activity is running. Start one on the remote first.`); if(S.step===2) render(); return; }
   const btn=S.keyMap[k];
   mq("up",`${MAC}/up`,`{"device_id":4,"key_id":${btn}}`);
   if(!S.learned){ S.learned=true; log("Hub learned the Hubitat Control remote and imported its command names","he"); }
@@ -305,6 +365,8 @@ function pressKey(k){
     let act=m.act; if(act==="toggle") act=devs.some(d=>d.on)?"off":"on";
     devs.forEach(d=>d.on=(act==="on"));
     log(`Button Actions: turned ${act} ${devs.map(d=>d.name).join(", ")}`,"act");
+    done("key"+k); if(S.done.has("edit")) done("changed");
+    say(`Key ${k} sent ${S.keys[btn]} to Hubitat, and Button Actions turned ${act} ${devs.map(d=>d.name).join(" and ")}.${m.act==="toggle"&&devs.length>1?" Toggle works as a group, so they always match.":""}`);
   }
   if(S.step===2) render();
   document.querySelectorAll(`[data-key="${k}"]`).forEach(b=>{b.classList.add("pressed"); setTimeout(()=>b.classList.remove("pressed"),250);});
@@ -329,8 +391,8 @@ function stepButtons(){
       </div>
     </div>`;
   bindRemote();
-  document.querySelectorAll("[data-devs]").forEach(s=>s.onchange=()=>{S.actions[s.dataset.devs].devs=s.value.split(","); log(`Button Actions: button ${s.dataset.devs} → ${s.options[s.selectedIndex].text}`,"he");});
-  document.querySelectorAll("[data-act]").forEach(s=>s.onchange=()=>{S.actions[s.dataset.act].act=s.value; log(`Button Actions: button ${s.dataset.act} → ${s.options[s.selectedIndex].text}`,"he");});
+  document.querySelectorAll("[data-devs]").forEach(s=>s.onchange=()=>{S.actions[s.dataset.devs].devs=s.value.split(","); S.done.add("edit"); log(`Button Actions: button ${s.dataset.devs} → ${s.options[s.selectedIndex].text}`,"he"); say("Saved. Now press that key on the remote to see the new action."); render();});
+  document.querySelectorAll("[data-act]").forEach(s=>s.onchange=()=>{S.actions[s.dataset.act].act=s.value; S.done.add("edit"); log(`Button Actions: button ${s.dataset.act} → ${s.options[s.selectedIndex].text}`,"he"); say("Saved. Now press that key on the remote to see the new action."); render();});
   $("#next").onclick=()=>go(3);
 }
 
@@ -350,7 +412,8 @@ function stepModels(){
     <div class="rule"><b>X1S in practice</b>The X1S sends a short message to Hubitat when an activity starts (for example a body of <code>watchappletv</code>), and the matching activity switch turns on. Without a webhook, the activity shows "Follow only": Hubitat knows what's running and can trigger rules from it.</div>
     <div class="row"><button class="btn" id="x1s">Simulate an X1S activity starting</button></div>
     <p class="note">Requirements for X2: Hubitat 2.5.2.126 or newer, with the built-in MQTT broker enabled through MQTT Import Integration.</p>`;
-  $("#x1s").onclick=()=>{ log('⇧ X1S → Hubitat <b>PUT http://[hub]:39501/</b> body: watchappletv',"mq"); log("Den-Watch Apple TV → on (Follow only)","act"); };
+  $("#x1s").onclick=()=>{ log('⇧ X1S → Hubitat <b>PUT http://[hub]:39501/</b> body: watchappletv',"mq"); log("Den-Watch Apple TV → on (Follow only)","act");
+    done("x1s"); say("The X1S told Hubitat that Watch Apple TV started, and its switch turned on. Without a webhook it's Follow only: Hubitat knows what's running and can run rules from it."); render(); };
 }
 go(0);
 </script>
