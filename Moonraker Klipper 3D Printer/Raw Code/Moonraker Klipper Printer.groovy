@@ -40,7 +40,7 @@
  *      1024 characters, and the status tile is ~3700. Each tile is saved to the hub's
  *      File Manager (moonraker-<device id>-<tile>.html) and the attribute holds a short
  *      iframe to it. Falls back to inline HTML if the file can't be written. Files are
- *      removed when the device is deleted.
+ *      removed when the device is deleted. Tiles scale to fit any tile size.
  *    - "Buy me a coffee" link at the top of Preferences, under the setup tip.
  *
  *  Changes in 1.0.48:
@@ -669,13 +669,21 @@ String tileFileName(String attr) { return "moonraker-${device.id}-${attr}.html" 
 
 // Dashboards cap attribute values at 1024 chars, so the full tile lives in a hub file
 // and the attribute is a short iframe. The ?t= value makes dashboards reload the frame.
+// The page scales its 380px layout to the tile: status fits width and height, files fits width and scrolls.
 void publishTile(String attr, String html) {
     String fname = tileFileName(attr)
+    boolean fitHeight = (attr == "aaStatusTile")
     String page = "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>" +
-        "<style>html,body{margin:0;padding:0;background:transparent;}</style></head><body>${html}</body></html>"
+        "<style>html,body{margin:0;padding:0;background:transparent;height:100%;overflow-x:hidden;overflow-y:${fitHeight ? 'hidden' : 'auto'};scrollbar-width:thin;}" +
+        "#fit{width:380px;transform-origin:0 0;}</style></head><body><div id='fit'>${html}</div>" +
+        "<script>function fit(){var e=document.getElementById('fit');e.style.transform='none';" +
+        "var s=window.innerWidth/e.offsetWidth;${fitHeight ? "s=Math.min(s,window.innerHeight/e.offsetHeight);" : ""}" +
+        "s=Math.min(s,2);e.style.transform='scale('+s+')';" +
+        "document.body.style.height=${fitHeight ? "'100%'" : "(e.offsetHeight*s)+'px'"};}" +
+        "window.addEventListener('resize',fit);window.addEventListener('load',fit);fit();</script></body></html>"
     try {
         uploadHubFile(fname, page.getBytes("UTF-8"))
-        sendEvent(name: attr, value: "<iframe src='/local/${fname}?t=${now()}' style='width:100%;height:100%;border:0;' scrolling='auto'></iframe>", displayed: false)
+        sendEvent(name: attr, value: "<iframe src='/local/${fname}?t=${now()}' style='width:100%;height:100%;border:0;' scrolling='${fitHeight ? 'no' : 'auto'}'></iframe>", displayed: false)
     } catch (e) {
         logWarn "couldn't save ${fname} (${e.message}), sending inline HTML (too long for dashboard tiles)"
         sendEvent(name: attr, value: html, displayed: false)
