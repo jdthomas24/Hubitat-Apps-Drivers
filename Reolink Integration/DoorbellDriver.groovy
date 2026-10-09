@@ -1,12 +1,14 @@
 /**
  * Reolink Doorbell (Component Driver)
- * Version: 1.6.7
+ * Version: 1.6.8
  *
  * Same delegation pattern as Reolink Camera, plus a "visitor" (button press)
  * event so Rule Machine can trigger straight off "pushed 1" for a doorbell
  * ring, separate from AI person/motion detection.
  *
- * v1.6.7 -- Version bump only (spotlight auto is camera-only).
+ * v1.6.8 -- Commands grouped into dropdowns (8 to 4): Check, Set Interval,
+ * Set Pir. The old command names are kept as plain methods (not listed on the
+ * page) so existing rules keep working.
  * v1.6.6 -- pirOn/pirOff added (battery doorbells have PIR), same as the
  * camera driver: PIR Enabled updates only once the doorbell confirms it.
  * batteryWired drops the percentage, which the Battery row already shows.
@@ -62,14 +64,15 @@ metadata {
         attribute "lastUpdateSource", "enum", ["event", "poll"]
         attribute "supportedFeatures", "string"
         attribute "pirEnabled", "enum", ["true", "false"]
+        // v1.6.8: grouped into dropdowns. Pre-1.6.8 names still work as methods (see Legacy below).
         command "takeSnapshot"
-        command "checkAbilities", [[name: "Refreshes the supportedFeatures attribute from the doorbell's current GetAbility data"]]
-        command "checkRecordingSchedule", [[name: "Diagnostic only -- reads and logs this channel's current NVR recording schedule, does NOT change anything. Set logging to Full to see the result."]]
-        command "checkBattery", [[name: "Battery-mode devices only"]]
-        command "setPollInterval", [[name: "seconds", type: "NUMBER"]]
-        command "setSnapshotInterval", [[name: "seconds", type: "NUMBER"]]
-        command "pirOn", [[name: "Battery doorbells only -- enables the PIR motion trigger"]]
-        command "pirOff", [[name: "Battery doorbells only -- disables the PIR motion trigger, does not stop an in-progress recording"]]
+        command "check", [[name: "item", type: "ENUM",
+            description: "Reads from the doorbell, changes nothing. Battery wakes a battery doorbell; recording schedule logs at Full.",
+            constraints: ["battery", "abilities", "recording schedule"]]]
+        command "setInterval", [[name: "interval", type: "ENUM", constraints: ["poll", "snapshot"]],
+            [name: "seconds", type: "NUMBER"]]
+        command "setPir", [[name: "state", type: "ENUM", description: "PIR motion trigger (battery doorbells)",
+            constraints: ["on", "off"]]]
     }
     preferences {
         // Each header is the FIRST of its own 3-item row (see CameraDriver.groovy).
@@ -77,7 +80,7 @@ metadata {
         input name: "batteryCheckEnabled", type: "bool", title: "Enable auto battery check", defaultValue: false,
             description: "Battery devices only, OFF by default. When ON, auto-checks and updates battery level " +
                 "on the interval below. Checking briefly wakes the device (negligible power at default " +
-                "interval). Ignored for wired devices. Check Battery still works manually any time regardless " +
+                "interval). Ignored for wired devices. Check > battery still works manually any time regardless " +
                 "of this setting."
         input name: "batteryCheckIntervalHours", type: "number", title: "Auto battery check interval (hours)", defaultValue: 12,
             description: "Only used if the setting above is ON."
@@ -232,6 +235,35 @@ def rtspValidationHandler(response, Map data) {
 def takeSnapshot() {
     parent?.componentTakeSnapshot(this, device.deviceNetworkId)
 }
+
+// ---- v1.6.8 grouped commands ----
+
+def check(item) {
+    switch (item?.toString()?.toLowerCase()) {
+        case "battery": checkBattery(); break
+        case "abilities": checkAbilities(); break
+        case "recording schedule": checkRecordingSchedule(); break
+        default: log.warn "${device.displayName}: unknown check '${item}'"
+    }
+}
+
+def setInterval(interval, seconds) {
+    Integer secs = null
+    try { secs = new BigDecimal(seconds.toString()).intValue() } catch (e) { }
+    if (secs == null || secs < 1) {
+        log.warn "${device.displayName}: seconds must be a number of at least 1 (got '${seconds}')"
+        return
+    }
+    if (interval?.toString()?.toLowerCase() == "snapshot") setSnapshotInterval(secs)
+    else setPollInterval(secs)
+}
+
+def setPir(value) {
+    if (value?.toString()?.toLowerCase() == "on") pirOn() else pirOff()
+}
+
+// ---- Legacy (pre-1.6.8) command names: no longer listed, kept so existing rules keep working ----
+
 def setPollInterval(seconds) {
     parent?.componentSetPollInterval(this, seconds as Integer, device.deviceNetworkId)
 }
