@@ -1,19 +1,24 @@
 {
-  "packageName": "Moonraker Klipper Printer",
-  "author": "Jdthomas24",
-  "version": "1.0.48",
-  "category": "Utility",
-  "description": "Hubitat driver for Moonraker/Klipper 3D printers. Monitor print status, temperatures, and progress via live dashboard tiles. Start, pause, resume, and cancel prints directly from Hubitat or any automation rule. Supports Sonicpad multi-printer setups and standard Raspberry Pi/BTT installs.",
-  "dateReleased": "2026-04-29",
-  "minimumHEVersion": "2.3.0",
-  "releaseNotes": "v1.0.48 - Consecutive failure threshold before marking offline (default 3, configurable). Auto-reconnect after outage — driver self-heals without manual intervention. Status tile now correctly shows offline state with last known temps instead of stuck online badge.",
-  "drivers": [
-    {
-      "id": "382c9056-28ca-48de-b6e8-3cd1a44dea22",
-      "name": "Moonraker Klipper Printer",
-      "namespace": "Jdthomas24",
-      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Moonraker%20Klipper%203D%20Printer/Raw%20Code/Moonraker%20Klipper%20Printer.groovy",
-      "required": true
-    }
-  ]
+    "packageName": "Moonraker Klipper Printer",
+    "releaseNotes": "v1.0.49 - Dashboard tiles now display. The status and recent-files tiles were too long for Hubitat dashboards (1024 character limit), so each is now saved as a small file on the hub and shown through a short link. Just add an Attribute tile for aaStatusTile or filesListTile. Added a support link on the device page. v1.0.48 - Consecutive failure threshold before marking offline (default 3, configurable). Auto-reconnect after outage, driver self-heals without manual intervention. Status tile now correctly shows offline state with last known temps instead of stuck online badge.",
+    "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Moonraker%20Klipper%203D%20Printer",
+    "communityLink": "https://community.hubitat.com/t/release-moonraker-klipper-3d-printer-driver/163584",
+    "author": "jdthomas24",
+    "version": "1.0.49",
+    "minimumHEVersion": "2.3.0",
+    "dateReleased": "2026-10-09",
+    "category": "Utility",
+    "tags": "3D Printer, Klipper, Moonraker, Dashboard",
+    "description": "Hubitat driver for Moonraker/Klipper 3D printers. Monitor print status, temperatures, and progress via live dashboard tiles. Start, pause, resume, and cancel prints directly from Hubitat or any automation rule. Supports Sonicpad multi-printer setups and standard Raspberry Pi/BTT installs.",
+    "drivers": [
+        {
+            "id": "382c9056-28ca-48de-b6e8-3cd1a44dea22",
+            "name": "Moonraker Klipper Printer",
+            "namespace": "Jdthomas24",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Moonraker%20Klipper%203D%20Printer/Raw%20Code/Moonraker%20Klipper%20Printer.groovy",
+            "required": true,
+            "description": "One device per printer. Monitors print state, temperatures and progress with dashboard tiles, and starts, pauses, resumes or cancels prints."
+        }
+    ]
 }
+
