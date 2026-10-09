@@ -571,11 +571,11 @@ void buildOfflineTile() {
 //  DASHBOARD TILES
 // ============================================================
 // Dashboards only show attribute values up to 1024 bytes, so tiles are kept compact and inline.
-// Font scales with tile width (cqw); older browsers fall back to 12px.
+// Outer div is the size container; inner text scales with it (cqw is relative to the parent container).
 String compactWrap(String inner) {
-    return "<div style='height:100%;box-sizing:border-box;container-type:inline-size;background:#1a1a2e;color:#ddd;" +
-        "border-radius:10px;padding:5%;font-family:sans-serif;font-size:12px;font-size:4.6cqw;line-height:1.35;text-align:left;" +
-        "display:flex;flex-direction:column;justify-content:space-around'>${inner}</div>"
+    return "<div style='height:100%;box-sizing:border-box;padding:4%;container-type:inline-size;background:#1a1a2e;border-radius:10px'>" +
+        "<div style='height:100%;font:4.6cqw/1.35 sans-serif;color:#ddd;text-align:left;text-shadow:none;" +
+        "display:flex;flex-direction:column;justify-content:space-around'>${inner}</div></div>"
 }
 
 String shorten(String text, int max) {
