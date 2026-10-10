@@ -35,7 +35,7 @@
       or Hubitat can leave an orphan that blocks re-adding the same DNI.
 */
 
-def version() { return "1.1.0" }
+def version() { return "1.1.1" }
 
 metadata {
     definition (name: "Sofabaton Remote", namespace: "jdthomas24", author: "Jason Thomas (fork of Derek Osborn/dJOS1475, building on Mike Maxwell/mike.maxwell, Gassgs, SViel)", importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/SofaBaton%20Integration/RemoteDriver.groovy") {
