@@ -39,6 +39,10 @@
      -connectToBuiltInBroker may not fire mqttClientStatus, so a 3s check subscribes if needed.
      -Connection state comes from interfaces.mqtt.isConnected(). A state flag raced.
      -initialize() reconnects at hub startup, since MQTT connections don't survive a reboot.
+     -Any failed connect or dropped connection retries on its own (30s, 60s, then every 5 min)
+      until connected: the broker can start after drivers at boot, and isBuiltInBrokerRunning()
+      can read false while it's starting, so a failed check still attempts the connect.
+      One warning per outage, one info line on recovery.
      -Remotes must clear their Activity children before deletion, or Hubitat can
       orphan them and block re-adding the same DNI.
 */
@@ -48,10 +52,13 @@ import groovy.json.JsonOutput
 import groovy.transform.Field
 import hubitat.helper.MQTTHelper
 
-def version() { return "1.1.0" }
+def version() { return "1.1.1" }
 
 @Field static final Integer SUBS_VERSION = 2
 @Field static final Integer REQ_TIMEOUT = 5
+@Field static final List RETRY_DELAYS = [30, 60, 300]
+// Last broker settings, in memory only (never in state). Retries reuse them; empty after a reboot.
+@Field static final java.util.concurrent.ConcurrentHashMap LAST_CONNECT = new java.util.concurrent.ConcurrentHashMap()
 @Field static final java.util.concurrent.Semaphore REQ_LOCK = new java.util.concurrent.Semaphore(1)
 @Field static final java.util.concurrent.ConcurrentHashMap REQ_STATE = new java.util.concurrent.ConcurrentHashMap()
 @Field static final List SUBS = ["activity/+/activity_control_up", "activity/+/list", "device/+/list", "device/+/keys_list", "+/up"]
@@ -78,6 +85,7 @@ void installed() {
 // Hub startup (Initialize capability). MQTT connections don't survive a reboot.
 void initialize() {
     atomicState.remove("mqttTarget")
+    state.remove("retryCount")
     clearRequests()
     List hubs = x2Hubs()
     if (!hubs) return
@@ -179,6 +187,7 @@ void ensureMqttConnected(Boolean builtIn, String host = null, String port = null
         return
     }
     String target = builtIn ? "built-in" : "tcp://${host}:${port ?: '1883'}"
+    LAST_CONNECT.put(device.id.toString(), [builtIn: builtIn, host: host, port: port, user: user, pass: pass])
     if (mqttUp() && atomicState.mqttTarget == target) {
         if (logFull()) slog("debug", "MQTT already connected to $target")
         ensureSubscriptions()
@@ -192,30 +201,47 @@ void ensureMqttConnected(Boolean builtIn, String host = null, String port = null
     String clientId = "sofabaton-hubitat-${device.id}"
     try {
         if (builtIn) {
-            if (checkBuiltInBroker() == false) {
-                slog("error", "Hubitat's built-in MQTT broker isn't running. Enable it in MQTT Import Integration.")
-                sendEvent(name: "mqttStatus", value: "broker off")
-                return
-            }
+            boolean brokerOff = (checkBuiltInBroker() == false)
             if (!interfaces.mqtt.connectToBuiltInBroker(clientId)) {
-                slog("error", "connectToBuiltInBroker returned false")
-                sendEvent(name: "mqttStatus", value: "connect failed")
+                sendEvent(name: "mqttStatus", value: brokerOff ? "broker off" : "connect failed")
+                scheduleRetry(brokerOff ? "built-in broker not running" : "connectToBuiltInBroker returned false")
                 return
             }
-            runIn(3, "verifyConnected")
         } else {
             interfaces.mqtt.connect(target, clientId, user ?: null, pass ?: null)
         }
+        runIn(3, "verifyConnected")
     } catch (e) {
-        slog("error", "MQTT connect to $target failed: ${e.message}${builtIn ? ' (the built-in broker option needs Hubitat 2.5.2.126 or newer)' : ''}")
         sendEvent(name: "mqttStatus", value: "connect failed")
+        scheduleRetry("connect to $target failed: ${e.message}${builtIn ? ' (the built-in broker option needs Hubitat 2.5.2.126 or newer)' : ''}")
+    }
+}
+
+// Retries until connected. Repeated runIn calls replace the pending one, so retries never stack.
+private void scheduleRetry(String reason) {
+    int n = (state.retryCount ?: 0) as int
+    if (n == 0) slog("warn", "MQTT not connected (${reason}). Retrying automatically.")
+    else if (logFull()) slog("debug", "MQTT retry ${n} failed: ${reason}")
+    state.retryCount = n + 1
+    runIn(RETRY_DELAYS[Math.min(n, RETRY_DELAYS.size() - 1)] as Integer, "retryConnect")
+}
+
+void retryConnect() {
+    if (mqttUp()) return
+    atomicState.remove("mqttTarget")
+    Map c = LAST_CONNECT.get(device.id.toString()) as Map
+    if (c) {
+        ensureMqttConnected(c.builtIn as Boolean, c.host as String, c.port as String, c.user as String, c.pass as String)
+    } else {
+        List hubs = x2Hubs()
+        if (hubs) hubs[0].updated()   // resupplies broker settings and connects
     }
 }
 
 void mqttClientStatus(String message) {
     if (message.startsWith("Error")) {
-        slog("error", "MQTT error: $message")
         sendEvent(name: "mqttStatus", value: "error")
+        scheduleRetry("MQTT error: $message")
         return
     }
     if (message.contains("Connection succeeded")) {
@@ -227,11 +253,21 @@ void mqttClientStatus(String message) {
 
 // Fallback for connectToBuiltInBroker if no status callback arrived.
 void verifyConnected() {
-    if (mqttUp() && device.currentValue("mqttStatus") != "connected") onConnected()
+    if (mqttUp()) {
+        if (device.currentValue("mqttStatus") != "connected") onConnected()
+    } else {
+        scheduleRetry("no connection after connect attempt")
+    }
 }
 
 private void onConnected() {
     sendEvent(name: "mqttStatus", value: "connected")
+    if (state.retryCount) {
+        slog("info", "MQTT reconnected after ${state.retryCount} ${state.retryCount == 1 ? 'retry' : 'retries'}")
+        state.remove("retryCount")
+    }
+    unschedule("retryConnect")
+    checkBuiltInBroker()   // refresh brokerRunning for the app's MQTT card
     clearRequests()   // stale requests from before the reconnect
     if (!subscribeAll()) return
     if (logNormal()) slog("info", "MQTT connected and subscribed")
@@ -262,6 +298,8 @@ private boolean mqttUp() {
 
 void forceReconnectMqtt() {
     slog("info", "forcing MQTT reconnect")
+    state.remove("retryCount")
+    unschedule("retryConnect")
     String target = atomicState.mqttTarget
     try { interfaces.mqtt.disconnect() } catch (e) { }
     atomicState.remove("mqttTarget")
@@ -448,6 +486,10 @@ private void requestAnswered(String mac, String kind) {
 
 // Each Remote requests its activities, devices, and button names.
 void refreshAllActivities() {
+    if (!mqttUp()) {
+        scheduleRetry("connection lost")
+        return
+    }
     x2Hubs().each { it.requestActivityList() }
 }
 
