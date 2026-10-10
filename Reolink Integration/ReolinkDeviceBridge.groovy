@@ -22,6 +22,7 @@
  * dropdown (on/off) names what the bare On/Off buttons do. Start/Stop Event
  * Subscription folded into one Event Connection dropdown (start, stop,
  * restart). Old methods stay callable, undeclared, for existing rules.
+ * componentSetManualRecord() passthrough.
  *
  * v1.6.8 -- componentSetSpotlightAuto() passthrough (spotlight auto on/off).
  *
@@ -192,6 +193,7 @@ def componentSetSpotlightAuto(child, Boolean on, String dni = null) { parent?.co
 def componentSetNightVision(child, String mode, String dni = null) { parent?.componentSetNightVision(child, mode, dni) }
 def componentSetSiren(child, Boolean on, String dni = null) { parent?.componentSetSiren(child, on, dni) }
 def componentSetPir(child, Boolean on, String dni = null) { parent?.componentSetPir(child, on, dni) }
+def componentSetManualRecord(child, Boolean on, Integer seconds, String dni = null) { parent?.componentSetManualRecord(child, on, seconds, dni) }
 def componentCheckBattery(child, String dni = null) { parent?.componentCheckBattery(child, dni) }
 def componentCheckAbilities(child, String dni = null) { parent?.componentCheckAbilities(child, dni) }
 /** Diagnostic passthrough -- see ParentApp.groovy's componentCheckRecordingSchedule(). */
