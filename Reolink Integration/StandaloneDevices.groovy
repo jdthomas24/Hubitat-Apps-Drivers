@@ -17,7 +17,7 @@
  * every standalone camera/doorbell's bridge, instead of N separate unnested
  * bridges.
  *
- * v1.6.9 -- Version sync only (Device Bridge page cleanup).
+ * v1.6.9 -- componentSetManualRecord() passthrough.
  * v1.6.8 -- componentSetSpotlightAuto() passthrough (spotlight auto on/off).
  *
  * v1.6.6 -- componentGetSourceSecret() passthrough: standalone bridges fetch
@@ -167,6 +167,7 @@ def componentSetSpotlightAuto(child, Boolean on, String dni = null) { parent?.co
 def componentSetNightVision(child, String mode, String dni = null) { parent?.componentSetNightVision(child, mode, dni) }
 def componentSetSiren(child, Boolean on, String dni = null) { parent?.componentSetSiren(child, on, dni) }
 def componentSetPir(child, Boolean on, String dni = null) { parent?.componentSetPir(child, on, dni) }
+def componentSetManualRecord(child, Boolean on, Integer seconds, String dni = null) { parent?.componentSetManualRecord(child, on, seconds, dni) }
 def componentCheckBattery(child, String dni = null) { parent?.componentCheckBattery(child, dni) }
 def componentCheckAbilities(child, String dni = null) { parent?.componentCheckAbilities(child, dni) }
 /**
