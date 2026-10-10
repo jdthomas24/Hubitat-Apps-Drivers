@@ -18,7 +18,8 @@
  * which Hubitat showed as an input box; typing in it made Off throw
  * MissingMethodException. Now bare, and a stray argument is ignored. Push
  * with no number warns instead of a NullPointerException. Load Preset blank
- * loads the Preferences pick (replaces Load Selected Preset). Start/Stop Event
+ * loads the Preferences pick (replaces Load Selected Preset). New Recording
+ * dropdown (on/off) names what the bare On/Off buttons do. Start/Stop Event
  * Subscription folded into one Event Connection dropdown (start, stop,
  * restart). Old methods stay callable, undeclared, for existing rules.
  *
@@ -116,6 +117,8 @@ metadata {
         // On/Off come from the capability, bare (a param label renders an input box; see header).
         capability "Switch"
         capability "PushableButton"
+        command "recording", [[name: "state", type: "ENUM", constraints: ["on", "off"],
+            description: "Master recording, every channel on this Home Hub or NVR. Same as On/Off."]]
         command "push", [[name: "button", type: "NUMBER", description: "Preset button number (shown on the app's Recording Presets page)"]]
         command "loadPreset", [[name: "presetName", type: "STRING", description: "Preset name. Leave blank to load the one picked under Preferences."]]
         command "eventConnection", [[name: "action", type: "ENUM", constraints: ["restart", "start", "stop"],
@@ -127,7 +130,7 @@ metadata {
     }
     preferences {
         input name: "bridgeInfo", type: "paragraph", element: "paragraph", title: "<b>About this device</b>",
-            description: "Holds this source's live event connection. On a Home Hub or NVR, <b>On/Off</b> is the master " +
+            description: "Holds this source's live event connection. On a Home Hub or NVR, <b>Recording</b> (or On/Off) is the master " +
                 "record switch for every channel, and presets (Push, Load Preset) set which hours each channel records. " +
                 "Not used for a standalone camera. Logging is set in the Reolink Integration app."
         input name: "presetToLoad", type: "enum", title: "Preset for a blank Load Preset",
@@ -252,6 +255,15 @@ def off() {
 }
 
 // v1.6.9: a stray value (pre-1.6.9 input box, webCoRE, Custom Action) no longer throws.
+// Clearly named alternative to the capability's bare On/Off buttons.
+def recording(String value) {
+    switch (value?.toLowerCase()) {
+        case "on": on(); break
+        case "off": off(); break
+        default: log.warn "Reolink Device Bridge (source ${state.sourceId}): Recording needs on or off"
+    }
+}
+
 def on(ignored) { on() }
 def off(ignored) { off() }
 
