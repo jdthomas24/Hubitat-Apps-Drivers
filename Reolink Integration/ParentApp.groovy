@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.6.8
+ * Version: 1.6.9
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -19,6 +19,11 @@
  * in-app Tips page, not duplicated here. TODO markers mark spots needing
  * exact command/param names verified against firmware (field names can
  * drift by version). Full history prior to 1.3.6 is in GitHub commit history.
+ *
+ * v1.6.9 -- Device Bridge page cleanup (see the bridge header): On/Off bare,
+ *    Push without a number warns, blank Load Preset loads the Preferences pick,
+ *    one Event Connection dropdown. Recording presets shortcut text and Tips
+ *    (PIR, Recording presets) updated. No app logic change.
  *
  * v1.6.8 -- Device page cleanup and spotlight auto (1.6.7 was internal only):
  *  - Camera/Doorbell commands grouped into dropdowns (camera 21 to 9, doorbell
@@ -296,7 +301,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.6.8"
+@Field static final String APP_VERSION = "1.6.9"
 
 // v1.6.5: power mode migration key; changing it re-runs migrateBatteryModes().
 @Field static final String POWER_MIGRATION_KEY = "batteryWired"
@@ -956,7 +961,10 @@ private List tipsTopics() {
                 "<p>" + ("Use <b>Set Pir</b> (on/off) to enable or disable a camera's PIR trigger without " +
                 "removing the device. Does NOT stop an in-progress recording -- it removes the trigger that " +
                 "would have woken a battery camera to record. Manual only, no auto-revert timer -- build " +
-                "battery-threshold automation with Rule Machine using the existing battery attribute.") + "</p>"
+                "battery-threshold automation with Rule Machine using the existing battery attribute.") + "</p>",
+                "<p>" + ("Turning PIR off while you're home is a good way to stop recordings and alerts without " +
+                "24/7 recording. If the camera still records with PIR off, turn off <b>Pre-recording</b> for " +
+                "that camera in the Reolink app.") + "</p>"
             ].join("")],
         [id: "spotlight", label: "Spotlight", title: "Spotlight and motion", group: "Camera controls", icon: "pi-sun",
             body: [
@@ -989,7 +997,12 @@ private List tipsTopics() {
                 "for continuous (\"TIMING\") and separate tables per AI type -- but a preset here sets all of " +
                 "them to the same hours. So \"Continuous 6pm-6am\" also limits AI-triggered clips to that same " +
                 "window. To get continuous-only-at-certain-hours while still catching AI events any time, use " +
-                "two presets (e.g. \"Daytime\"/\"Nighttime\") switched by a time-based Rule Machine schedule.") + "</p>"
+                "two presets (e.g. \"Daytime\"/\"Nighttime\") switched by a time-based Rule Machine schedule.") + "</p>",
+                "<p>" + ("<b>Presets set schedules, they don't start a recording.</b> There's no \"record now for " +
+                "20 seconds\" command in Reolink's local API. Recording control was built and tested on an NVR; " +
+                "on a Home Hub it's untested. Battery cameras usually record on events only, so a 24/7 schedule may " +
+                "not apply to them. To stop or allow recordings on a battery camera, <b>Set Pir</b> off/on is often " +
+                "the better tool (see PIR trigger).") + "</p>"
             ].join("")],
         [id: "snapshots", label: "Snapshot tiles", title: "Snapshot tiles on dashboards", group: "Recording & snapshots", icon: "pi-image",
             body: [
@@ -2384,7 +2397,7 @@ private String presetsGuidanceHtml(String sourceLabel) {
   <div class='reolink-status-heading font-semibold text-blue-700'><i class='pi pi-cog mr-2' aria-hidden='true'></i>Rule Machine shortcuts</div>
   <div class='text-base mt-2'>Use <b>Reolink Device Bridge (${discoveryEscapeHtml(sourceLabel)})</b> in Rule Machine's standard Switch and Button pickers. No Custom Action is needed.</div>
   <div class='text-base mt-2'><b>Switch on/off:</b> controls master recording for all channels.<br><b>Push button N:</b> loads the preset labeled Button N.</div>
-  <div class='text-base mt-2'>You can also use the bridge's <b>Load Selected Preset</b> command. Button numbers are permanent and never reused; a deleted preset's button does nothing.</div>
+  <div class='text-base mt-2'>You can also use the bridge's <b>Load Preset</b> command with a preset name (or blank for the one picked on the bridge's Preferences). Button numbers are permanent and never reused; a deleted preset's button does nothing.</div>
 </div>
 <details class='reolink-preset-guidance'>
   <summary class='font-semibold'><i class='pi pi-book mr-2' aria-hidden='true'></i>Recording modes &amp; guidance</summary>
