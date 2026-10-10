@@ -6,7 +6,7 @@
  * parent.componentX(this, ...), using data values sourceId/channel to
  * identify which source/channel this device maps to.
  *
- * v1.6.9 -- Version sync only (Device Bridge page cleanup).
+ * v1.6.9 -- Manual Record command (on/off, optional seconds) and manualRecord attribute.
  * v1.6.8 -- Commands grouped into dropdowns (21 to 9): Check, Set Interval,
  * Ptz (now includes Calibrate, which follows up on its own status), Ptz Preset,
  * Set Spotlight, Set Siren, Set Pir. The old command names are kept as plain
@@ -75,6 +75,7 @@ metadata {
         attribute "lastUpdateSource", "enum", ["event", "poll"]
         attribute "spotlight", "enum", ["on", "off"]
         attribute "spotlightAuto", "enum", ["on", "off"]
+        attribute "manualRecord", "enum", ["on", "off"]
         attribute "nightVision", "enum", ["auto", "on", "off"]
         attribute "siren", "enum", ["on", "off"]
         attribute "ptzCalibrationStatus", "enum", ["unknown", "required", "running", "done"]
@@ -96,6 +97,9 @@ metadata {
         command "setSpotlight", [[name: "mode", type: "ENUM",
             description: "Auto on/off: whether motion turns the light on at night",
             constraints: ["on", "off", "auto on", "auto off"]]]
+        command "manualRecord", [[name: "state", type: "ENUM", constraints: ["on", "off"],
+            description: "Record now. Stops by itself after the seconds below."],
+            [name: "seconds", type: "NUMBER", description: "Optional, 1 to 600 (default 600)"]]
         command "setNightVision", [[name: "mode", type: "ENUM", constraints: ["auto", "on", "off"]]]
         command "setSiren", [[name: "state", type: "ENUM", constraints: ["on", "off"]]]
         command "setPir", [[name: "state", type: "ENUM", description: "PIR motion trigger (battery cameras)",
@@ -318,6 +322,22 @@ private Integer toWholeNumber(value, String label, int min) {
     } catch (e) { }
     log.warn "${device.displayName}: ${label} must be a number of at least ${min} (got '${value}')"
     return null
+}
+
+/** v1.6.9: record now; the app stops it after seconds (default and max 600). */
+def manualRecord(value, seconds = null) {
+    boolean on = value?.toString()?.toLowerCase() == "on"
+    Integer secs = null
+    if (on && seconds != null && "${seconds}".trim()) {
+        secs = toWholeNumber(seconds, "seconds", 1)
+        if (secs == null) return
+    }
+    parent?.componentSetManualRecord(this, on, secs, device.deviceNetworkId)
+}
+
+/** v1.6.9: called by the app once the camera accepts the change. */
+def receiveManualRecord(Boolean on) {
+    sendEvent(name: "manualRecord", value: on ? "on" : "off")
 }
 
 // ---- Legacy (pre-1.6.8) command names: no longer listed, kept so existing rules keep working ----
