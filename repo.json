@@ -1,7 +1,7 @@
 {
     "author": "Jdthomas24",
     "gitHubUrl": "https://github.com/jdthomas24",
-    "payPalUrl": "",
+    "payPalUrl": "https://www.paypal.com/paypalme/jdthomas24",
     "packages": [
         {
             "name": "Battery Monitor 2.0",
@@ -41,7 +41,7 @@
             "name": "Device Health Monitor",
             "category": "Utility",
             "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Device%20Health%20Monitor/packageManifest.json",
-            "description": "Monitor device check-in health across Zigbee, Z-Wave, Matter, Hub Mesh, LAN, Virtual and Hub Variable — learns each device's normal pattern and alerts you when something goes quiet.",
+            "description": "Monitor device check-in health across Zigbee, Z-Wave, Matter, Hub Mesh, LAN, Virtual and Hub Variable and learns each device's normal pattern and alerts you when something goes quiet.",
             "descriptive": "",
             "tags": [
                 "ZWave",
@@ -72,6 +72,18 @@
                 "Cameras & Video",
                 "Safety & Security",
                 "Doorbell"
+            ]
+        },
+        {
+            "name": "Sofabaton Integration",
+            "category": "Integrations",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/SofaBaton%20Integration/packagemanifest.json",
+            "description": "Connects Sofabaton X2 and X1S universal remote hubs to Hubitat. Activities become switches kept in sync with the remote, and spare remote keys can control Hubitat lights and scenes. X2 runs fully local over Hubitat's built-in MQTT broker.",
+            "descriptive": "",
+            "tags": [
+                "Remotes & Buttons",
+                "Audio & Video",
+                "Entertainment"
             ]
         }
     ]
