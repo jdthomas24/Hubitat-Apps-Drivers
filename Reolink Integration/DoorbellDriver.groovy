@@ -1,11 +1,12 @@
 /**
  * Reolink Doorbell (Component Driver)
- * Version: 1.6.8
+ * Version: 1.6.9
  *
  * Same delegation pattern as Reolink Camera, plus a "visitor" (button press)
  * event so Rule Machine can trigger straight off "pushed 1" for a doorbell
  * ring, separate from AI person/motion detection.
  *
+ * v1.6.9 -- Version sync only (Device Bridge page cleanup).
  * v1.6.8 -- Commands grouped into dropdowns (8 to 4): Check, Set Interval,
  * Set Pir. The old command names are kept as plain methods (not listed on the
  * page) so existing rules keep working.
