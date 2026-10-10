@@ -31,7 +31,7 @@
 
 import groovy.transform.Field
 
-def version() { return "1.1.0" }
+def version() { return "1.1.1" }
 
 @Field static final Integer CONFIRM_TIMEOUT = 20
 
@@ -232,3 +232,4 @@ void syncOff() {
     sendEvent(name: "activityStatus", value: "off")
     if (wasPending) sendEvent(name: "lastCallStatus", value: "confirmed by hub")
 }
+
