@@ -1,11 +1,12 @@
 /**
  * Reolink Camera (Component Driver)
- * Version: 1.6.8
+ * Version: 1.6.9
  *
  * Thin device: no HTTP of its own. Delegates everything to the parent app via
  * parent.componentX(this, ...), using data values sourceId/channel to
  * identify which source/channel this device maps to.
  *
+ * v1.6.9 -- Version sync only (Device Bridge page cleanup).
  * v1.6.8 -- Commands grouped into dropdowns (21 to 9): Check, Set Interval,
  * Ptz (now includes Calibrate, which follows up on its own status), Ptz Preset,
  * Set Spotlight, Set Siren, Set Pir. The old command names are kept as plain
