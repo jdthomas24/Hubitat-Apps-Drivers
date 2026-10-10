@@ -6,7 +6,7 @@
  * event so Rule Machine can trigger straight off "pushed 1" for a doorbell
  * ring, separate from AI person/motion detection.
  *
- * v1.6.9 -- Version sync only (Device Bridge page cleanup).
+ * v1.6.9 -- Manual Record command (on/off, optional seconds) and manualRecord attribute.
  * v1.6.8 -- Commands grouped into dropdowns (8 to 4): Check, Set Interval,
  * Set Pir. The old command names are kept as plain methods (not listed on the
  * page) so existing rules keep working.
@@ -65,6 +65,7 @@ metadata {
         attribute "lastUpdateSource", "enum", ["event", "poll"]
         attribute "supportedFeatures", "string"
         attribute "pirEnabled", "enum", ["true", "false"]
+        attribute "manualRecord", "enum", ["on", "off"]
         // v1.6.8: grouped into dropdowns. Pre-1.6.8 names still work as methods (see Legacy below).
         command "takeSnapshot"
         command "check", [[name: "item", type: "ENUM",
@@ -72,6 +73,9 @@ metadata {
             constraints: ["battery", "abilities", "recording schedule"]]]
         command "setInterval", [[name: "interval", type: "ENUM", constraints: ["poll", "snapshot"]],
             [name: "seconds", type: "NUMBER"]]
+        command "manualRecord", [[name: "state", type: "ENUM", constraints: ["on", "off"],
+            description: "Record now. Stops by itself after the seconds below."],
+            [name: "seconds", type: "NUMBER", description: "Optional, 1 to 600 (default 600)"]]
         command "setPir", [[name: "state", type: "ENUM", description: "PIR motion trigger (battery doorbells)",
             constraints: ["on", "off"]]]
     }
@@ -261,6 +265,25 @@ def setInterval(interval, seconds) {
 
 def setPir(value) {
     if (value?.toString()?.toLowerCase() == "on") pirOn() else pirOff()
+}
+
+/** v1.6.9: record now; the app stops it after seconds (default and max 600). */
+def manualRecord(value, seconds = null) {
+    boolean on = value?.toString()?.toLowerCase() == "on"
+    Integer secs = null
+    if (on && seconds != null && "${seconds}".trim()) {
+        try { secs = new BigDecimal("${seconds}".trim()).intValue() } catch (e) { }
+        if (secs == null || secs < 1) {
+            log.warn "${device.displayName}: seconds must be a number of at least 1 (got '${seconds}')"
+            return
+        }
+    }
+    parent?.componentSetManualRecord(this, on, secs, device.deviceNetworkId)
+}
+
+/** v1.6.9: called by the app once the camera accepts the change. */
+def receiveManualRecord(Boolean on) {
+    sendEvent(name: "manualRecord", value: on ? "on" : "off")
 }
 
 // ---- Legacy (pre-1.6.8) command names: no longer listed, kept so existing rules keep working ----
