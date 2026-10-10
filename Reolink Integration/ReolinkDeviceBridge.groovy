@@ -1,6 +1,6 @@
 /**
  * Reolink Device Bridge (Internal Parent Driver)
- * Version: 1.6.8
+ * Version: 1.6.9
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- ONE instance per SOURCE (Hub/NVR or standalone).
@@ -13,6 +13,14 @@
  * parent?.componentX(...) calls resolve to THIS device (their real parent);
  * every componentX() method below is a one-line passthrough up to this
  * bridge's own parent (the app).
+ *
+ * v1.6.9 -- Page cleanup, matching the camera pages. On/Off had a param label,
+ * which Hubitat showed as an input box; typing in it made Off throw
+ * MissingMethodException. Now bare, and a stray argument is ignored. Push
+ * with no number warns instead of a NullPointerException. Load Preset blank
+ * loads the Preferences pick (replaces Load Selected Preset). Start/Stop Event
+ * Subscription folded into one Event Connection dropdown (start, stop,
+ * restart). Old methods stay callable, undeclared, for existing rules.
  *
  * v1.6.8 -- componentSetSpotlightAuto() passthrough (spotlight auto on/off).
  *
@@ -27,50 +35,11 @@
  * decrypt body" message (marker 'c800' is a reply status code, not an
  * encryption marker) moved to Full logging and now includes the cmd_id.
  *
- * v1.5.0 -- NVR recording control: a master record on/off switch, plus
- * named per-channel schedule presets loaded on demand. Confirmed against a
- * real RLN16-410 NVR across many rounds of live testing before release --
- * see ParentApp.groovy for the full hardware-confirmed mechanics.
- *  - capability "Switch" (on()/off()) is the NVR's master record
- *    enable/disable -- untargeted at the API level (applies to every
- *    channel of this source at once; there is no per-channel version of
- *    this call). A Preferences-page note explains this, since a bare
- *    "On/Off" switch label alone doesn't convey what it does.
- *  - capability "PushableButton" (push(btn)), the "Preset to load"
- *    Preferences dropdown, and loadSelectedPreset() all load a named
- *    per-channel schedule preset defined on the app's Recording Presets
- *    page. Each preset's button number is assigned once, permanently, and
- *    is never reused even after that preset is deleted -- see
- *    ParentApp.groovy's note for why.
- *  - on()/off()/loadSelectedPreset() are declared as bare, argument-free
- *    commands (confirmed via real Rule Machine testing: a command param
- *    entry with description text but no "type" renders as harmless plain
- *    text on this device's own Commands tab, but Rule Machine's Custom
- *    Action treats it as a real argument slot and passes through whatever's
- *    typed -- a genuine MissingMethodException risk for a zero-argument
- *    command). on()/off() keep their explanatory text on the Preferences
- *    tab instead. loadPreset(presetName) and push(btn) both declare REAL
- *    typed parameters (STRING and NUMBER respectively) that Rule Machine
- *    handles correctly, so neither is affected by that restriction.
- *  - loadPreset(presetName) lets a different preset be called per Rule
- *    Machine branch (e.g. "Away" vs. "Home"), unlike loadSelectedPreset
- *    (one shared Preferences dropdown across the whole device) or Push
- *    (requires cross-referencing a button-number-to-preset-name mapping).
- *    All three ways to trigger a preset coexist: Push by number (closest
- *    to "easy," no typing, number shown right on the device page),
- *    loadPreset(name) (self-documenting per rule), loadSelectedPreset
- *    (manual/device-page convenience only, not for automation branching).
- *  - push(BigDecimal btn): Rule Machine hands a NUMBER-type command
- *    argument to a method as BigDecimal, not Integer, and Groovy does not
- *    auto-coerce between them in that call context -- confirmed via real
- *    testing. Converted to Integer internally before use.
- *  - receiveRecordingEnabled()/receiveRecordingMode()/receiveRecordingResult()
- *    keep this device's switch/recordingEnabled/recordingMode/
- *    lastRecordingResult attributes in sync with what the app actually did.
- *  - Two earlier designs (recordOn()/recordOff() with app-side cache-and-
- *    restore; separate virtual child devices for the switch/buttons) were
- *    built, tested, and fully replaced by the above during development --
- *    neither exists in the code anymore.
+ * v1.5.0 -- NVR recording control (confirmed on a real RLN16-410): Switch on/off
+ * is the source's master record enable (every channel at once, no per-channel
+ * call exists); presets write per-channel schedules (see ParentApp.groovy).
+ * Rule Machine passes NUMBER arguments as BigDecimal; a command param with a
+ * name but no type renders as an input box and is passed through as an argument.
  *
  * v1.6.4 -- No more silent dead ends. A failed socket open, a socket drop
  * mid-handshake, and a handshake reply without a nonce each reported
@@ -143,77 +112,25 @@ import javax.crypto.spec.IvParameterSpec
 metadata {
     definition(name: "Reolink Device Bridge", namespace: "jdthomas24", author: "Jason", component: true) {
         capability "Actuator"
-        // Switch and PushableButton, declared directly on this device
-        // instead of a separate child device -- see the header note above
-        // and ParentApp.groovy for the full design. on()/off()/push()
-        // implementations are below, near loadSelectedPreset().
+        // Switch = NVR/Hub master record on/off; PushableButton = load preset by button number.
+        // On/Off come from the capability, bare (a param label renders an input box; see header).
         capability "Switch"
         capability "PushableButton"
-        command "on", [[name: "NVR's MASTER recording switch -- applies to EVERY channel at once (hardware/API limitation, can't target one channel). Does NOT control which hours get recorded -- that's set by loading a preset instead. Turn on once and leave on."]]
-        command "off", [[name: "Same master switch, OFF -- still every channel at once."]]
-        command "push", [[name: "btn", type: "NUMBER", description: "Button number -- check the Preferences tab's \"Preset to load\" dropdown for which number is assigned to which preset."]]
-        command "startEventSubscription"
-        command "stopEventSubscription"
-        // Named preset command -- lets a different preset be called per
-        // Rule Machine branch. See the header note above for how this
-        // differs from Push and loadSelectedPreset.
-        command "loadPreset", [[name: "presetName", type: "STRING", description: "Name of a preset defined on this source's Recording Presets page in the app (e.g. 'Away', 'Home') -- use this for calling a SPECIFIC preset per rule/branch, since loadSelectedPreset() below shares one dropdown across the whole device."]]
-        // No-argument companion command -- loads whichever preset is
-        // picked in the "Preset to load" dropdown on this device's own
-        // Preferences tab, so a preset can be triggered by hand without
-        // typing its name. See getAvailablePresetNames()/
-        // loadSelectedPreset() below. Deliberately bare, no param array --
-        // see the header note above for why this ONE stays bare while
-        // on()/off() carry their explanatory text on the Commands tab.
-        command "loadSelectedPreset"
-        // configureConnection() is NOT declared as a UI command -- it's
-        // always called programmatically by the app (ensureSourceBridge(),
-        // unconditionally, every time it runs), so a manual "Configure
-        // Connection" form on the Commands tab served no purpose. The
-        // method itself below is unchanged and still fully callable from
-        // the app.
+        command "push", [[name: "button", type: "NUMBER", description: "Preset button number (shown on the app's Recording Presets page)"]]
+        command "loadPreset", [[name: "presetName", type: "STRING", description: "Preset name. Leave blank to load the one picked under Preferences."]]
+        command "eventConnection", [[name: "action", type: "ENUM", constraints: ["restart", "start", "stop"],
+            description: "Live event connection. Restart if events stop arriving."]]
         attribute "connectionStatus", "enum", ["disconnected", "connecting", "connected", "reconnecting"]
-        // Reflects whichever preset name was last loaded via loadPreset()/
-        // loadSelectedPreset(), which can be any user-defined string, so
-        // this is a plain string attribute instead of a closed enum.
-        attribute "recordingMode", "string"
-        // Separately reflects the master record switch's own on/off state,
-        // independent of which preset is loaded -- the two are genuinely
-        // separate concepts. Kept alongside the standard "switch" attribute
-        // (from the Switch capability) -- both are updated together by
-        // receiveRecordingEnabled() below, so either can be used.
+        attribute "recordingMode", "string"          // last preset loaded
         attribute "recordingEnabled", "enum", ["enabled", "disabled"]
-        // Per-channel success/failure summary from the last preset load,
-        // e.g. "6/6 OK" or "5/6 OK, failed: ch3, skipped (no data): ch7" --
-        // visible on this device page without a log dive.
-        attribute "lastRecordingResult", "string"
+        attribute "lastRecordingResult", "string"    // e.g. "6/6 OK"
     }
     preferences {
-        // FIRST item on this page, deliberately, and styled to stand out --
-        // a bare "On/Off" switch label conveys nothing about what it
-        // actually does, so this explains it up front instead.
-        input name: "onOffExplainer", type: "paragraph", element: "paragraph",
-            title: "⚠️ What the On / Off switch above actually does",
-            description: "<div class='border-2 border-blue-700 border-round bg-blue-50 p-3'>" +
-                "<b class='text-blue-900'>NVR's MASTER recording switch -- applies to " +
-                "EVERY channel at once, can't target one channel (hardware/API limitation).</b><br><br>" +
-                "<span class='text-blue-800'>Does NOT control which hours get recorded -- that's set by " +
-                "loading a preset instead (Push button, or the app's Recording Presets page). Turn on once " +
-                "and leave on.</span></div>"
-        input name: "loggingInfo", type: "paragraph", element: "paragraph",
-            title: "ℹ️ Logging",
-            description: "Log verbosity for this bridge (and every other Reolink device) is controlled " +
-                "from the Reolink Integration app's Log level setting (Errors Only / Normal / Full) -- " +
-                "there is nothing to configure here. Genuine connection failures always log regardless " +
-                "of that setting."
-        // Preferences pages are re-evaluated fresh every time they're
-        // opened (unlike a Commands-tab parameter, which is locked to a
-        // fixed type forever) -- so this can pull a LIVE list of whatever
-        // presets currently exist for this source, instead of requiring a
-        // name typed exactly right with no picker at all. Pick one here,
-        // then run the "Load Selected Preset" command (Commands tab) to
-        // apply it.
-        input name: "presetToLoad", type: "enum", title: "Preset to load (via 'Load Selected Preset' command)",
+        input name: "bridgeInfo", type: "paragraph", element: "paragraph", title: "<b>About this device</b>",
+            description: "Holds this source's live event connection. On a Home Hub or NVR, <b>On/Off</b> is the master " +
+                "record switch for every channel, and presets (Push, Load Preset) set which hours each channel records. " +
+                "Not used for a standalone camera. Logging is set in the Reolink Integration app."
+        input name: "presetToLoad", type: "enum", title: "Preset for a blank Load Preset",
             options: getAvailablePresetNames(), required: false
     }
 }
@@ -292,27 +209,18 @@ def componentRtspValidationDone(child, String dni, Boolean success, String messa
 // This driver only forwards each command and reflects the result.
 // ============================================================================
 
-/**
- * Named preset command -- takes the preset name directly, self-documenting
- * in a rule, no cross-referencing a button-number table or keeping a
- * shared dropdown in sync (see push()/loadSelectedPreset() below for the
- * other two ways to trigger a preset).
- */
-def loadPreset(String presetName) {
-    parent?.componentLoadPreset(this, state.sourceId, presetName)
+/** Loads a preset by name; blank loads the one picked under Preferences (v1.6.9). */
+def loadPreset(String presetName = null) {
+    if (!presetName?.trim()) { loadSelectedPreset(); return }
+    parent?.componentLoadPreset(this, state.sourceId, presetName.trim())
 }
 
-/**
- * Companion to the "Preset to load" Preferences dropdown -- loads whichever
- * preset name is currently picked there, so a preset can be triggered from
- * this device's own page without needing Rule Machine's Custom Action or
- * typing a name by hand.
- */
+/** Loads the preset picked under Preferences. Undeclared since 1.6.9 (blank Load Preset does this); kept for old rules. */
 def loadSelectedPreset() {
     def name = settings?.presetToLoad
     if (!name || name.startsWith("(no presets")) {
         log.warn "Reolink Device Bridge (source ${state.sourceId}): no preset selected (or none exist yet) -- " +
-            "add one on the app's Recording Presets page, then pick it here under Preferences"
+            "add one on the app's Recording Presets page, then pick it under Preferences or type its name in Load Preset"
         return
     }
     parent?.componentLoadPreset(this, state.sourceId, name)
@@ -334,7 +242,7 @@ private List<String> getAvailablePresetNames() {
     return names ?: ["(no presets defined yet -- add one on the Recording Presets page in the app)"]
 }
 
-/** Switch capability -- the NVR's master record enable/disable. See the Preferences-page note above (rendered near the top of that page) for what this actually does; a bare On/Off label alone doesn't convey it. */
+/** Switch capability: master record enable/disable for every channel of this source. */
 def on() {
     parent?.componentSetRecordingEnabled(this, state.sourceId, true)
 }
@@ -343,24 +251,41 @@ def off() {
     parent?.componentSetRecordingEnabled(this, state.sourceId, false)
 }
 
+// v1.6.9: a stray value (pre-1.6.9 input box, webCoRE, Custom Action) no longer throws.
+def on(ignored) { on() }
+def off(ignored) { off() }
+
 /**
- * PushableButton capability -- looks up which preset (if any) currently
- * owns this button number via the app's persistent numbering and loads it.
- * A number belonging to a deleted preset is a harmless no-op, logged
- * app-side.
- *
- * Parameter type is BigDecimal, not Integer -- confirmed via real Rule
- * Machine testing that Rule Machine hands a NUMBER-type command argument
- * to a method as BigDecimal, and Groovy does not coerce between them
- * automatically in this context; this is the standard PushableButton
- * signature used across Hubitat's own drivers for exactly that reason.
- * Converted to Integer internally (via toInteger()) before use, since the
- * app-side button-number lookup compares against Integer keys.
+ * PushableButton: loads the preset that owns this button number. Untyped because Rule Machine
+ * passes BigDecimal and other callers may pass Integer or String; a missing number only warns.
  */
-def push(BigDecimal btn) {
-    Integer btnInt = btn.toInteger()
+def push(btn) {
+    Integer btnInt = null
+    try { if (btn != null && "${btn}".trim()) btnInt = new BigDecimal("${btn}".trim()).toInteger() } catch (e) { }
+    if (btnInt == null) {
+        log.warn "Reolink Device Bridge (source ${state.sourceId}): Push needs a button number -- see the app's Recording Presets page"
+        return
+    }
     sendEvent(name: "pushed", value: btnInt, isStateChange: true)
     parent?.componentBridgeButtonPushed(this, state.sourceId, btnInt)
+}
+
+/** v1.6.9: one dropdown for the event connection. start/stopEventSubscription stay callable (app and old rules). */
+def eventConnection(String action) {
+    switch (action?.toLowerCase()) {
+        case "start":
+            startEventSubscription()
+            break
+        case "stop":
+            stopEventSubscription()
+            break
+        case "restart":
+            stopEventSubscription()
+            runIn(3, "startEventSubscription")
+            break
+        default:
+            log.warn "Reolink Device Bridge (source ${state.sourceId}): Event Connection needs restart, start or stop"
+    }
 }
 
 /** Called by the app once the master record switch has been set. Updates both the standard "switch" attribute (Rule Machine, dashboards) and the custom "recordingEnabled" attribute. */
