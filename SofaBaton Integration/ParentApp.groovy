@@ -41,7 +41,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Sofabaton Integration"
-@Field static final String APP_VERSION = "1.1.0"
+@Field static final String APP_VERSION = "1.1.1"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com"   // TODO: release thread
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
