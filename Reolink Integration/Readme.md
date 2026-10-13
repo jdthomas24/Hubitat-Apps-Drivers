@@ -17,6 +17,7 @@ This integration is also becoming Hubitat's built-in Reolink integration. This r
 - **Snapshots and live video.** Cached snapshots for dashboard tiles, plus RTSP live streaming through Hubitat's video stream service on supported hubs.
 - **Camera controls.** PTZ moves, presets and calibration; spotlight on/off and spotlight auto (whether motion turns it on at night); night vision; siren; PIR on/off for battery devices.
 - **Battery devices.** Battery level, charging status (charging / plugged in / not charging) and a one-line Battery Wired summary. Wired devices never show battery values.
+- **Manual recording.** Start a recording now from a rule (for example on motion), for a set number of seconds.
 - **NVR recording control.** A master record switch, plus named per-channel schedule presets that Hubitat modes or rules can load (for example "Away" and "Home").
 - **Capability detection.** A `supportedFeatures` attribute per device, read from the camera, shows what that model can actually do.
 - **Logging levels.** Errors Only (default), Normal or Full. Full turns itself off after 60 minutes.
@@ -35,9 +36,12 @@ Commands are grouped into dropdowns so each device page stays short.
 | Set Night Vision | auto, on, off |
 | Set Siren | on, off |
 | Set Pir | on, off |
+| Manual Record | on or off, plus optional seconds (1 to 600) |
 | Take Snapshot | |
 
-Doorbells have Check, Set Interval, Set Pir and Take Snapshot. Hubitat shows every command on every device, so check `supportedFeatures` to see what a given model supports. Rules written before 1.6.8 with the older command names (Pir Off, Ptz Go To Preset, Spotlight On and so on) keep working.
+Doorbells have Check, Set Interval, Set Pir, Manual Record and Take Snapshot. Hubitat shows every command on every device, so check `supportedFeatures` to see what a given model supports. Rules written before 1.6.8 with the older command names (Pir Off, Ptz Go To Preset, Spotlight On and so on) keep working.
+
+The Device Bridge has Recording (the master record switch, same as On/Off), Push and Load Preset for recording presets, and Event Connection (restart, start, stop).
 
 ## How it works
 
