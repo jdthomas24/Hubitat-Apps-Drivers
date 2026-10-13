@@ -1,6 +1,6 @@
 /**
  * Reolink Standalone Devices (Internal Group Driver)
- * Version: 1.6.9
+ * Version: 1.6.10
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- exactly ONE instance total, shared across every
@@ -17,6 +17,7 @@
  * every standalone camera/doorbell's bridge, instead of N separate unnested
  * bridges.
  *
+ * v1.6.10 -- Version sync only (Device Bridge memory change).
  * v1.6.9 -- componentSetManualRecord() passthrough.
  * v1.6.8 -- componentSetSpotlightAuto() passthrough (spotlight auto on/off).
  *
