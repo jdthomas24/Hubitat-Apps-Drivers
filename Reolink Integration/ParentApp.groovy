@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.6.9
+ * Version: 1.6.10
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -19,6 +19,11 @@
  * in-app Tips page, not duplicated here. TODO markers mark spots needing
  * exact command/param names verified against firmware (field names can
  * drift by version). Full history prior to 1.3.6 is in GitHub commit history.
+ *
+ * v1.6.10 -- Device Bridge keeps per-message data in memory instead of state
+ *    (see the bridge header). Tips: Manual recording rewritten after testing
+ *    on a Home Hub Pro (events-only vs continuous, post-recording, FTP, NVR
+ *    firmware note).
  *
  * v1.6.9 -- Device Bridge page cleanup (see the bridge header): On/Off bare,
  *    Push without a number warns, blank Load Preset loads the Preferences pick,
@@ -305,7 +310,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.6.9"
+@Field static final String APP_VERSION = "1.6.10"
 
 // v1.6.5: power mode migration key; changing it re-runs migrateBatteryModes().
 @Field static final String POWER_MIGRATION_KEY = "batteryWired"
@@ -1009,14 +1014,19 @@ private List tipsTopics() {
             ].join("")],
         [id: "manualrec", label: "Manual recording", title: "Manual recording", group: "Recording & snapshots", icon: "pi-circle-fill",
             body: [
-                "<p>" + ("Use <b>Manual Record</b> on a camera or doorbell to start recording now, for example when " +
-                "motion is detected. Turn it <b>on</b> with an optional number of seconds (1 to 600, default 600, " +
-                "the camera's limit); it stops by itself after that, or use <b>off</b> to stop sooner. The " +
-                "<b>Manual Record</b> attribute shows on/off. Recordings go wherever the camera or its Home Hub/NVR " +
-                "normally stores them.") + "</p>",
-                "<p>" + ("&#9888; <b>Battery cameras stay awake while recording</b>, so use short times there. A " +
-                "change made in the Reolink app isn't shown here. If a camera doesn't support manual recording, " +
-                "the app logs a warning and nothing changes.") + "</p>"
+                "<p>" + ("Use <b>Manual Record</b> on a camera or doorbell to record now, for example when another " +
+                "sensor sees motion. Turn it <b>on</b> with optional seconds (1 to 600, default 600); it stops by " +
+                "itself, or use <b>off</b> to stop sooner. The <b>Manual Record</b> attribute shows on/off.") + "</p>",
+                "<p>" + ("<b>Works on cameras that record on events only</b>, wired and battery (tested behind a Home " +
+                "Hub Pro: the clip saves to the hub). With <b>continuous</b> recording it's redundant, since the camera " +
+                "is already recording; that footage shows in playback once each recording file closes (often hourly). " +
+                "In playback, look at the timeline for that time, since a manual clip isn't tagged as motion or person.") + "</p>",
+                "<p>" + ("The clip runs a little longer than the seconds you set, because of the camera's " +
+                "<b>Post-recording</b> time in the Reolink app.") + "</p>",
+                "<p>" + ("&#9888; <b>Battery cameras stay awake while recording</b>, so keep it short. Their FTP upload " +
+                "only sends motion clips, so manual clips aren't uploaded by FTP. A change made in the Reolink app " +
+                "isn't shown on the attribute. On NVR firmware 3.5.1 and 3.6.x, some NVRs reject manual recording " +
+                "(a known Reolink firmware bug); the app then logs a warning and nothing changes.") + "</p>"
             ].join("")],
         [id: "snapshots", label: "Snapshot tiles", title: "Snapshot tiles on dashboards", group: "Recording & snapshots", icon: "pi-image",
             body: [
