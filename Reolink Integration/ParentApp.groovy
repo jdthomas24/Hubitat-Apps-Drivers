@@ -31,7 +31,9 @@
  *    Battery cameras send on/off over Baichuan first (HTTP "on" only flashes
  *    the light from standby; tested on a Home Hub Pro), HTTP as fallback.
  *    The light only lasts while a battery camera is awake (~30s), so "on" is
- *    re-sent every 20s for 180s, then turned off (same as a wired camera).
+ *    re-sent every 20s for 180s, then turned off (same as a wired camera),
+ *    whichever path turned it on. Baichuan status 400 (camera still waking) is
+ *    retried after 1.5s, up to 3 attempts, like reolink_aio.
  *    reolinkApiOutcome() returns rspCode with the value. Tips: Spotlight.
  *
  * v1.6.10 -- Device Bridge keeps per-message data in memory instead of state
@@ -4154,10 +4156,24 @@ def componentSetSpotlight(child, Boolean on, String dni = null) {
     setSpotlightHttp(c, sourceId, channel, on, true)
 }
 
-private boolean sendSpotlightBaichuan(c, Integer sourceId, Integer channel, Boolean on, boolean httpTried) {
+private boolean sendSpotlightBaichuan(c, Integer sourceId, Integer channel, Boolean on, boolean httpTried, int attempt = 1) {
     String xml = String.format(FLOODLIGHT_MANUAL_XML, channel, on ? 1 : 0)
     return getSourceBridge(sourceId)?.sendBaichuanCommand(288, channel, xml,
-        [kind: "spotlight", dni: c.deviceNetworkId, on: on, httpTried: httpTried]) == true
+        [kind: "spotlight", dni: c.deviceNetworkId, on: on, httpTried: httpTried, attempt: attempt]) == true
+}
+
+// Status 400 = battery camera still waking; reolink_aio retries after 1.5s, up to 3 attempts.
+@Field static final int BC_WAKE_ATTEMPTS = 3
+
+def retrySpotlightBaichuan(Map data) {
+    def c = resolveChild(null, data?.dni as String)
+    if (!c) return
+    def sourceId = c.getDataValue("sourceId") as Integer
+    def channel = c.getDataValue("channel") as Integer
+    if (!sendSpotlightBaichuan(c, sourceId, channel, data.on as Boolean, data.httpTried as Boolean, data.attempt as Integer)
+            && !(data.httpTried as Boolean)) {
+        setSpotlightHttp(c, sourceId, channel, data.on as Boolean, false)
+    }
 }
 
 private void setSpotlightHttp(c, Integer sourceId, Integer channel, Boolean on, boolean allowBaichuan) {
@@ -4179,10 +4195,14 @@ private void setSpotlightHttp(c, Integer sourceId, Integer channel, Boolean on, 
 
 private void spotlightConfirmed(c, Boolean on) {
     c.receiveSpotlight(on ? "on" : "off")
-    // With events connected the floodlight push (cmd_id 291) reports the light going off; a re-read would wake a battery camera.
     if (!on) return
     def bridge = getSourceBridge(c.getDataValue("sourceId") as Integer)
-    if (bridge?.currentValue("connectionStatus") == "connected") return
+    if (bridge?.currentValue("connectionStatus") == "connected") {
+        // Battery cameras: keep awake for the full 3 minutes, whichever path turned the light on.
+        if (powerModeOf(c) == "battery" && !SPOTLIGHT_HOLD.containsKey(c.deviceNetworkId)) startSpotlightHold(c)
+        // The floodlight push (cmd_id 291) reports the light going off; a re-read would wake a battery camera.
+        return
+    }
     runIn(SPOTLIGHT_RECHECK_SEC, "recheckSpotlight", [data: [dni: c.deviceNetworkId], overwrite: false])
 }
 
@@ -4244,13 +4264,21 @@ def componentBaichuanReply(bridge, Map ctx, Integer status, String body) {
     switch (ctx.kind) {
         case "spotlight":
             if (ctx.hold) {
-                if (status != 200) logFull "Reolink ${c.displayName}: spotlight keep-awake resend not accepted (${why})"
+                if (status != 200) {
+                    logFull "Reolink ${c.displayName}: spotlight keep-awake resend not accepted (${why}), resending over HTTP"
+                    reolinkApiOutcome(c.getDataValue("sourceId") as Integer, "SetWhiteLed",
+                        [WhiteLed: [channel: c.getDataValue("channel") as Integer, state: 1]], null)
+                }
                 break
             }
+            int attempt = (ctx.attempt ?: 1) as Integer
             if (status == 200) {
                 logNormal "Reolink ${c.displayName}: spotlight ${ctx.on ? 'on' : 'off'} (sent over the event connection)"
                 spotlightConfirmed(c, ctx.on as Boolean)
-                if (ctx.on && powerModeOf(c) == "battery") startSpotlightHold(c)
+            } else if (status == 400 && attempt < BC_WAKE_ATTEMPTS) {
+                logFull "Reolink ${c.displayName}: camera still waking (status 400), retrying in 1.5s (attempt ${attempt + 1} of ${BC_WAKE_ATTEMPTS})"
+                runInMillis(1500, "retrySpotlightBaichuan",
+                    [data: [dni: c.deviceNetworkId, on: ctx.on, httpTried: ctx.httpTried ?: false, attempt: attempt + 1], overwrite: false])
             } else if (!ctx.httpTried) {
                 logFull "Reolink ${c.displayName}: spotlight over the event connection failed (${why}), trying HTTP"
                 setSpotlightHttp(c, c.getDataValue("sourceId") as Integer, c.getDataValue("channel") as Integer, ctx.on as Boolean, false)
