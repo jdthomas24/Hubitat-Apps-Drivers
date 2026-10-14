@@ -1,6 +1,6 @@
 /**
  * Reolink Standalone Devices (Internal Group Driver)
- * Version: 1.6.10
+ * Version: 1.6.11
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- exactly ONE instance total, shared across every
@@ -17,6 +17,7 @@
  * every standalone camera/doorbell's bridge, instead of N separate unnested
  * bridges.
  *
+ * v1.6.11 -- componentBaichuanReply() passthrough (spotlight over the event connection).
  * v1.6.10 -- Version sync only (Device Bridge memory change).
  * v1.6.9 -- componentSetManualRecord() passthrough.
  * v1.6.8 -- componentSetSpotlightAuto() passthrough (spotlight auto on/off).
@@ -204,3 +205,6 @@ def componentRtspValidationDone(child, String dni, Boolean success, String messa
 
 // v1.6.6: standalone bridges re-fetch the source password from the app (kept out of bridge state).
 def componentGetSourceSecret(sourceId) { return parent?.componentGetSourceSecret(sourceId) }
+
+// v1.6.11: replies to settings a bridge sent over its event connection.
+def componentBaichuanReply(bridge, Map ctx, Integer status, String body) { parent?.componentBaichuanReply(bridge, ctx, status, body) }

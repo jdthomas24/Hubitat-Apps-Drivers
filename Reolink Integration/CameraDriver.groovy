@@ -1,11 +1,13 @@
 /**
  * Reolink Camera (Component Driver)
- * Version: 1.6.10
+ * Version: 1.6.11
  *
  * Thin device: no HTTP of its own. Delegates everything to the parent app via
  * parent.componentX(this, ...), using data values sourceId/channel to
  * identify which source/channel this device maps to.
  *
+ * v1.6.11 -- spotlight attribute changes only when the camera accepts (receiveSpotlight()),
+ * not on every command; the app re-reads it after Reolink's manual light timer.
  * v1.6.10 -- Version sync only (Device Bridge memory change).
  * v1.6.9 -- Manual Record command (on/off, optional seconds) and manualRecord attribute.
  * v1.6.8 -- Commands grouped into dropdowns (21 to 9): Check, Set Interval,
@@ -353,12 +355,15 @@ def savePresetHere(presetId, name = null) {
 
 def spotlightOn() {
     parent?.componentSetSpotlight(this, true, device.deviceNetworkId)
-    sendEvent(name: "spotlight", value: "on")
 }
 
 def spotlightOff() {
     parent?.componentSetSpotlight(this, false, device.deviceNetworkId)
-    sendEvent(name: "spotlight", value: "off")
+}
+
+/** v1.6.11: set by the app once the camera accepts the change, or when it reads the light. */
+def receiveSpotlight(String value) {
+    if (value in ["on", "off"]) sendIfChanged("spotlight", value)
 }
 
 def sirenOn() {

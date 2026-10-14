@@ -1,6 +1,6 @@
 /**
  * Reolink Device Bridge (Internal Parent Driver)
- * Version: 1.6.10
+ * Version: 1.6.11
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- ONE instance per SOURCE (Hub/NVR or standalone).
@@ -13,6 +13,17 @@
  * parent?.componentX(...) calls resolve to THIS device (their real parent);
  * every componentX() method below is a one-line passthrough up to this
  * bridge's own parent (the app).
+ *
+ * v1.6.11 -- Fix: events stopped decoding (motion, AI, sleep status) if the
+ * in-memory AES key was cleared while the connection stayed up. Hub pushes
+ * are marked 'c800', so 1.6.10's lost-key reconnect never fired and the
+ * connection still looked healthy. Now any message on a live connection with
+ * no key reconnects once for a fresh key (keepalive replies included, so it
+ * recovers within 25s).
+ * New sendBaichuanCommand(): sends a setting over this connection (AES, with
+ * the channel extension) and hands the reply back to the app, matched by
+ * message id; no reply in 15s is reported as a failure. Used for spotlight
+ * when the camera refuses it over HTTP (Home Hub Mini battery cameras).
  *
  * v1.6.10 -- Per-message working data (receive buffer, last status per channel,
  * resync bookkeeping, AES key, nonce) moved from state to memory (RUNTIME),
@@ -455,12 +466,12 @@ private void migrateHotState() {
     RETIRED_HOT_STATE.each { if (state[it] != null) state.remove(it) }
 }
 
-/** Encrypted push on a live connection but no key in memory (driver save): reconnect once. */
+/** Message on a live connection but no key in memory (memory cleared): reconnect once for a fresh key. */
 private void recoverLostKey() {
     Map r = rt()
     if (r.keyRecovery) return
     r.keyRecovery = true
-    logF "Reolink Device Bridge (source ${state.sourceId}): encryption key not in memory (driver saved or updated), reconnecting"
+    logN "Reolink Device Bridge (source ${state.sourceId}): encryption key no longer in memory, reconnecting for a fresh one"
     runIn(1, "reconnectAfterMemoryLoss")
 }
 
@@ -522,6 +533,52 @@ def isEventConnectionAlive() {
     '<password>%s</password><userVer>1</userVer></LoginUser><LoginNet version="1.1"><type>LAN</type>' +
     '<udpPort>0</udpPort></LoginNet></body>'
 
+// v1.6.11: settings sent over this connection when a camera refuses them over HTTP (rspCode -13
+// on Home Hub Mini battery cameras), as reolink_aio does. Replies are matched by message id.
+@Field static final String CHANNEL_EXT_XML =
+    '<?xml version="1.0" encoding="UTF-8" ?>\n<Extension version="1.1">\n<channelId>%d</channelId>\n</Extension>\n'
+@Field static final long COMMAND_REPLY_TIMEOUT_MS = 15000L
+
+private Map pendingCommands() {
+    Map r = rt()
+    if (r.pending == null) r.putIfAbsent("pending", new java.util.concurrent.ConcurrentHashMap())
+    return r.pending
+}
+
+/** Sends cmdId for a channel; the reply goes to the app's componentBaichuanReply(ctx, status, body). False if not connected. */
+def sendBaichuanCommand(Integer cmdId, Integer channel, String bodyXml, Map ctx) {
+    if (state.stage != "SUBSCRIBED" || !rt().aesKeyHex || cmdId == null || channel == null) return false
+    int chId = channel + 1
+    byte[] extB = String.format(CHANNEL_EXT_XML, channel).getBytes("UTF-8")
+    byte[] bodyB = (bodyXml ?: "").getBytes("UTF-8")
+    int messId = nextMessId()
+    byte[] header = buildHeader1464(cmdId, extB.length + bodyB.length, chId, messId, extB.length)
+    String key = bytesToHex(buildMessIdBytes(chId, messId))
+    pendingCommands().put(key, (ctx ?: [:]) + [cmdId: cmdId, at: now()])
+    try {
+        sendRaw(concatBytes(header, aesEncrypt(extB), aesEncrypt(bodyB)))
+    } catch (e) {
+        pendingCommands().remove(key)
+        logF "Reolink Device Bridge (source ${state.sourceId}): cmd_id ${cmdId} send failed for ch ${channel}: ${e.message}"
+        return false
+    }
+    logF "Reolink Device Bridge (source ${state.sourceId}): sent cmd_id ${cmdId} for ch ${channel}"
+    return true
+}
+
+/** Reports commands with no reply (status null) so the app can warn. Runs on every keepalive. */
+private void expirePendingCommands() {
+    Map p = pendingCommands()
+    long cutoff = now() - COMMAND_REPLY_TIMEOUT_MS
+    p.keySet().toList().each { k ->
+        Map ctx = p.get(k)
+        if (ctx && (ctx.at as Long) < cutoff) {
+            p.remove(k)
+            parent?.componentBaichuanReply(this, ctx, null, null)
+        }
+    }
+}
+
 def installed() {}
 def updated() {}
 
@@ -570,7 +627,7 @@ def startEventSubscription(boolean isReconnect = false) {
     state.stage = "CONNECTING"
     Map r = rt()
     r.migrated = true
-    ["rx", "aesKeyHex", "nonce", "lastMsg", "corruption", "keyRecovery"].each { r.remove(it) }
+    ["rx", "aesKeyHex", "nonce", "lastMsg", "corruption", "keyRecovery", "pending"].each { r.remove(it) }
     r.last33 = [:]
     r.last145 = [:]
     RETIRED_HOT_STATE.each { if (state[it] != null) state.remove(it) }
@@ -775,6 +832,7 @@ def sendKeepalive() {
             sendRaw(header)
             logF "Reolink Device Bridge (source ${state.sourceId}): keepalive sent, connection healthy"
             clearFlapIfCalm()
+            expirePendingCommands()
         } catch (e) {
             log.warn "Reolink Device Bridge (source ${state.sourceId}): keepalive send failed: ${e.message}"
         }
@@ -974,7 +1032,14 @@ private void processBuffer() {
     r.chunkMsgCount = (r.chunkMsgCount ?: 0) + 1
 
     String bodyText = decryptBody(bodyHex, encTypeMarker, chId, cmdId)
-    handleMessage(cmdId, bodyText)
+    Map cmdCtx = r.pending ? pendingCommands().remove(hex.substring(24, 32).toLowerCase()) : null
+    if (cmdCtx != null) {
+        int status = leHexToInt(hex.substring(32, 36))
+        logF "Reolink Device Bridge (source ${state.sourceId}): reply to cmd_id ${cmdId}, status ${status}"
+        parent?.componentBaichuanReply(this, cmdCtx, status, bodyText)
+    } else {
+        handleMessage(cmdId, bodyText)
+    }
     // v1.5.3: real ground truth for sendKeepalive()'s staleness watchdog --
     // a successfully-parsed message is genuine traffic, regardless of
     // cmd_id, so this is stamped here rather than only on cmd_id 33/145
@@ -988,7 +1053,8 @@ private void processBuffer() {
 
 private String decryptBody(String bodyHex, String encTypeMarker, int chId, int cmdId = -1) {
     if (!bodyHex) return ""
-    if (encTypeMarker in ["02dd", "03dd"] && !rt().aesKeyHex && state.stage == "SUBSCRIBED") {
+    // v1.6.11: any body, not just 02dd/03dd. Hub pushes arrive marked 'c800' and are AES too.
+    if (!rt().aesKeyHex && state.stage == "SUBSCRIBED") {
         recoverLostKey()
         return ""
     }
@@ -1178,6 +1244,15 @@ private byte[] aesDecrypt(byte[] body) {
     def keySpec = new SecretKeySpec(hexToBytes(keyHex), "AES")
     def ivSpec = new IvParameterSpec(AES_IV_BYTES)
     cipher.init(Cipher.DECRYPT_MODE, keySpec, ivSpec)
+    return cipher.doFinal(body)
+}
+
+private byte[] aesEncrypt(byte[] body) {
+    if (!body || body.length == 0) return new byte[0]
+    String keyHex = rt().aesKeyHex
+    if (!keyHex) throw new IllegalStateException("no AES key in memory")
+    def cipher = Cipher.getInstance("AES/CFB/NoPadding")
+    cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(hexToBytes(keyHex), "AES"), new IvParameterSpec(AES_IV_BYTES))
     return cipher.doFinal(body)
 }
 
