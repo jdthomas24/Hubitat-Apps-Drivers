@@ -24,6 +24,9 @@
  * the channel extension) and hands the reply back to the app, matched by
  * message id; no reply in 15s is reported as a failure. Used for spotlight
  * when the camera refuses it over HTTP (Home Hub Mini battery cameras).
+ * cmd_id 291 (floodlight status) now handled: light on/off per channel is
+ * passed to the app as it changes, so the spotlight attribute follows the
+ * camera even when it turns the light off by itself.
  *
  * v1.6.10 -- Per-message working data (receive buffer, last status per channel,
  * resync bookkeeping, AES key, nonce) moved from state to memory (RUNTIME),
@@ -630,6 +633,7 @@ def startEventSubscription(boolean isReconnect = false) {
     ["rx", "aesKeyHex", "nonce", "lastMsg", "corruption", "keyRecovery", "pending"].each { r.remove(it) }
     r.last33 = [:]
     r.last145 = [:]
+    r.last291 = [:]
     RETIRED_HOT_STATE.each { if (state[it] != null) state.remove(it) }
     // v1.5.3: reset on every (re)connect so a fresh connection never starts
     // out already looking stale to sendKeepalive()'s watchdog below.
@@ -908,6 +912,22 @@ private void handlePushedEvent(int cmdId, String bodyText) {
             }
         }
         rt().last145 = last
+    } else if (cmdId == 291) {
+        // v1.6.11: floodlight status (<channel>/<status> pairs), light on/off in real time, as reolink_aio reads it.
+        Map last = rt().last291 ?: [:]
+        try {
+            new XmlSlurper().parseText(bodyText).depthFirst().findAll { it.channel.size() == 1 && it.status.size() == 1 }.each { e ->
+                String ch = e.channel.text()
+                String st = e.status.text()
+                if (ch?.isInteger() && st?.isInteger() && last[ch] != st) {
+                    last[ch] = st
+                    parent?.componentEventSpotlightUpdate(this, state.sourceId, ch.toInteger(), st.toInteger())
+                }
+            }
+        } catch (ex) {
+            logF "Reolink Device Bridge (source ${state.sourceId}): failed to parse floodlight push: ${ex.message}"
+        }
+        rt().last291 = last
     } else {
         // Any cmd_id other than 33/145 is logged (raw cmd_id + a body
         // snippet) rather than dropped silently -- meaning if a doorbell

@@ -25,8 +25,9 @@
  *  - Spotlight: on/off and auto refused over HTTP (-13, Home Hub Mini battery
  *    cameras) are retried over the Bridge's event connection, like reolink_aio
  *    (on/off: FloodlightManual 288; auto: read 289, write 290). The spotlight
- *    attribute changes only once the camera accepts, is re-read 190s after
- *    "on" (Reolink's manual light timer), and is synced by the auto/Refresh read.
+ *    attribute changes only once the camera accepts, follows the camera's
+ *    floodlight status push (cmd_id 291) live, is re-read 190s after "on" as a
+ *    backup, and is synced by the auto/Refresh read.
  *    reolinkApiOutcome() returns rspCode with the value. Tips: Spotlight.
  *
  * v1.6.10 -- Device Bridge keeps per-message data in memory instead of state
@@ -999,9 +1000,10 @@ private List tipsTopics() {
                 "<p>" + ("Turning auto off doesn't turn off a light that's already on; it goes off on its normal " +
                 "timer, or send <b>off</b> in the same rule. Auto on restores the mode the camera had " +
                 "before (for example a schedule), not always Night Smart Mode.") + "</p>",
-                "<p>" + ("<b>Spotlight on</b> is a manual light, and Reolink turns it off by itself after a few " +
-                "minutes (about 3 on battery cameras). The <b>spotlight</b> attribute is re-read after that so it " +
-                "goes back to off. To keep the light on longer, have a rule send <b>on</b> again.") + "</p>",
+                "<p>" + ("<b>Spotlight on</b> is a manual light, and the camera turns it off by itself, usually " +
+                "within about 3 minutes and sometimes after only a few seconds (for example in daylight). The " +
+                "<b>spotlight</b> attribute follows the camera, so it shows off as soon as the light goes out. " +
+                "To keep the light on longer, have a rule send <b>on</b> again.") + "</p>",
                 "<p>" + ("Some cameras refuse light changes over the normal API (seen on battery cameras behind a " +
                 "<b>Home Hub Mini</b>). The integration then sends them over the event connection instead, the " +
                 "same way Home Assistant does, so the Device Bridge's event connection needs to be up.") + "</p>"
@@ -3279,6 +3281,14 @@ private void maybeCheckBatteryOnWake(child) {
 }
 
 /** Called by the bridge for sleep-status pushes (cmd_id=145). Logged only for now -- not yet wired to markAsleep()/awake. */
+/** v1.6.11: floodlight status push (cmd_id 291): the light's real on/off state, including when the camera turns it off itself. */
+def componentEventSpotlightUpdate(child, sourceId, channelId, Integer status) {
+    def c = getSourceBridge(sourceId as Integer)?.getChildDevice(childDni(sourceId, channelId as Integer))
+    if (!c || !hasSpotlight(c) || status == null) return
+    logFull "Reolink source ${sourceId} ch ${channelId}: spotlight ${status > 0 ? 'on' : 'off'} (camera push)"
+    c.receiveSpotlight(status > 0 ? "on" : "off")
+}
+
 def componentEventSleepUpdate(child, sourceId, channelId, String sleepState) {
     logFull "Reolink source ${sourceId} ch ${channelId}: event sleep push -- '${sleepState}' (not yet acted on)"
 }
