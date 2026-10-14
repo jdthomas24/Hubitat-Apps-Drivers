@@ -1,12 +1,12 @@
 {
     "packageName": "Reolink Integration",
-    "releaseNotes": "v1.6.10: The Device Bridge does less work per camera event: its working data is kept in memory instead of being saved to the hub database on every push, which lowers its share of hub processing time. The encryption key no longer shows in the Bridge's State Variables. Tips: Manual recording updated after testing (works on cameras recording on events only; with continuous recording it's redundant; clips run longer by the camera's post-recording time). No Done needed after updating.",
+    "releaseNotes": "v1.6.11: Fixes motion, AI and sleep events silently not arriving after updating to 1.6.10 (the Device Bridge lost its encryption key but still showed connected; it now reconnects on its own). Spotlight: the spotlight attribute follows the camera live and only changes once the camera accepts. Battery cameras now keep the light on for the full 3 minutes instead of a few seconds, and cameras that are still waking (e.g. behind a Home Hub Mini) are retried instead of refused. No Done needed after updating.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "communityLink": "https://community.hubitat.com/t/165352",
     "author": "jdthomas24",
-    "version": "1.6.10",
+    "version": "1.6.11",
     "minimumHEVersion": "2.3.0",
-    "dateReleased": "2026-08-14",
+    "dateReleased": "2026-10-14",
     "category": "Integrations",
     "tags": "Cameras & Video",
     "apps": [
