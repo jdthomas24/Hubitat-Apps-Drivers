@@ -1,0 +1,84 @@
+/**
+ * Crypto Probe (throwaway test driver)
+ * Checks which crypto the Apple TV Companion protocol needs is available on this hub:
+ * X25519 key agreement, Ed25519 signatures, ChaCha20-Poly1305, SHA-512, HMAC-SHA512 (HKDF).
+ * Usage: create a virtual device with this driver, click Run Probe, read Logs.
+ */
+import javax.crypto.Cipher
+import javax.crypto.KeyAgreement
+import javax.crypto.Mac
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
+import java.security.KeyPairGenerator
+import java.security.MessageDigest
+import java.security.Signature
+
+metadata {
+    definition(name: "Crypto Probe", namespace: "jdthomas24", author: "jdthomas24") {
+        capability "Actuator"
+        command "runProbe"
+        attribute "result", "string"
+    }
+}
+
+def installed() {}
+def updated() {}
+
+def runProbe() {
+    List<String> ok = []
+    List<String> missing = []
+    def check = { String name, Closure test ->
+        try {
+            test()
+            ok << name
+            log.info "Crypto Probe: ${name} OK"
+        } catch (e) {
+            missing << name
+            log.warn "Crypto Probe: ${name} NOT available -- ${e.class.simpleName}: ${e.message}"
+        }
+    }
+
+    check("SHA-512") { MessageDigest.getInstance("SHA-512").digest("x".getBytes("UTF-8")) }
+    check("HMAC-SHA512 (HKDF)") {
+        Mac m = Mac.getInstance("HmacSHA512")
+        m.init(new SecretKeySpec(new byte[32], "HmacSHA512"))
+        m.doFinal("x".getBytes("UTF-8"))
+    }
+    check("X25519 key agreement") {
+        def kpg = KeyPairGenerator.getInstance("X25519")
+        def a = kpg.generateKeyPair()
+        def b = kpg.generateKeyPair()
+        def ka = KeyAgreement.getInstance("X25519")
+        ka.init(a.private)
+        ka.doPhase(b.public, true)
+        def kb = KeyAgreement.getInstance("X25519")
+        kb.init(b.private)
+        kb.doPhase(a.public, true)
+        if (!MessageDigest.isEqual(ka.generateSecret(), kb.generateSecret())) throw new IllegalStateException("shared secrets differ")
+    }
+    check("Ed25519 signatures") {
+        def kp = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        def s = Signature.getInstance("Ed25519")
+        s.initSign(kp.private)
+        s.update("x".getBytes("UTF-8"))
+        byte[] sig = s.sign()
+        def v = Signature.getInstance("Ed25519")
+        v.initVerify(kp.public)
+        v.update("x".getBytes("UTF-8"))
+        if (!v.verify(sig)) throw new IllegalStateException("signature did not verify")
+    }
+    check("ChaCha20-Poly1305") {
+        byte[] key = new byte[32]
+        byte[] nonce = new byte[12]
+        def enc = Cipher.getInstance("ChaCha20-Poly1305")
+        enc.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "ChaCha20"), new IvParameterSpec(nonce))
+        byte[] ct = enc.doFinal("hello".getBytes("UTF-8"))
+        def dec = Cipher.getInstance("ChaCha20-Poly1305")
+        dec.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "ChaCha20"), new IvParameterSpec(nonce))
+        if (new String(dec.doFinal(ct), "UTF-8") != "hello") throw new IllegalStateException("round trip failed")
+    }
+
+    String summary = "OK: ${ok.join(', ') ?: 'none'} | Missing: ${missing.join(', ') ?: 'none'}"
+    log.info "Crypto Probe: ${summary}"
+    sendEvent(name: "result", value: summary)
+}
