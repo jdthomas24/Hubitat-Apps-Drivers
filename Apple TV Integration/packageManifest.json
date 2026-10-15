@@ -1,0 +1,33 @@
+{
+  "packageName": "Apple TV Integration",
+  "author": "jdthomas24",
+  "version": "1.0.0",
+  "minimumHEVersion": "2.3.0",
+  "dateReleased": "2026-10-15",
+  "category": "Integrations",
+  "tags": ["Apple TV", "Entertainment", "LAN", "Local Control"],
+  "communityLink": "",
+  "releaseNotes": "v1.0.0 (beta): Native local Apple TV control. Bonjour discovery, one-time PIN pairing, Switch on (wake) and off (standby), live power state, automatic reconnect. No bridge or extra hardware.",
+  "apps": [
+    {
+      "id": "e98c9181-59bd-4b77-84f0-972b0348d9ae",
+      "name": "Apple TV Integration",
+      "namespace": "jdthomas24",
+      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/ParentApp.groovy",
+      "required": true,
+      "primary": true,
+      "oauth": false,
+      "description": "Finds Apple TVs on your network, pairs each with the PIN shown on the TV and creates one device per Apple TV."
+    }
+  ],
+  "drivers": [
+    {
+      "id": "515f1e51-d92c-44b6-9ab6-1d0d8a2520aa",
+      "name": "Apple TV",
+      "namespace": "jdthomas24",
+      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/AppleTVDriver.groovy",
+      "required": true,
+      "description": "One per Apple TV. Switch on wakes it, off puts it to sleep, with live power state over an encrypted local connection."
+    }
+  ]
+}
