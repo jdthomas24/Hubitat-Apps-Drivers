@@ -1,10 +1,10 @@
 {
   "packageName": "Apple TV Integration",
-  "releaseNotes": "v1.0.1: Fixes pairing on a fresh install (the PIN never appeared on the TV) and on/off replies being treated as errors once paired. A connection that drops right after connecting is now caught immediately.",
+  "releaseNotes": "v1.0.2: Submit PIN now always sends the PIN you typed. Before, the PIN box wasn't always saved when Submit PIN was tapped right after typing (most often over remote access), so pairing stalled with no error. Pairing steps are also logged at Normal.",
   "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Apple%20TV%20Integration",
   "communityLink": "https://community.hubitat.com/t/166801",
   "author": "jdthomas24",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-10-15",
   "category": "Integrations",

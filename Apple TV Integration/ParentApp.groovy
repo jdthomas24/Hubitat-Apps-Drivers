@@ -17,6 +17,8 @@
      -Device names default to "Apple TV - <name>" and are editable before pairing. Names set
       in Hubitat are never overwritten.
      -Buttons pause 1.5s (Pair) or 3s (Submit PIN) so the page redraws after the TV replies.
+     -The PIN box submits on change, and a saved PIN is sent as soon as the page redraws, since a
+      text box isn't always saved when a button is clicked right after typing (seen over remote access).
      -Log level is the only logging control. It's pushed to every Apple TV device, and each
       device sends its lines back to childLog(), so all logging appears under this app,
       labeled by device. Full turns itself off after 30 minutes.
@@ -26,7 +28,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Apple TV Integration"
-@Field static final String APP_VERSION = "1.0.1"
+@Field static final String APP_VERSION = "1.0.2"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/166801"
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
@@ -294,10 +296,14 @@ private void pairRow(Map rec) {
     def child = getChildDevice("ATV-${key}")
     String tvName = atvName(rec)
     String stage = child?.componentPairingStage()
+    if (stage == "PIN" && pinDigits(key).length() >= 4) {
+        submitPin(key)
+        stage = child.componentPairingStage()
+    }
     String status = child?.componentPairingStatus()
     paragraph rawHtml: true, foundCardHtml(rec, tvName)
     if (stage == "PIN") {
-        input name: "pin_${key}", type: "text", title: "PIN shown on the TV", required: false, width: 4
+        input name: "pin_${key}", type: "text", title: "PIN shown on the TV", required: false, width: 4, submitOnChange: true
         input name: "submitPin_${key}", type: "button", title: "Submit PIN", width: 3
         input name: "cancelPair_${key}", type: "button", title: "Cancel", width: 3
     } else {
@@ -393,11 +399,20 @@ private void startPair(String key) {
     pauseExecution(1500)   // let the PIN request land before the page redraws
 }
 
+private String pinDigits(String key) { (settings["pin_${key}"]?.toString() ?: "").replaceAll("[^0-9]", "") }
+
 private void submitPin(String key) {
     def child = getChildDevice("ATV-${key}")
     if (!child) return
-    child.componentSubmitPin(settings["pin_${key}"]?.toString())
+    String pin = pinDigits(key)
+    if (!pin) {
+        state.pageNote = "Type the PIN shown on the TV, then tap Submit PIN."
+        logInfo "Submit PIN tapped with no PIN entered"
+        return
+    }
     app.removeSetting("pin_${key}")
+    logDbg "submitting a ${pin.length()}-digit PIN"
+    child.componentSubmitPin(pin)
     pauseExecution(3000)   // pairing finishes in about a second
 }
 

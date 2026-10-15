@@ -23,7 +23,7 @@
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { return "1.0.1" }
+def version() { return "1.0.2" }
 
 metadata {
     definition(name: "Apple TV", namespace: "jdthomas24", author: "Jason Thomas", importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/AppleTVDriver.groovy") {
@@ -170,12 +170,17 @@ def componentStartPairing() {
 
 def componentSubmitPin(String pin) {
     Map m = mem()
-    if (m.mode != "pair" || m.pairStage != "PIN") { m.pairStatus = "Not waiting for a PIN. Click Pair again."; return }
+    if (m.mode != "pair" || m.pairStage != "PIN") {
+        m.pairStatus = "Not waiting for a PIN. Tap Pair again."
+        logN("PIN ignored, not waiting for one (stage ${m.pairStage ?: 'none'})")
+        return
+    }
     String digits = (pin ?: "").replaceAll("[^0-9]", "")
-    if (!digits) { m.pairStatus = "Enter the PIN shown on the TV"; return }
+    if (!digits) { m.pairStatus = "Enter the PIN shown on the TV"; logN("no PIN entered"); return }
     m.pairStage = "M4"
     m.pairStatus = "Checking PIN"
     send(pairingM3(m.st as Map, digits))
+    logN("PIN sent, waiting for the Apple TV")
     runIn(30, "pairTimeout")
 }
 
