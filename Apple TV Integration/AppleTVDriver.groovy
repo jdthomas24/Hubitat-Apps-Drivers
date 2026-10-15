@@ -15,6 +15,7 @@
      -Health check every 5 min (FetchAttentionState, 20s timeout) catches half-open sockets.
       on/off with no reply in 5s reconnects and retries once. Initialize reconnects after reboots.
      -NowPlayingInfo/MediaControlStatus/SupportedActions chatter logs at Full only.
+     -The session map is a ConcurrentHashMap: clear keys with remove(), never "= null".
      -Log level comes from the app. Log lines go up to childLog() and appear under the app,
       labeled with this device's name. Falls back to local logging.
 */
@@ -22,7 +23,7 @@
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { return "1.0.0" }
+def version() { return "1.0.1" }
 
 metadata {
     definition(name: "Apple TV", namespace: "jdthomas24", author: "Jason Thomas", importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/AppleTVDriver.groovy") {
@@ -125,8 +126,8 @@ def commandTimeout() {
     Map m = mem()
     String label = m.pendingCmd
     if (!label) return
-    m.pendingCmd = null
-    if (m.retriedCmd == label) { m.retriedCmd = null; logE("no reply to ${label} after reconnecting"); return }
+    m.remove("pendingCmd")
+    if (m.retriedCmd == label) { m.remove("retriedCmd"); logE("no reply to ${label} after reconnecting"); return }
     m.retriedCmd = label
     logN("no reply to ${label}, reconnecting and retrying")
     m.after = [label]
@@ -201,7 +202,7 @@ private void pairFailed(String why) {
     unschedule("pairTimeout")
     m.pairStage = "FAILED"
     m.pairStatus = "Pairing failed: ${why}"
-    m.mode = null
+    m.remove("mode")
     closeSocket()
     logE("pairing failed: ${why}")
     if (creds()) runIn(2, "connect") else sendIfChanged("connection", "not paired")
@@ -231,10 +232,10 @@ private void handlePairFrame(Map m, int type, byte[] payload) {
                          seed: toHex(c.seed as byte[]), pairingId: new String(c.pairingId as byte[], "UTF-8"),
                          ourId: toHex(randomBytes(6)), name: c.name, model: c.model]
             parent?.componentPairingComplete(device.deviceNetworkId, saved)
-            m.creds = null
+            m.remove("creds")
             m.pairStage = "DONE"
             m.pairStatus = "Paired"
-            m.mode = null
+            m.remove("mode")
             state.pairing = "Paired with '${c.name}' on ${fmtNow()}"
             closeSocket()
             logN("paired with '${c.name}' (${c.model})")
@@ -330,7 +331,7 @@ def healthCheck() {
 def healthTimeout() {
     Map m = mem()
     if (m.probeAt && m.stage == "READY") {
-        m.probeAt = null
+        m.remove("probeAt")
         logF("no reply to health check, reconnecting")
         forceReconnect()
     }
@@ -341,7 +342,7 @@ def socketStatus(String s) {
     logF("socket status: ${s}")
     String l = s?.toLowerCase() ?: ""
     if (!(l.contains("error") || l.contains("closed") || l.contains("disconnect"))) return
-    if (m.closingAt && now() - (m.closingAt as long) < 3000) return
+    if (m.stage != "READY" && m.closingAt && now() - (m.closingAt as long) < 3000) return
     if (m.mode == "pair") {
         if (!(m.pairStage in ["DONE", "FAILED"])) pairFailed("the Apple TV closed the connection")
         return
@@ -446,13 +447,13 @@ private void handleSessionFrame(Map m, byte[] header, byte[] payload) {
                 break
             case "attention":
             case "health":
-                if (label == "health") { m.probeAt = null; unschedule("healthTimeout") }
+                if (label == "health") { m.remove("probeAt"); unschedule("healthTimeout") }
                 if (msg._c instanceof Map && msg._c.state != null) setPower(msg._c.state as int, label == "health" ? "check" : "query")
                 break
             case "wake":
             case "standby":
-                if (m.pendingCmd == label) { m.pendingCmd = null; unschedule("commandTimeout") }
-                if (m.retriedCmd == label) m.retriedCmd = null
+                if (m.pendingCmd == label) { m.remove("pendingCmd"); unschedule("commandTimeout") }
+                if (m.retriedCmd == label) m.remove("retriedCmd")
                 logF("${label} acknowledged")
                 break
             default:
@@ -534,6 +535,20 @@ private void localLog(String level, String line) {
         case "info": log.info line; break
         default: log.debug line
     }
+}
+
+// ---------- hex helpers ----------
+
+private byte[] fromHex(String s) {
+    byte[] out = new byte[(s ?: "").length() / 2]
+    for (int i = 0; i < out.length; i++) out[i] = (byte) Integer.parseInt(s.substring(i * 2, i * 2 + 2), 16)
+    return out
+}
+
+private String toHex(byte[] b) {
+    StringBuilder sb = new StringBuilder()
+    b.each { sb.append(String.format("%02x", it & 0xFF)) }
+    return sb.toString()
 }
 
 // ---------- crypto and codecs (unchanged from the tested pair driver) ----------

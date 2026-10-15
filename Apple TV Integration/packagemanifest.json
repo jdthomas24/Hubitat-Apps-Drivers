@@ -1,13 +1,14 @@
 {
   "packageName": "Apple TV Integration",
+  "releaseNotes": "v1.0.1: Fixes pairing on a fresh install (the PIN never appeared on the TV) and on/off replies being treated as errors once paired. A connection that drops right after connecting is now caught immediately.",
+  "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Apple%20TV%20Integration",
+  "communityLink": "https://community.hubitat.com/t/166801",
   "author": "jdthomas24",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-10-15",
   "category": "Integrations",
-  "tags": ["Apple TV", "Entertainment", "LAN", "Local Control"],
-  "communityLink": "https://community.hubitat.com/t/coming-soon-apple-tv-integration-native-no-bridge/166801",
-  "releaseNotes": "v1.0.0 (beta): Native local Apple TV control. Bonjour discovery, one-time PIN pairing, Switch on (wake) and off (standby), live power state, automatic reconnect. No bridge or extra hardware.",
+  "tags": "Apple TV, TV, video, local control",
   "apps": [
     {
       "id": "e98c9181-59bd-4b77-84f0-972b0348d9ae",
@@ -15,7 +16,6 @@
       "namespace": "jdthomas24",
       "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/ParentApp.groovy",
       "required": true,
-      "primary": true,
       "oauth": false,
       "description": "Finds Apple TVs on your network, pairs each with the PIN shown on the TV and creates one device per Apple TV."
     }
