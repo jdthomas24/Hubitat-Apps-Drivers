@@ -4,7 +4,7 @@ Native, local control of Apple TVs from Hubitat Elevation. Turn your Apple TVs o
 
 > **Status: beta (v1.0.0).** Install through HPM using the manifest URL below. It will be added to the HPM search once testing wraps up.
 
-**Forum thread:** _coming soon_
+**Forum thread:** [Apple TV Integration on the Hubitat Community](https://community.hubitat.com/t/coming-soon-apple-tv-integration-native-no-bridge/166801)
 
 ---
 

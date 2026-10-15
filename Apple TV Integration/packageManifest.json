@@ -6,7 +6,7 @@
   "dateReleased": "2026-10-15",
   "category": "Integrations",
   "tags": ["Apple TV", "Entertainment", "LAN", "Local Control"],
-  "communityLink": "",
+  "communityLink": "https://community.hubitat.com/t/coming-soon-apple-tv-integration-native-no-bridge/166801",
   "releaseNotes": "v1.0.0 (beta): Native local Apple TV control. Bonjour discovery, one-time PIN pairing, Switch on (wake) and off (standby), live power state, automatic reconnect. No bridge or extra hardware.",
   "apps": [
     {
