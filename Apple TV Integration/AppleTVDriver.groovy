@@ -1,19 +1,31 @@
-/**
- * Apple TV (child driver for Apple TV Integration)
- * Version: 1.0.0
- * Notes: One device per Apple TV. Holds an always-open Companion session (pair-verify, ChaCha20),
- * Switch on = wake, off = standby, live power state (asleep, screensaver, awake). Reconnects on its own
- * with backoff, follows IP changes through the app, health check every 5 minutes. Pairing keys live in
- * the app and are loaded into memory only. All logging routes through the app's Log level.
- * Credits: protocol knowledge and test vectors from pyatv (postlund, MIT).
- */
+/*
+    Apple TV Integration - Apple TV Driver
+    Copyright 2026 JDThomas. All Rights Reserved
+
+    Credits: protocol knowledge and test vectors from the pyatv project (Pierre Ståhl, MIT).
+
+    Notes:
+     -One device per Apple TV, created by the app. Holds an always-open Companion session
+      (pair-verify, ChaCha20-Poly1305). Switch on = wake (HID 13), off = standby (HID 12).
+      power = asleep/screensaver/awake from TVSystemStatus events; screensaver counts as on.
+     -Pairing (PIN) runs here because raw sockets only work in drivers. Keys go back to the app
+      and are loaded into memory only, so they never show in State Variables.
+     -Reconnects with backoff (5s to 5 min). "offline" only after 4 failed attempts, then
+      "back online" logs at every level. Follows IP changes through the app's Bonjour list.
+     -Health check every 5 min (FetchAttentionState, 20s timeout) catches half-open sockets.
+      on/off with no reply in 5s reconnects and retries once. Initialize reconnects after reboots.
+     -NowPlayingInfo/MediaControlStatus/SupportedActions chatter logs at Full only.
+     -Log level comes from the app. Log lines go up to childLog() and appear under the app,
+      labeled with this device's name. Falls back to local logging.
+*/
+
 import groovy.transform.Field
 import java.security.MessageDigest
 
-@Field static final String VERSION = "1.0.0"
+def version() { return "1.0.0" }
 
 metadata {
-    definition(name: "Apple TV", namespace: "jdthomas24", author: "jdthomas24") {
+    definition(name: "Apple TV", namespace: "jdthomas24", author: "Jason Thomas", importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/AppleTVDriver.groovy") {
         capability "Actuator"
         capability "Switch"
         capability "Refresh"
@@ -36,7 +48,7 @@ metadata {
 // ---------- lifecycle ----------
 
 def installed() {
-    state.version = VERSION
+    state.version = version()
     sendIfChanged("connection", "not paired")
     initialize()
 }
@@ -44,7 +56,7 @@ def installed() {
 def updated() { initialize() }
 
 def initialize() {
-    state.version = VERSION
+    state.version = version()
     unschedule()
     runEvery5Minutes("healthCheck")
     Map m = mem()
@@ -123,7 +135,7 @@ def commandTimeout() {
 
 // ---------- app interface ----------
 
-def componentSetLogLevel(String level) { if (state.logLevel != level) state.logLevel = level }
+void setLogLevel(String level) { if (state.logLevel != level) state.logLevel = level }
 
 def componentSetAddress(String ip, Integer port, String model = null, String tvName = null) {
     if (ip && (state.ip != ip || state.port != (port ?: 49153))) {
@@ -461,7 +473,7 @@ private void finishSetup(Map m) {
     m.failCount = 0
     sendIfChanged("connection", "connected")
     state.lastConnected = fmtNow()
-    if (wasOffline) parent?.logNotice(device.displayName, "back online")
+    if (wasOffline) slog("info", "back online")
     else logN("connected")
     request("FetchAttentionState", [:], "attention")
     List q = (m.after ?: []) as List
@@ -506,24 +518,22 @@ private String fmtNow() { new Date().format("MMM d, h:mm a", location.timeZone) 
 
 private int lvl() { LOG_LEVELS.indexOf(state.logLevel ?: "Errors Only") }
 
-private void logE(String s) {
-    if (parent) parent.logError(device.displayName, s)
-    else log.warn "${device.displayName}: ${s}"
+private void logE(String s) { slog("warn", s) }
+private void logN(String s) { if (lvl() >= 1) slog("info", s) }
+private void logF(String s) { if (lvl() >= 2) slog("debug", s) }
+
+// All log lines go up to the app, so they show under the app labeled by device.
+private void slog(String level, String msg) {
+    try { parent.childLog(level, device.displayName, msg) } catch (e) { localLog(level, "${device.displayName}: ${msg}") }
 }
 
-private void logN(String s) { if (lvl() >= 1) parent?.logNormal(device.displayName, s) }
-private void logF(String s) { if (lvl() >= 2) parent?.logFull(device.displayName, s) }
-
-private byte[] fromHex(String s) {
-    byte[] out = new byte[(s ?: "").length() / 2]
-    for (int i = 0; i < out.length; i++) out[i] = (byte) Integer.parseInt(s.substring(i * 2, i * 2 + 2), 16)
-    return out
-}
-
-private String toHex(byte[] b) {
-    StringBuilder sb = new StringBuilder()
-    b.each { sb.append(String.format("%02x", it & 0xFF)) }
-    return sb.toString()
+private void localLog(String level, String line) {
+    switch (level) {
+        case "error": log.error line; break
+        case "warn": log.warn line; break
+        case "info": log.info line; break
+        default: log.debug line
+    }
 }
 
 // ---------- crypto and codecs (unchanged from the tested pair driver) ----------
