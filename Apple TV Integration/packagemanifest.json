@@ -1,12 +1,12 @@
 {
   "packageName": "Apple TV Integration",
-  "releaseNotes": "v1.0.2: Submit PIN now always sends the PIN you typed. Before, the PIN box wasn't always saved when Submit PIN was tapped right after typing (most often over remote access), so pairing stalled with no error. Pairing steps are also logged at Normal.",
+  "releaseNotes": "v1.0.3: Apple TVs that are slow to show up can now be added by IP address, and Refresh actively looks for them again. Removing and reinstalling the integration no longer starts discovery from an empty list.",
   "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Apple%20TV%20Integration",
   "communityLink": "https://community.hubitat.com/t/166801",
   "author": "jdthomas24",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "minimumHEVersion": "2.3.0",
-  "dateReleased": "2026-10-15",
+  "dateReleased": "2026-10-16",
   "category": "Integrations",
   "tags": "Apple TV, TV, video, local control",
   "apps": [

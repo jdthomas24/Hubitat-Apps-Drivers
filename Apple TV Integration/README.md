@@ -4,7 +4,7 @@ Native, local control of Apple TVs from Hubitat Elevation. Turn your Apple TVs o
 
 > **Status: beta (v1.0.0).** Install through HPM using the manifest URL below. It will be added to the HPM search once testing wraps up.
 
-**Forum thread:** [Apple TV Integration on the Hubitat Community](https://community.hubitat.com/t/coming-soon-apple-tv-integration-native-no-bridge/166801)
+**Forum thread:** [Apple TV Integration on the Hubitat Community](https://community.hubitat.com/t/166801)
 
 ---
 
@@ -35,7 +35,7 @@ Only Apple TVs are listed. iPhones, iPads and Macs are filtered out. HomePods an
 1. Open **Hubitat Package Manager** and choose **Install**.
 2. Choose **From a URL** and paste:
    ```
-   https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/packageManifest.json
+   https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/packagemanifest.json
    ```
 3. Finish the install. HPM will notify you of updates from then on.
 
@@ -47,7 +47,7 @@ Only Apple TVs are listed. iPhones, iPads and Macs are filtered out. HomePods an
 ## Setup
 
 1. **Apps → Add User App → Apple TV Integration.**
-2. Give it about 30 seconds, then click **Refresh**. Your Apple TVs show under **Found on your network**.
+2. Give it about 30 seconds, then click **Refresh**. Your Apple TVs show under **Found on your network**. Not listed? Wake it with its remote and click Refresh, or type its IP under **Not listed? Add by IP** and click **Add**.
 3. Change the **device name** if you like, then click **Pair**.
 4. A PIN appears on the TV within a few seconds. Type it in and click **Submit PIN**.
 5. Repeat for each Apple TV, then click **Done**.
@@ -77,7 +77,7 @@ All logs for the integration show under the app, labeled by device. Set **Log le
 
 ## Troubleshooting
 
-- **Apple TV not found:** make sure it is on and on the same network as the hub. Wait a minute and click Refresh. Networks that separate devices into VLANs need an mDNS repeater.
+- **Apple TV not found:** wake it with its remote, then click Refresh. If it still isn't listed, add it by IP (find the IP on the Apple TV under Settings → Network). Networks that separate devices into VLANs need an mDNS repeater.
 - **No PIN on screen:** wake the Apple TV first, and check that its AirPlay access setting (Allow Access) lets devices on your network connect.
 - **"Back off" error while pairing:** too many attempts in a row. Wait a minute and try again.
 - **Wrong name in the Found list:** the name comes from the Apple TV (Settings → General → About → Name). Your Hubitat device name is separate and never overwritten.

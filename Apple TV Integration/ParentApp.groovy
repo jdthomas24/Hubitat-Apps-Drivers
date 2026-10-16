@@ -10,7 +10,11 @@
      -Discovery: Bonjour _companion-link._tcp, kept to rpMd AppleTV* (iPhones, iPads, Macs are
       filtered out). DNI = "ATV-" + rpMRtID (permanent), so renames, stale Bonjour entries and
       IP changes never create duplicates. Names come from AirPlay /info (binary plist), cached
-      in state.atvNames; Refresh clears the cache.
+      in state.atvNames. Refresh clears the cache and re-registers the Bonjour listener.
+     -The listener is left registered on uninstall, so a reinstall doesn't start from an empty list.
+     -Add by IP: fallback when Bonjour is slow or blocked. /info confirms it's an Apple TV (model
+      AppleTV*). Kept in state.manualTvs under key "IP"+hex IP until paired; on pairing the device's
+      DNI moves to the permanent "ATV-" + identity (the same key Bonjour uses), so it never duplicates.
      -Pairing: Pair creates the child (only on an explicit click) and starts pair-setup; the TV
       shows a PIN; Submit PIN finishes it. The child hands the keys back via
       componentPairingComplete(); they live in state.creds and children load them into memory.
@@ -28,7 +32,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Apple TV Integration"
-@Field static final String APP_VERSION = "1.0.2"
+@Field static final String APP_VERSION = "1.0.3"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/166801"
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
@@ -67,7 +71,7 @@ def uninstalled() {
     getChildDevices().each {
         try { deleteChildDevice(it.deviceNetworkId) } catch (e) { logErr "failed to remove ${it.displayName} on uninstall: ${e.message}" }
     }
-    try { unregisterMDNSListener(SERVICE) } catch (e) { }
+    // Listener stays registered: unregistering can leave a reinstall with an empty list until the TVs re-announce.
 }
 
 def initialize() {
@@ -166,8 +170,30 @@ private List discovered() {
         if (!rec.addresses.any { it.ip == ip && it.port == port }) rec.addresses << [ip: ip, port: port]
         byKey[key] = rec
     }
+    if (state.lastBonjourCount != "${raw.size()}/${byKey.size()}") {
+        state.lastBonjourCount = "${raw.size()}/${byKey.size()}"
+        logDbg "Bonjour: ${raw.size()} Companion entr${raw.size() == 1 ? 'y' : 'ies'}, ${countText(byKey.size(), 'Apple TV')}"
+    }
     return byKey.values() as List
 }
+
+// Bonjour records plus Add by IP records, without showing the same Apple TV twice.
+private List allRecords() {
+    List found = discovered()
+    List manual = manualRecords()
+    List ipsInProgress = manual.findAll { getChildDevice("ATV-${it.key}") }.collect { it.addresses[0].ip }
+    found = found.findAll { r -> !r.addresses.any { it.ip in ipsInProgress } }
+    List foundIps = found.collectMany { it.addresses*.ip }
+    return found + manual.findAll { !(it.addresses[0].ip in foundIps) }
+}
+
+private List manualRecords() {
+    (state.manualTvs ?: [:]).values().collect { m ->
+        [key: m.key, model: m.model, host: m.name, addresses: [[ip: m.ip, port: m.port as Integer]], manual: true]
+    }
+}
+
+private Map findRecord(String key) { allRecords().find { it.key == key } }
 
 private String hostName(String s) {
     String h = (s ?: "Apple TV").replaceAll(/\.local\.?$/, "").replaceAll(/-[0-9A-Fa-f]{12}$/, "")
@@ -184,21 +210,50 @@ private String atvName(Map rec) {
 
 private String modelName(String md) { MODELS[md] ?: md ?: "Apple TV" }
 
-private String fetchInfoName(String ip) {
-    String name = null
+private String fetchInfoName(String ip) { fetchInfo(ip)?.name }
+
+private Map fetchInfo(String ip) {
+    Map out = null
     try {
         httpGet([uri: "http://${ip}:7000", path: "/info", contentType: "application/octet-stream",
                  headers: ["Accept": "*/*", "User-Agent": "AirPlay/550.10"], timeout: 4]) { resp ->
             byte[] body = toBytes(resp.data)
             if (body && body.length > 8 && new String(slice(body, 0, 8), "US-ASCII") == "bplist00") {
                 def info = bplistParse(body)
-                if (info instanceof Map && info.name) name = info.name.toString()
+                if (info instanceof Map) out = [name: info.name?.toString(), model: info.model?.toString()]
             }
         }
     } catch (e) {
-        logDbg "could not read the name from ${ip}: ${e.message}"
+        logDbg "could not read /info from ${ip}: ${e.message}"
     }
-    return name
+    return out
+}
+
+private void addByIp() {
+    String raw = (settings.manualIp ?: "").toString().trim()
+    def m = raw =~ /^(\d{1,3}(?:\.\d{1,3}){3})(?::(\d{1,5}))?$/
+    if (!m.matches() || m.group(1).split("\\.").any { (it as int) > 255 }) {
+        state.pageNote = "Enter the Apple TV's IP address, e.g. 192.168.1.120."
+        return
+    }
+    String ip = m.group(1)
+    Integer port = m.group(2) ? (m.group(2) as Integer) : 49153
+    Map info = fetchInfo(ip)
+    if (!info?.model?.startsWith("AppleTV")) {
+        state.pageNote = info ? "${ip} answered, but it isn't an Apple TV (${info.model ?: 'unknown model'})." :
+            "No Apple TV answered at ${ip}. Check the address and that the Apple TV is on."
+        logInfo "Add by IP: ${state.pageNote}"
+        return
+    }
+    String key = "IP" + ip.split("\\.").collect { Integer.toHexString(it as int).padLeft(2, "0") }.join().toUpperCase()
+    Map all = state.manualTvs ?: [:]
+    all[key] = [key: key, ip: ip, port: port, model: info.model, name: info.name ?: ip]
+    state.manualTvs = all
+    Map names = state.atvNames ?: [:]
+    names[key] = info.name ?: ip
+    state.atvNames = names
+    app.removeSetting("manualIp")
+    logInfo "Add by IP: found '${info.name}' (${modelName(info.model)}) at ${ip}"
 }
 
 // ============================================================================
@@ -208,16 +263,28 @@ private String fetchInfoName(String ip) {
 Map componentGetCredentials(String dni) { (state.creds ?: [:])[dni] as Map }
 
 void componentPairingComplete(String dni, Map c) {
-    Map all = state.creds ?: [:]
-    all[dni] = c
-    state.creds = all
     def d = getChildDevice(dni)
-    logInfo "${d?.displayName ?: dni} paired with '${c.name}' (${modelName(c.model as String)})"
+    String target = dni
+    if (dni.startsWith("ATV-IP")) {
+        String permanent = "ATV-" + (c.atvId as String).replaceAll("[^A-Za-z0-9]", "").toUpperCase()
+        Map manual = state.manualTvs ?: [:]
+        manual.remove(dni - "ATV-")
+        state.manualTvs = manual
+        if (getChildDevice(permanent)) {
+            logWarn "${d?.displayName ?: dni} is already paired as ${getChildDevice(permanent).displayName}. Keeping both; remove one."
+        } else {
+            try { d?.setDeviceNetworkId(permanent); target = permanent }
+            catch (e) { logDbg "could not move ${dni} to ${permanent}: ${e.message}" }
+        }
+    }
+    Map all = state.creds ?: [:]
+    all[target] = c
+    state.creds = all
+    logInfo "${d?.displayName ?: target} paired with '${c.name}' (${modelName(c.model as String)})"
 }
 
 List componentLookupAddress(String dni) {
-    String key = dni - "ATV-"
-    Map rec = discovered().find { it.key == key }
+    Map rec = findRecord(dni - "ATV-")
     return rec ? (rec.addresses as List).reverse() : []
 }
 
@@ -229,7 +296,7 @@ def mainPage(params = null) {
     startListener(false)
     armLogRevert()
     if (state.pushedLogLevel != currentLogLevel()) pushLogLevel()
-    List found = discovered()
+    List found = allRecords()
     Map creds = state.creds ?: [:]
     List paired = getChildDevices().findAll { creds[it.deviceNetworkId] }.sort { it.displayName }
     paired.each { d ->
@@ -271,10 +338,13 @@ def mainPage(params = null) {
             paragraph rawHtml: true, columnHeader("Found on your network")
             if (!unpaired) {
                 paragraph "<span class='text-color-secondary'>" + (found ? "Every Apple TV on your network is paired." :
-                    "Searching. Apple TVs announce themselves within about a minute. Tap Refresh if nothing shows up.") + "</span>"
+                    "Searching. Waking an Apple TV with its remote makes it announce itself. Tap Refresh, or add it by IP below.") + "</span>"
             }
             unpaired.each { rec -> pairRow(rec) }
             input name: "refreshTvs", type: "button", title: "Refresh", width: 3
+            input name: "manualIp", type: "text", title: "Not listed? Add by IP", description: "e.g. 192.168.1.120",
+                required: false, width: 5
+            input name: "addByIp", type: "button", title: "Add", width: 2
             if (paired) {
                 paragraph "<span class='text-color-secondary' style='font-size:14px;'>Tap <b>Done</b> when finished. That's what finalizes the install.</span>"
             }
@@ -311,6 +381,7 @@ private void pairRow(Map rec) {
             required: false, width: 6
         input name: "pairTv_${key}", type: "button", title: stage == "FAILED" ? "Try Again" : "Pair", width: 3
         if (child) input name: "cancelPair_${key}", type: "button", title: "Cancel", width: 3
+        else if (rec.manual) input name: "forgetIp_${key}", type: "button", title: "Forget", width: 3
     }
     if (status && stage != "DONE") {
         paragraph rawHtml: true, stage == "FAILED" ? warningMessageHtml(status) :
@@ -355,8 +426,9 @@ private String atvCardHtml(d) {
 
 private String foundCardHtml(Map rec, String tvName) {
     String sub = [modelName(rec.model as String), (rec.addresses.last() as Map).ip].join(" &middot; ")
+    String tag = rec.manual ? "<span style='margin-left:8px;background:#90a4ae;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>Added by IP</span>" : ""
     return "<div style='border:1px dashed #ccc;border-radius:10px;padding:10px 14px;margin:4px 0 0'>" +
-        "<b>${tvName}</b><span style='color:#888;font-size:0.8em;margin-left:8px'>${sub}</span></div>"
+        "<b>${tvName}</b><span style='color:#888;font-size:0.8em;margin-left:8px'>${sub}</span>${tag}</div>"
 }
 
 // ============================================================================
@@ -365,7 +437,19 @@ private String foundCardHtml(Map rec, String tvName) {
 
 def appButtonHandler(String btn) {
     logDbg "button: ${btn}"
-    if (btn == "refreshTvs") { state.atvNames = [:]; return }
+    if (btn == "refreshTvs") {
+        state.atvNames = [:]
+        try { registerMDNSListener(SERVICE) } catch (e) { logDbg "re-registering Bonjour: ${e.message}" }
+        pauseExecution(1500)   // give announcements a moment before the page redraws
+        return
+    }
+    if (btn == "addByIp") { addByIp(); return }
+    if (btn.startsWith("forgetIp_")) {
+        Map all = state.manualTvs ?: [:]
+        all.remove(btn - "forgetIp_")
+        state.manualTvs = all
+        return
+    }
     if (btn.startsWith("pairTv_")) { startPair(btn - "pairTv_"); return }
     if (btn.startsWith("submitPin_")) { submitPin(btn - "submitPin_"); return }
     if (btn.startsWith("cancelPair_")) { cancelPair(btn - "cancelPair_"); return }
@@ -375,8 +459,8 @@ def appButtonHandler(String btn) {
 }
 
 private void startPair(String key) {
-    Map rec = discovered().find { it.key == key }
-    if (!rec) { state.pageNote = "That Apple TV isn't announcing itself right now. Tap Refresh and try again."; return }
+    Map rec = findRecord(key)
+    if (!rec) { state.pageNote = "That Apple TV isn't announcing itself right now. Tap Refresh, or add it by IP."; return }
     String dni = "ATV-${key}"
     String tvName = atvName(rec)
     String label = (settings["tvName_${key}"] ?: "Apple TV - ${tvName}").toString().trim()
@@ -486,8 +570,11 @@ private List tipsTopics() {
                 "<p>Power changes made with the Siri Remote show up in Hubitat right away, so rules can react when someone turns the Apple TV on or off.</p>"],
 
         [id: "notfound", label: "Apple TV not found", title: "Apple TV not found", group: "Troubleshooting", icon: "pi-search",
-            body: "<p>Make sure the Apple TV has power and is on the same network as the hub, then wait a minute and tap <b>Refresh</b>. " +
-                "Apple TVs announce themselves on their own, usually within a minute.</p>" +
+            body: "<p>Apple TVs announce themselves over Bonjour, but a sleeping Apple TV can take a while. " +
+                "${APPLETV_PILL}<br>Wake it with its remote, then ${HUBITAT_PILL} tap <b>Refresh</b>.</p>" +
+                "<p><b>Still not listed?</b> Type its IP address under <b>Not listed? Add by IP</b> and tap <b>Add</b>. " +
+                "The app checks it's an Apple TV, then you pair it the same way. You'll find the IP on the Apple TV under " +
+                "<b>Settings &rarr; Network</b>. A DHCP reservation on your router keeps it from changing.</p>" +
                 "<p>If your network separates devices into VLANs, Bonjour has to reach the hub's network. Most routers call this an mDNS repeater or reflector.</p>"],
         [id: "pairing", label: "Pairing problems", title: "Pairing problems", group: "Troubleshooting", icon: "pi-exclamation-triangle",
             body: "<p><b>No PIN on screen:</b> wake the Apple TV first, then tap Pair again. Also check its AirPlay access setting " +
