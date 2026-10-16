@@ -23,7 +23,7 @@
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { return "1.0.5" }
+def version() { return "1.0.6" }
 
 metadata {
     definition(name: "Apple TV", namespace: "jdthomas24", author: "Jason Thomas", importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/AppleTVDriver.groovy") {

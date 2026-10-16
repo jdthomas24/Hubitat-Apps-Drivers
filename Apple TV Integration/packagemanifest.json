@@ -1,10 +1,10 @@
 {
   "packageName": "Apple TV Integration",
-  "releaseNotes": "v1.0.5: After pairing, the app page now shows the Apple TV as paired right away (it showed the old page until a refresh). Includes 1.0.3 and 1.0.4: Add by IP, better discovery, and uninstalling no longer affects discovery.",
+  "releaseNotes": "v1.0.6: After pairing, the app page shows the Apple TV as paired right away and updates itself until it's connected, with no manual refresh.",
   "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Apple%20TV%20Integration",
   "communityLink": "https://community.hubitat.com/t/166801",
   "author": "jdthomas24",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-10-16",
   "category": "Integrations",

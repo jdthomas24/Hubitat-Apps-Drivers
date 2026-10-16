@@ -28,6 +28,8 @@
      -The PIN box submits on change, and a saved PIN is sent as soon as the page redraws, since a
       text box isn't always saved when a button is clicked right after typing (seen over remote access).
       It's sent at the top of mainPage, before any list is built, so the redraw shows the paired TV.
+     -While a paired TV is in its first "connecting" step (a few seconds after pairing or startup), the
+      main page refreshes itself every 3s. "reconnecting"/"offline" don't, so typing is never interrupted.
      -Log level is the only logging control. It's pushed to every Apple TV device, and each
       device sends its lines back to childLog(), so all logging appears under this app,
       labeled by device. Full turns itself off after 30 minutes.
@@ -37,7 +39,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Apple TV Integration"
-@Field static final String APP_VERSION = "1.0.5"
+@Field static final String APP_VERSION = "1.0.6"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/166801"
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
@@ -357,8 +359,12 @@ def mainPage(params = null) {
     List unpaired = found.findAll { r -> !creds["ATV-${r.key}"] && !(r.key.startsWith("IP") && r.addresses.any { it.ip in pairedIps }) }
         .sort { atvName(it) }
     Map banner = bannerState(paired, found, unpaired)
+    boolean settling = paired.any { it.currentValue("connection") == "connecting" }
 
-    dynamicPage(name: "mainPage", install: true, uninstall: true) {
+    Map pageOpts = [name: "mainPage", install: true, uninstall: true]
+    if (settling) pageOpts.refreshInterval = 3
+
+    dynamicPage(pageOpts) {
         section {
             paragraph rawHtml: true, statusBannerHtml(banner.ok, banner.title, banner.summary)
             if (state.pageNote) {
@@ -449,7 +455,11 @@ private Map bannerState(List paired, List found, List unpaired) {
     if (offline) {
         return [ok: false, title: "Apple TV offline", summary: "${counts} &middot; ${offline.collect { it.displayName }.join(', ')}. Check power and network (Tips, Offline or reconnecting)."]
     }
-    if (up < paired.size()) return [ok: false, title: "Connecting", summary: "${counts} &middot; Reload this page in a few seconds."]
+    if (up < paired.size()) {
+        boolean settling = paired.any { it.currentValue("connection") == "connecting" }
+        return [ok: false, title: "Connecting", summary: "${counts} &middot; " +
+            (settling ? "This page updates on its own in a few seconds." : "Reload this page in a few seconds.")]
+    }
     return [ok: true, title: "Integration ready", summary: counts]
 }
 
