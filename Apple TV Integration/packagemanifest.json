@@ -1,10 +1,10 @@
 {
   "packageName": "Apple TV Integration",
-  "releaseNotes": "v1.0.6: After pairing, the app page shows the Apple TV as paired right away and updates itself until it's connected, with no manual refresh.",
+  "releaseNotes": "v1.1.0: Playback and remote control. Play, Pause, Stop, Next, Previous and Skip, Siri Remote buttons (including a Home Screen button), volume up and down, and launching apps by name. New transportStatus (playing, paused, stopped) and nowPlaying (title, for apps that share it). The last launch from Hubitat and the installed apps list are shown in State Variables.",
   "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Apple%20TV%20Integration",
   "communityLink": "https://community.hubitat.com/t/166801",
   "author": "jdthomas24",
-  "version": "1.0.6",
+  "version": "1.1.0",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-10-16",
   "category": "Integrations",
@@ -27,7 +27,7 @@
       "namespace": "jdthomas24",
       "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/AppleTVDriver.groovy",
       "required": true,
-      "description": "One per Apple TV. Switch on wakes it, off puts it to sleep, with live power state over an encrypted local connection."
+      "description": "One per Apple TV. On/off with live power state, playback controls, Siri Remote buttons, volume, app launching and now playing, over an encrypted local connection."
     }
   ]
 }

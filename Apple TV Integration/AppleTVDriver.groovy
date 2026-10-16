@@ -14,7 +14,37 @@
       "back online" logs at every level. Follows IP changes through the app's Bonjour list.
      -Health check every 5 min (FetchAttentionState, 20s timeout) catches half-open sockets.
       on/off with no reply in 5s reconnects and retries once. Initialize reconnects after reboots.
-     -NowPlayingInfo/MediaControlStatus/SupportedActions chatter logs at Full only.
+     -Playback: play/pause/next/previous/skip via _mcc (MediaControl), buttons via HID press+release.
+      transportStatus comes from the allowed-controls flags (_iMC _mcF or MediaControlStatus
+      MediaControlFlags): Pause allowed = playing, Play allowed = paused, neither = stopped.
+      Flags of 0 are seen briefly while waking, so they only count after 3s.
+     -Buttons: back (HID 5, short press), homeScreen (Back held 1s, goes to the Home Screen like the
+      Siri Remote). The TV button (HID 7) isn't offered: it follows each Apple TV's TV Button setting
+      and often opens the TV app. Aliases: menu = back; home, tv = homeScreen.
+     -Right after connecting the Apple TV reports its controls twice in a few ms (256, then the real
+      value), so flags in the first 2s are applied once, after 2s, to avoid a false "stopped".
+     -remoteButton(times) and volumeUp/Down(steps) repeat with a 150/250ms gap (max 10/20).
+     -Play from the screensaver presses Play Pause first (dismisses it, like the Siri Remote), from
+      sleep wakes first; the real play follows 2-3s later.
+     -nowPlaying = title from NowPlayingInfo (an NSKeyedArchiver plist; values are UID refs into
+      $objects). Only full updates carry metadata; partial play/pause updates leave the title alone.
+      Some apps (Netflix) never send one. Cleared when playback stops or the TV sleeps.
+     -launchApp: _launchApp with _bundleID (or _urlS for a URL; YouTube web links are converted to
+      youtube://, since tvOS rejects https links, and the Apple TV asks to confirm URL opens). The installed list (FetchLaunchable-
+      ApplicationsEvent, bundle ID -> name) is fetched on connect and Refresh and kept in memory;
+      State Variables only shows installedApps (names) for typing in Other.
+      Dropdown picks try their known spellings (APP_NAMES) exactly first. Typed names match exactly,
+      then by prefix, then by contains (must be unique). A bundle ID not in the list is sent as is,
+      since the list may omit some apps. Wakes a sleeping TV first.
+     -state.lastLaunchFromHubitat = "<app> (<status>)": launching, then launched (Apple TV acknowledged)
+      or "failed: <reason>". Only launches sent from Hubitat; the Apple TV never reports the app on
+      screen, so this is a State Variable, not an attribute. Failures also log at Errors Only.
+      Kept in memory and re-written to state at the end of every parse(): overlapping runs each save
+      their own copy of state, so a run that started before the launch would otherwise erase it.
+      Reasons: not installed, ambiguous, the Apple TV's error, or no reply (10s after sending, 30s if
+      waiting to connect, wake or fetch the app list).
+     -Every other event is logged at Full with its decoded content (binary plists decoded), once per
+      distinct payload, to learn what NowPlayingInfo carries.
      -The session map is a ConcurrentHashMap: clear keys with remove(), never "= null".
      -Log level comes from the app. Log lines go up to childLog() and appear under the app,
       labeled with this device's name. Falls back to local logging.
@@ -23,7 +53,7 @@
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { return "1.0.6" }
+def version() { return "1.1.0" }
 
 metadata {
     definition(name: "Apple TV", namespace: "jdthomas24", author: "Jason Thomas", importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/AppleTVDriver.groovy") {
@@ -31,8 +61,24 @@ metadata {
         capability "Switch"
         capability "Refresh"
         capability "Initialize"
+        capability "MediaTransport"
         attribute "power", "string"
         attribute "connection", "string"
+        attribute "nowPlaying", "string"
+        command "playPause"
+        command "nextTrack"
+        command "previousTrack"
+        command "skipForward"
+        command "skipBackward"
+        command "volumeUp", [[name: "steps", type: "NUMBER", description: "Steps (blank = 1, max 20)"]]
+        command "volumeDown", [[name: "steps", type: "NUMBER", description: "Steps (blank = 1, max 20)"]]
+        command "remoteButton", [[name: "button", type: "ENUM", description: "Siri Remote button",
+            constraints: ["up", "down", "left", "right", "select", "back", "homeScreen", "playPause"]],
+            [name: "times", type: "NUMBER", description: "Presses (blank = 1, max 10)"]]
+        command "launchApp", [[name: "app", type: "ENUM", description: "App (Other = use the box below)",
+            constraints: ["Netflix", "YouTube", "YouTube TV", "Prime Video", "Disney+", "Hulu", "HBO Max", "Peacock",
+                          "Paramount+", "Plex", "Apple TV", "Music", "Spotify", "Other"]],
+            [name: "other", type: "STRING", description: "Other: app name, bundle ID or app link (installed apps are in State Variables). Links open only in apps that support them, and the Apple TV may ask to confirm."]]
     }
     preferences {
         input name: "aboutInfo", type: "paragraph", title: "Pairing, names and logging are managed in the Apple TV Integration app."
@@ -45,6 +91,16 @@ metadata {
 @Field static final int OFFLINE_AFTER = 4
 @Field static final List CONNECTING = ["OPEN", "PV2", "PV4", "SETUP"]
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
+@Field static final Map MC_CMD = [play: 1, pause: 2, nextTrack: 3, previousTrack: 4, skipForward: 7, skipBackward: 7]
+@Field static final Map HID_BTN = [up: 1, down: 2, left: 3, right: 4, back: 5, select: 6,
+                                   volumeUp: 8, volumeDown: 9, playPause: 14, homeScreen: 5]
+@Field static final Map BTN_ALIAS = [menu: "back", home: "homeScreen", tv: "homeScreen", tvbutton: "homeScreen",
+                                     enter: "select", ok: "select", homescreen: "homeScreen", mainmenu: "homeScreen"]
+// Dropdown pick -> names the Apple TV may use for it, tried exactly, in order.
+@Field static final Map APP_NAMES = ["YouTube TV": ["YouTube TV"], "Prime Video": ["Prime Video", "Amazon Prime Video"],
+                                     "Disney+": ["Disney+", "Disney Plus"], "HBO Max": ["HBO Max", "Max"],
+                                     "Paramount+": ["Paramount+", "Paramount Plus"], "Apple TV": ["TV", "Apple TV"],
+                                     "Music": ["Music", "Apple Music"], "Peacock": ["Peacock", "Peacock TV"]]
 
 // ---------- lifecycle ----------
 
@@ -91,8 +147,256 @@ def off() {
 
 def refresh() {
     Map m = mem()
-    if (m.stage == "READY") request("FetchAttentionState", [:], "attention")
+    if (m.stage == "READY") { request("FetchAttentionState", [:], "attention"); request("FetchLaunchableApplicationsEvent", [:], "apps") }
     else queue("refresh")
+}
+
+// ---------- apps ----------
+
+// app is a dropdown pick, "Other" (use other) or, from Rule Machine, any name/bundle ID/URL.
+def launchApp(String app, String other = null) {
+    String a = (app ?: "").trim()
+    if (!a || a == "Other") a = (other ?: "").trim()
+    if (!a) { logE("launchApp needs an app. Pick one, or choose Other and type a name, bundle ID or URL."); return }
+    Map m = mem()
+    if (m.launching != a && m.launchName != a) launchStatus(a, "launching")
+    m.launching = a
+    if (m.stage != "READY") { queue("app:" + a); runIn(30, "launchTimeout"); return }
+    if (device.currentValue("power") == "asleep") { m.launchAfterWake = a; hid(13, "wake"); runIn(3, "launchAfterWake"); runIn(30, "launchTimeout"); return }
+    if (a.contains("://")) { String u = appUrl(a); sendLaunch(["_urlS": u], u, "opening ${u}"); return }
+    Map apps = (m.apps ?: [:]) as Map
+    if (!apps) { m.pendingLaunch = a; request("FetchLaunchableApplicationsEvent", [:], "apps"); runIn(30, "launchTimeout"); return }
+    def hit = findApp(apps, a)
+    if (hit instanceof List && !hit && a ==~ /[A-Za-z0-9-]+(\.[A-Za-z0-9-]+){2,}/) {
+        sendLaunch(["_bundleID": a], a, "launching ${a} (not in the app list, sent as is)")
+        return
+    }
+    if (hit instanceof List) {
+        launchFailed(hit ? "'${a}' matches more than one app: ${hit.join(', ')}" : "no app named '${a}'. Installed apps are listed in State Variables.",
+            hit ? "more than one match" : "not installed")
+        return
+    }
+    String name = apps[hit] ?: hit
+    sendLaunch(["_bundleID": hit], name, "launching ${name}")
+}
+
+// tvOS won't open https web links; YouTube links become youtube:// (tvOS asks to confirm).
+private String appUrl(String a) {
+    def w = a =~ /(?i)^https?:\/\/(?:www\.|m\.)?youtube\.com\/watch\?(?:.*&)?v=([\w-]+)/
+    if (w.find()) return "youtube://www.youtube.com/watch?v=${w.group(1)}".toString()
+    def s = a =~ /(?i)^https?:\/\/youtu\.be\/([\w-]+)/
+    if (s.find()) return "youtube://www.youtube.com/watch?v=${s.group(1)}".toString()
+    return a
+}
+
+private void sendLaunch(Map content, String name, String msg) {
+    Map m = mem()
+    m.launchName = name
+    if (m.lastLaunchName != name) launchStatus(name, "launching")
+    request("_launchApp", content, "launch")
+    logN(msg)
+    runIn(10, "launchTimeout")
+}
+
+private void launchStatus(String name, String status) {
+    Map m = mem()
+    m.lastLaunchName = name
+    m.lastLaunchText = "${name} (${status})".toString()
+    syncLaunch()
+}
+
+private void syncLaunch() {
+    String v = mem().lastLaunchText
+    if (v && state.lastLaunchFromHubitat != v) state.lastLaunchFromHubitat = v
+}
+
+private void launchDone(String status) {
+    Map m = mem()
+    String name = m.launchName ?: m.launching ?: m.lastLaunchName
+    ["launching", "launchName", "launchAfterWake", "pendingLaunch"].each { m.remove(it) }
+    unschedule("launchTimeout")
+    launchStatus(name, status)
+}
+
+private void launchFailed(String logMsg, String reason) {
+    logE("could not launch: ${logMsg}")
+    launchDone("failed: ${reason}")
+}
+
+def launchTimeout() {
+    Map m = mem()
+    if (!m.launching) return
+    launchFailed("${m.launchName ?: m.launching} got no reply from the Apple TV", "no reply")
+}
+
+def launchAfterWake() {
+    Map m = mem()
+    String a = m.launchAfterWake
+    m.remove("launchAfterWake")
+    if (a) launchApp(a)
+}
+
+// Bundle ID (String) on a unique match; otherwise a List of candidate names (empty = none).
+private findApp(Map apps, String a) {
+    if (apps.containsKey(a)) return a
+    def id = apps.keySet().find { it.equalsIgnoreCase(a) }
+    if (id) return id
+    for (String n in (APP_NAMES[a] ?: [])) {
+        id = apps.find { k, v -> v.toString().equalsIgnoreCase(n) }?.key
+        if (id) return id
+    }
+    String q = a.toLowerCase()
+    for (Closure test in [{ String n -> n == q }, { String n -> n.startsWith(q) }, { String n -> n.contains(q) }]) {
+        List ids = apps.findAll { k, v -> test(v.toString().toLowerCase()) }.collect { it.key }
+        if (ids.size() == 1) return ids[0]
+        if (ids.size() > 1) return ids.collect { apps[it] }.sort()
+    }
+    return []
+}
+
+private void appList(c) {
+    if (!(c instanceof Map)) return
+    Map apps = new TreeMap()
+    c.each { k, v -> if (k && v) apps[k.toString()] = v.toString() }
+    if (!apps) return
+    Map m = mem()
+    m.apps = apps
+    String names = apps.values().sort(false) { it.toLowerCase() }.join(", ")
+    if (state.installedApps != names) { logN("${apps.size()} apps installed"); state.installedApps = names }
+    state.remove("apps"); state.remove("appNames")   // pre-1.1.0 test builds
+    ["lastApp", "lastAppStatus"].each { try { device.deleteCurrentState(it) } catch (e) { } }   // earlier test builds
+    if (state.lastLaunchFromHubitat == null && !mem().lastLaunchText) state.lastLaunchFromHubitat = "none"
+    String p = m.pendingLaunch
+    m.remove("pendingLaunch")
+    if (p) launchApp(p)
+}
+
+// ---------- playback and buttons ----------
+
+// Play only reaches a "now playing" app, so from the screensaver press Play Pause first (like the
+// Siri Remote), and from sleep wake first; the real play follows once the TV is up. Play is idempotent.
+def play() {
+    String p = device.currentValue("power")
+    if (mem().stage == "READY" && p == "screensaver") { press("playPause", 1); runIn(2, "playAfterWake"); return }
+    if (mem().stage == "READY" && p == "asleep") { hid(13, "wake"); runIn(3, "playAfterWake"); return }
+    media("play")
+}
+
+def playAfterWake() { media("play") }
+def pause() { media("pause") }
+def stop() { media("pause") }   // Apple TV has no stop; pause is the closest
+def nextTrack() { media("nextTrack") }
+def previousTrack() { media("previousTrack") }
+def skipForward() { media("skipForward") }
+def skipBackward() { media("skipBackward") }
+def playPause() { press("playPause", 1) }
+// Counts are untyped: Rule Machine passes NUMBER as BigDecimal. Blank = 1.
+def volumeUp(steps = null) { press("volumeUp", count(steps, 20)) }
+def volumeDown(steps = null) { press("volumeDown", count(steps, 20)) }
+
+def remoteButton(String button, times = null) {
+    String key = (button ?: "").trim().toLowerCase()
+    key = BTN_ALIAS[key] ?: key
+    String b = HID_BTN.keySet().find { it.equalsIgnoreCase(key) }
+    if (!b) { logE("unknown button '${button}'. Use up, down, left, right, select, back, homeScreen or playPause."); return }
+    press(b, count(times, 10))
+}
+
+private int count(raw, int max) {
+    if (raw == null || raw.toString().trim() == "") return 1
+    try { return Math.max(1, Math.min(max, new BigDecimal(raw.toString().trim()).intValue())) } catch (e) { return 1 }
+}
+
+private void media(String name) {
+    Map m = mem()
+    if (m.stage != "READY") { queue("mc:" + name); return }
+    Map c = ["_mcc": MC_CMD[name]]
+    if (name == "skipForward") c["_skpS"] = 10.0d
+    if (name == "skipBackward") c["_skpS"] = -10.0d
+    request("_mcc", c, name)
+    logN("sent ${name}")
+}
+
+// Repeats get a short gap so the Apple TV (and a receiver over CEC, for volume) registers each one.
+private void press(String name, int times = 1) {
+    Map m = mem()
+    if (m.stage != "READY") { queue("btn:${name}:${times}"); return }
+    int code = HID_BTN[name] as int
+    int gap = name.startsWith("volume") ? 250 : 150
+    int hold = name == "homeScreen" ? 1000 : 0   // homeScreen = hold Back, like the Siri Remote
+    for (int i = 0; i < times; i++) {
+        if (i > 0) pauseExecution(gap)
+        request("_hidC", ["_hBtS": 1, "_hidC": code], name)
+        if (hold) pauseExecution(hold)
+        request("_hidC", ["_hBtS": 2, "_hidC": code], name)
+    }
+    logN("pressed ${name}${times > 1 ? " x${times}" : ""}")
+}
+
+// Allowed-controls flags -> transportStatus. 0 is seen briefly while waking, so it waits 3s.
+private void mediaFlags(def raw) {
+    if (raw == null) return
+    Map m = mem()
+    long f = raw as long
+    m.flags = f
+    if (f == 0L) runIn(3, "applyFlags")
+    else if (m.readyAt && now() - (m.readyAt as long) < 2000) runIn(2, "applyFlags")
+    else applyFlags()
+}
+
+def applyFlags() {
+    Map m = mem()
+    long f = (m.flags ?: 0L) as long
+    String t = device.currentValue("power") == "asleep" ? "stopped" : (f & 2L) ? "playing" : (f & 1L) ? "paused" : "stopped"
+    setTransport(t)
+}
+
+// Both _iMC and MediaControlStatus report each change, so compare against memory, not the
+// attribute (which can lag within one execution) to log once.
+private void setTransport(String t) {
+    Map m = mem()
+    if (m.transport != t) { m.transport = t; logN("playback ${t}") }
+    sendIfChanged("transportStatus", t)
+    if (t == "stopped") setNowPlaying("")
+}
+
+private void nowPlayingInfo(raw) {
+    if (!(raw instanceof byte[])) return
+    Map info
+    try { info = keyedArchive((byte[]) raw) } catch (e) { logF("could not decode NowPlayingInfo: ${e.message}"); return }
+    if (!(info?.metadata instanceof Map)) return   // partial update
+    setNowPlaying((info.metadata.title ?: "").toString().trim())
+}
+
+private void setNowPlaying(String title) {
+    Map m = mem()
+    if ((m.nowPlaying ?: "") != title) { m.nowPlaying = title; logN(title ? "now playing: ${title}" : "now playing cleared") }
+    sendIfChanged("nowPlaying", title ?: "none")
+}
+
+// NSKeyedArchiver plist -> plain Map: follows UID refs from $top.root into $objects, drops $class.
+private Map keyedArchive(byte[] b) {
+    def p = bplistParse(b)
+    List objs = p?.'$objects' as List
+    def root = p?.'$top'?.root
+    if (!objs || root == null) return null
+    return nsResolve(root, objs, 0) as Map
+}
+
+private nsResolve(v, List objs, int depth) {
+    if (depth > 20) return null
+    if (v instanceof Map && v.containsKey('$uid')) {
+        int i = v['$uid'] as int
+        return (i <= 0 || i >= objs.size()) ? null : nsResolve(objs[i], objs, depth + 1)
+    }
+    if (v instanceof Map) {
+        Map out = [:]
+        v.each { k, x -> if (k != '$class') out[k] = nsResolve(x, objs, depth + 1) }
+        return out
+    }
+    if (v instanceof List) return v.collect { nsResolve(it, objs, depth + 1) }
+    if (v == '$null') return null
+    return v
 }
 
 private void hid(int button, String label) {
@@ -120,6 +424,9 @@ private void runAction(String a) {
     if (a == "wake") hid(13, "wake")
     else if (a == "standby") hid(12, "standby")
     else if (a == "refresh") request("FetchAttentionState", [:], "attention")
+    else if (a.startsWith("mc:")) media(a - "mc:")
+    else if (a.startsWith("btn:")) { List p = a.split(":") as List; press(p[1], p.size() > 2 ? (p[2] as int) : 1) }
+    else if (a.startsWith("app:")) launchApp(a.substring(4))
 }
 
 def commandTimeout() {
@@ -377,6 +684,10 @@ private void closeSocket() {
 }
 
 def parse(String hex) {
+    try { parseFrames(hex) } finally { syncLaunch() }
+}
+
+private void parseFrames(String hex) {
     Map m = mem()
     m.rx = (m.rx ?: "") + hex
     while ((m.rx as String).length() >= 8) {
@@ -430,13 +741,22 @@ private void handleSessionFrame(Map m, byte[] header, byte[] payload) {
     Map msg = opackUnpack(sessionOpen(m.ss as Map, header, payload))[0] as Map
     if (msg._t == 1) {
         if (msg._i in ["SystemStatus", "TVSystemStatus"] && msg._c instanceof Map && msg._c.state != null) setPower(msg._c.state as int, "event")
-        else logF("event ${msg._i}")
+        else if (msg._i == "_iMC" && msg._c instanceof Map) { logEvent(msg); mediaFlags(msg._c._mcF) }
+        else if (msg._i == "MediaControlStatus" && msg._c instanceof Map) { logEvent(msg); mediaFlags(msg._c.MediaControlFlags) }
+        else if (msg._i == "NowPlayingInfo" && msg._c instanceof Map) { logEvent(msg); nowPlayingInfo(msg._c.NowPlayingInfoKey) }
+        else logEvent(msg)
         return
     }
     if (msg._t == 3) {
         String label = (m.waiting as Map).remove(msg._x) ?: "unknown"
         if (msg._em) {
             if (label == "tvrc") { finishSetup(m); return }
+            if (label == "launch") { launchFailed("${m.launchName ?: 'app'}: ${msg._em}", msg._em.toString().take(60)); return }
+            if (label == "apps") {
+                logN("could not read the app list: ${msg._em}")
+                if (m.pendingLaunch) launchFailed("${m.pendingLaunch}: the app list couldn't be read", "app list unavailable")
+                return
+            }
             logN("${label} failed: ${msg._em}")
             return
         }
@@ -454,6 +774,13 @@ private void handleSessionFrame(Map m, byte[] header, byte[] payload) {
             case "health":
                 if (label == "health") { m.remove("probeAt"); unschedule("healthTimeout") }
                 if (msg._c instanceof Map && msg._c.state != null) setPower(msg._c.state as int, label == "health" ? "check" : "query")
+                break
+            case "apps":
+                appList(msg._c)
+                break
+            case "launch":
+                logF("${m.launchName ?: 'launch'} acknowledged")
+                launchDone("launched")
                 break
             case "wake":
             case "standby":
@@ -473,7 +800,9 @@ private void finishSetup(Map m) {
     if (m.stage == "READY") return
     send(companionEvent(m.ss as Map, "_interest", ["_regEvents": ["SystemStatus"]]))
     send(companionEvent(m.ss as Map, "_interest", ["_regEvents": ["TVSystemStatus"]]))
+    send(companionEvent(m.ss as Map, "_interest", ["_regEvents": ["_iMC"]]))
     m.stage = "READY"
+    m.readyAt = now()
     unschedule("connectTimeout")
     boolean wasOffline = device.currentValue("connection") == "offline"
     m.failCount = 0
@@ -482,6 +811,7 @@ private void finishSetup(Map m) {
     if (wasOffline) slog("info", "back online")
     else logN("connected")
     request("FetchAttentionState", [:], "attention")
+    request("FetchLaunchableApplicationsEvent", [:], "apps")
     List q = (m.after ?: []) as List
     m.after = []
     q.each { runAction(it as String) }
@@ -500,6 +830,93 @@ private void setPower(int s, String source) {
     if (device.currentValue("power") != v) logN("power ${v} (${source})")
     sendIfChanged("power", v)
     sendIfChanged("switch", v == "asleep" ? "off" : "on")
+    if (v == "asleep") setTransport("stopped")
+}
+
+// Full only, once per distinct payload, so NowPlayingInfo bursts don't flood the log.
+private void logEvent(Map msg) {
+    if (lvl() < 2) return
+    Map m = mem()
+    String text = describe(msg._c, 0)
+    Map seen = (m.eventSeen ?: [:]) as Map
+    int sig = text.hashCode()
+    if (seen[msg._i] == sig) return
+    seen[msg._i] = sig
+    m.eventSeen = seen
+    logF("event ${msg._i}: ${text.take(msg._i == 'NowPlayingInfo' ? 3000 : 600)}")
+}
+
+private String describe(def v, int depth) {
+    if (depth > 8) return "..."
+    if (v instanceof Map) return "{" + v.collect { k, x -> "${k}=${describe(x, depth + 1)}" }.join(", ") + "}"
+    if (v instanceof List) return "[" + v.collect { describe(it, depth + 1) }.join(", ") + "]"
+    if (v instanceof byte[]) {
+        byte[] b = (byte[]) v
+        if (b.length > 8 && new String(cdSlice(b, 0, 8), "US-ASCII") == "bplist00") {
+            try { return "plist" + describe(bplistParse(b), depth + 1) } catch (e) { return "plist(unreadable ${b.length} bytes)" }
+        }
+        return "bytes(${b.length}):" + toHex(cdSlice(b, 0, Math.min(b.length, 48)))
+    }
+    if (v instanceof CharSequence) return "'" + v.toString().take(120) + "'"
+    return String.valueOf(v)
+}
+
+// ---------- binary plist (bplist00) reader, for logging event payloads ----------
+
+def bplistParse(byte[] d) {
+    int n = d.length
+    int offSize = d[n - 26] & 0xFF
+    int refSize = d[n - 25] & 0xFF
+    long count = bpUInt(d, n - 24, 8)
+    long top = bpUInt(d, n - 16, 8)
+    long tableOff = bpUInt(d, n - 8, 8)
+    long[] offsets = new long[(int) count]
+    for (int i = 0; i < count; i++) offsets[i] = bpUInt(d, (int) (tableOff + i * offSize), offSize)
+    return bpObj(d, offsets, refSize, (int) top, 0)
+}
+
+private bpObj(byte[] d, long[] offsets, int refSize, int idx, int depth) {
+    if (depth > 64) throw new IllegalStateException("plist nested too deeply")
+    int p = (int) offsets[idx]
+    int marker = d[p] & 0xFF
+    int hi = marker >> 4, lo = marker & 0xF
+    switch (hi) {
+        case 0x0: return lo == 0x8 ? false : lo == 0x9 ? true : null
+        case 0x1: return bpUInt(d, p + 1, 1 << lo)
+        case 0x2: return lo == 2 ? (double) Float.intBitsToFloat((int) bpUInt(d, p + 1, 4)) : Double.longBitsToDouble(bpUInt(d, p + 1, 8))
+        case 0x3: return Double.longBitsToDouble(bpUInt(d, p + 1, 8))
+    }
+    def (int len, int start) = bpLen(d, p, lo)
+    switch (hi) {
+        case 0x4: return cdSlice(d, start, start + len)
+        case 0x5: return new String(cdSlice(d, start, start + len), "US-ASCII")
+        case 0x6: return new String(cdSlice(d, start, start + len * 2), "UTF-16BE")
+        case 0x8: return ['$uid': bpUInt(d, p + 1, lo + 1)]
+        case 0xA:
+            List l = []
+            for (int i = 0; i < len; i++) l << bpObj(d, offsets, refSize, (int) bpUInt(d, start + i * refSize, refSize), depth + 1)
+            return l
+        case 0xD:
+            Map m = [:]
+            for (int i = 0; i < len; i++) {
+                def k = bpObj(d, offsets, refSize, (int) bpUInt(d, start + i * refSize, refSize), depth + 1)
+                m[k] = bpObj(d, offsets, refSize, (int) bpUInt(d, start + (len + i) * refSize, refSize), depth + 1)
+            }
+            return m
+        default: return null
+    }
+}
+
+private List bpLen(byte[] d, int p, int lo) {
+    if (lo != 0xF) return [lo, p + 1]
+    int size = 1 << ((d[p + 1] & 0xFF) & 0xF)
+    return [(int) bpUInt(d, p + 2, size), p + 2 + size]
+}
+
+private long bpUInt(byte[] d, int p, int size) {
+    long v = 0
+    for (int i = 0; i < size; i++) v = (v << 8) | (d[p + i] & 0xFF)
+    return v
 }
 
 private void send(byte[] frame) {
