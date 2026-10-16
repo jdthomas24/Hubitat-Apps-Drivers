@@ -1,11 +1,12 @@
 /**
  * Reolink Camera (Component Driver)
- * Version: 1.6.11
+ * Version: 1.6.12
  *
  * Thin device: no HTTP of its own. Delegates everything to the parent app via
  * parent.componentX(this, ...), using data values sourceId/channel to
  * identify which source/channel this device maps to.
  *
+ * v1.6.12 -- Version sync (doorbell detection and event list parsing are in the app).
  * v1.6.11 -- spotlight attribute changes only when the camera accepts (receiveSpotlight()),
  * not on every command; the app re-reads it after Reolink's manual light timer.
  * v1.6.10 -- Version sync only (Device Bridge memory change).

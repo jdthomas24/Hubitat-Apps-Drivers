@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.6.11
+ * Version: 1.6.12
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -20,6 +20,10 @@
  * exact command/param names verified against firmware (field names can
  * drift by version). Full history prior to 1.3.6 is in GitHub commit history.
  *
+ * v1.6.12 -- Hub/NVR doorbells detected from the channel's model (typeInfo), doorbellVersion
+ *    or GetAiState visitor support, never the name (a Home Hub reported a doorbell as "Hub").
+ *    Event pushes read status/AItype as comma-separated lists like reolink_aio ("MD,visitor"
+ *    was missing both the press and the motion; "people,vehicle" missed both).
  * v1.6.11 -- Device Bridge fix: events could stop decoding after its in-memory
  *    key was cleared (see the bridge header).
  *  - Spotlight: on/off and auto refused over HTTP (-13, Home Hub Mini battery
@@ -326,7 +330,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.6.11"
+@Field static final String APP_VERSION = "1.6.12"
 
 // v1.6.5: power mode migration key; changing it re-runs migrateBatteryModes().
 @Field static final String POWER_MIGRATION_KEY = "batteryWired"
@@ -2965,7 +2969,11 @@ def discoverChannels(sourceId) {
         status?.status?.each { ch ->
             if (ch.online) {
                 def existing = bridgeForDiscovery?.getChildDevice(childDni(sourceId, ch.channel)) != null
-                channels << [channel: ch.channel, name: ch.name ?: "Channel ${ch.channel}", deviceType: guessChannelDeviceType(ch),
+                def abilityCh = abilityChnList?.getAt(ch.channel as Integer)
+                def existingChild = existing ? bridgeForDiscovery.getChildDevice(childDni(sourceId, ch.channel)) : null
+                String type = existingChild ? (existingChild.name == "Reolink Doorbell" ? "doorbell" : "camera") :
+                    channelDeviceType(sourceId, ch, abilityCh)
+                channels << [channel: ch.channel, name: ch.name ?: "Channel ${ch.channel}", deviceType: type,
                     isBattery: existing ? null : detectIsBattery(sourceId, ch.channel, abilityChnList?.getAt(ch.channel as Integer)),
                     supportedFeatures: computeSupportedFeatures(abilityChnList?.getAt(ch.channel as Integer))]
             }
@@ -2984,16 +2992,21 @@ private String guessDeviceType(info) {
 }
 
 /**
- * Hub/NVR-channel detection. GetChannelstatus (the Hub/NVR API) never
- * returns a model field, only GetDevInfo (the standalone API) does -- so
- * this uses the channel's own name instead. Reolink's own Hub/NVR channel
- * naming already reflects the device type (a paired doorbell channel is
- * named "Doorbell" by default). Falls back to "camera" if the name gives no
- * signal either way.
+ * v1.6.12: Hub/NVR channel type, never from the channel name (a Hub can report a doorbell as "Hub").
+ * Same signals as reolink_aio: GetChannelstatus typeInfo (model, not sent by every device), then
+ * GetAbility doorbellVersion, then GetAiState visitor support (3s quiet probe). Otherwise camera.
  */
-private String guessChannelDeviceType(ch) {
-    def name = (ch?.name ?: "").toLowerCase()
-    return name.contains("doorbell") ? "doorbell" : "camera"
+private String channelDeviceType(sourceId, ch, Map abilityCh) {
+    String model = (ch?.typeInfo ?: "").toString()
+    if (model) return model.toLowerCase().contains("doorbell") ? "doorbell" : "camera"
+    if (abilityCh != null && abilityPermit(abilityCh, "doorbellVersion") > 0) return "doorbell"
+    def token = reolinkLogin(sourceId)
+    if (!token) return "camera"
+    def outcome = doReolinkApiCall(getSource(sourceId), sourceId, "GetAiState", token, [:], ch.channel as Integer, true, 3)
+    def ai = outcome.value
+    boolean visitor = ((ai?.visitor ?: ai?.aiState?.visitor)?.support ?: 0) as Integer == 1
+    logFull "Reolink source ${sourceId} ch ${ch.channel}: no typeInfo, visitor support=${visitor}"
+    return visitor ? "doorbell" : "camera"
 }
 
 /**
@@ -3306,18 +3319,21 @@ def componentEventSleepUpdate(child, sourceId, channelId, String sleepState) {
  * JSON).
  */
 private Map translateToLegacyShape(String status, String aiType) {
-    def aiActive = aiType && aiType != "none"
-    def motionActive = (status == "MD") || aiActive
+    // v1.6.12: both fields are comma-separated lists ("MD,visitor", "people,vehicle"), as in reolink_aio.
+    // "other" is PIR motion on battery cameras.
+    Set st = pushList(status)
+    Set ai = pushList(aiType) - ["none"]
+    def on = { boolean b -> [alarm_state: b ? 1 : 0] }
     return [
-        mdState: [state: motionActive ? 1 : 0],
-        aiState: [
-            people:  [alarm_state: (aiType == "people")  ? 1 : 0],
-            vehicle: [alarm_state: (aiType == "vehicle") ? 1 : 0],
-            dog_cat: [alarm_state: (aiType == "dog_cat") ? 1 : 0],
-            package: [alarm_state: (aiType == "package") ? 1 : 0],
-            visitor: [alarm_state: (status == "visitor") ? 1 : 0]
-        ]
+        mdState: [state: (st.contains("MD") || ai) ? 1 : 0],
+        aiState: [people: on(ai.contains("people")), vehicle: on(ai.contains("vehicle")),
+                  dog_cat: on(ai.contains("dog_cat")), package: on(ai.contains("package")),
+                  visitor: on(st.contains("visitor"))]
     ]
+}
+
+private Set pushList(String v) {
+    return (v ?: "").split(",").collect { it.trim() }.findAll { it } as Set
 }
 
 def createSelectedChildren(sourceId) {

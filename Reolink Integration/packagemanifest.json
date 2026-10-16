@@ -1,12 +1,12 @@
 {
     "packageName": "Reolink Integration",
-    "releaseNotes": "v1.6.11: Fixes motion, AI and sleep events silently not arriving after updating to 1.6.10 (the Device Bridge lost its encryption key but still showed connected; it now reconnects on its own). Spotlight: the spotlight attribute follows the camera live and only changes once the camera accepts. Battery cameras now keep the light on for the full 3 minutes instead of a few seconds, and cameras that are still waking (e.g. behind a Home Hub Mini) are retried instead of refused. No Done needed after updating.",
+    "releaseNotes": "v1.6.12: Doorbell button presses, motion and AI detections that arrive together are no longer missed (Reolink sends them as one combined event, like motion plus a press, or a person plus a vehicle). Doorbells on a Home Hub or NVR are now recognized from the device's model or doorbell support, not its name, so a doorbell the Hub reports under another name is created as a doorbell. A doorbell already created as a camera needs to be removed and added again. No Done needed after updating.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "communityLink": "https://community.hubitat.com/t/165352",
     "author": "jdthomas24",
-    "version": "1.6.11",
+    "version": "1.6.12",
     "minimumHEVersion": "2.3.0",
-    "dateReleased": "2026-10-14",
+    "dateReleased": "2026-10-16",
     "category": "Integrations",
     "tags": "Cameras & Video",
     "apps": [

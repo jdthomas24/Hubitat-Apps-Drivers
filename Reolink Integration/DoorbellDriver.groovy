@@ -1,11 +1,12 @@
 /**
  * Reolink Doorbell (Component Driver)
- * Version: 1.6.11
+ * Version: 1.6.12
  *
  * Same delegation pattern as Reolink Camera, plus a "visitor" (button press)
  * event so Rule Machine can trigger straight off "pushed 1" for a doorbell
  * ring, separate from AI person/motion detection.
  *
+ * v1.6.12 -- Version sync (doorbell detection and event list parsing are in the app).
  * v1.6.11 -- Version sync only (Device Bridge event decoding fix).
  * v1.6.10 -- Version sync only (Device Bridge memory change).
  * v1.6.9 -- Manual Record command (on/off, optional seconds) and manualRecord attribute.

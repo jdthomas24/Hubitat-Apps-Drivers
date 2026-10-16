@@ -1,6 +1,6 @@
 /**
  * Reolink Device Bridge (Internal Parent Driver)
- * Version: 1.6.11
+ * Version: 1.6.12
  *
  * NOT user-facing. Created and managed automatically by the Reolink
  * Integration parent app -- ONE instance per SOURCE (Hub/NVR or standalone).
@@ -14,6 +14,7 @@
  * every componentX() method below is a one-line passthrough up to this
  * bridge's own parent (the app).
  *
+ * v1.6.12 -- Version sync (app now reads event status/AItype as comma-separated lists).
  * v1.6.11 -- Fix: events stopped decoding (motion, AI, sleep status) if the
  * in-memory AES key was cleared while the connection stayed up. Hub pushes
  * are marked 'c800', so 1.6.10's lost-key reconnect never fired and the
@@ -881,15 +882,7 @@ private void handlePushedEvent(int cmdId, String bodyText) {
         elements.each { chId, elem ->
             def status = elem?.status?.text()
             def aiType = elem?.AItype?.text()
-            // Logs the actual status/AItype VALUES inside an event, not
-            // just which channels sent one -- needed to diagnose whether a
-            // doorbell's physical button press really reports
-            // status="visitor" the way translateToLegacyShape() (in
-            // ParentApp.groovy) assumes -- that mapping was always a
-            // guess, never confirmed against real hardware, flagged by a
-            // real report where a physical press never triggered push(1)
-            // even though manually calling push() on the device page
-            // worked fine.
+            // status/AItype are comma-separated lists ("MD,visitor"); the app splits them (v1.6.12).
             logF "Reolink Device Bridge (source ${state.sourceId}) ch ${chId}: cmd_id 33 raw event -- status='${status}', AItype='${aiType}'"
             def key = chId.toString()
             def prev = last[key]
