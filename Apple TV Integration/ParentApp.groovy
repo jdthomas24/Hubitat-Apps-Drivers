@@ -15,6 +15,10 @@
      -Add by IP: fallback when Bonjour is slow or blocked. /info confirms it's an Apple TV (model
       AppleTV*). Kept in state.manualTvs under key "IP"+hex IP until paired; on pairing the device's
       DNI moves to the permanent "ATV-" + identity (the same key Bonjour uses), so it never duplicates.
+     -A Bonjour entry missing its TXT details (rpMd/rpMRtID, seen right after the listener starts) is
+      checked through /info like Add by IP (result cached per IP in state.ipModels, cleared by Refresh)
+      and keyed "IP"+hex until paired.
+     -Full logging lists every raw Bonjour entry and why it was kept or skipped, on each Refresh.
      -Pairing: Pair creates the child (only on an explicit click) and starts pair-setup; the TV
       shows a PIN; Submit PIN finishes it. The child hands the keys back via
       componentPairingComplete(); they live in state.creds and children load them into memory.
@@ -32,7 +36,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Apple TV Integration"
-@Field static final String APP_VERSION = "1.0.3"
+@Field static final String APP_VERSION = "1.0.4"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/166801"
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
@@ -157,24 +161,64 @@ private List discovered() {
         logDbg "Bonjour lookup failed: ${ex.message}"
         return []
     }
+    boolean detail = state.logBonjourDetail
+    state.remove("logBonjourDetail")
     Map byKey = [:]
+    List probed = []
     raw.each { e ->
         String md = e?.rpMd?.toString()
         String id = e?.rpMRtID?.toString()
-        if (!md?.startsWith("AppleTV") || !id) return
         String ip = e?.ip4Addresses?.toString()?.split(",")?.collect { it.trim() }?.find { it }
-        if (!ip) return
         Integer port = e?.port ? (e.port.toString() as Integer) : 49153
-        String key = id.replaceAll("[^A-Za-z0-9]", "").toUpperCase()
-        Map rec = byKey[key] ?: [key: key, model: md, host: hostName(e?.server?.toString()), addresses: []]
-        if (!rec.addresses.any { it.ip == ip && it.port == port }) rec.addresses << [ip: ip, port: port]
-        byKey[key] = rec
+        String verdict
+        if (!ip) {
+            verdict = "skipped, no IPv4 address"
+        } else if (md && !md.startsWith("AppleTV")) {
+            verdict = "skipped, not an Apple TV"
+        } else if (md && id) {
+            String key = id.replaceAll("[^A-Za-z0-9]", "").toUpperCase()
+            Map rec = byKey[key] ?: [key: key, model: md, host: hostName(e?.server?.toString()), addresses: []]
+            if (!rec.addresses.any { it.ip == ip && it.port == port }) rec.addresses << [ip: ip, port: port]
+            byKey[key] = rec
+            verdict = "Apple TV"
+        } else {
+            String model = probeModel(ip)
+            if (model?.startsWith("AppleTV")) {
+                probed << [key: ipKey(ip), model: model, host: hostName(e?.server?.toString()), addresses: [[ip: ip, port: port]]]
+                verdict = "Apple TV (no Bonjour details, confirmed by /info)"
+            } else {
+                verdict = "skipped, no Bonjour details and /info says ${model ?: 'no answer'}"
+            }
+        }
+        if (detail) logDbg "Bonjour entry: ${e?.server ?: '?'} ${ip ?: ''}:${port} model=${md ?: 'none'} id=${id ? 'yes' : 'none'} -> ${verdict}"
     }
-    if (state.lastBonjourCount != "${raw.size()}/${byKey.size()}") {
-        state.lastBonjourCount = "${raw.size()}/${byKey.size()}"
-        logDbg "Bonjour: ${raw.size()} Companion entr${raw.size() == 1 ? 'y' : 'ies'}, ${countText(byKey.size(), 'Apple TV')}"
+    List txtIps = byKey.values().collectMany { it.addresses*.ip }
+    List recs = (byKey.values() as List) + probed.findAll { !(it.addresses[0].ip in txtIps) }.unique { it.key }
+    String count = "${raw.size()}/${recs.size()}"
+    if (detail || state.lastBonjourCount != count) {
+        state.lastBonjourCount = count
+        logDbg "Bonjour: ${raw.size()} Companion entr${raw.size() == 1 ? 'y' : 'ies'}, ${countText(recs.size(), 'Apple TV')}"
     }
-    return byKey.values() as List
+    return recs
+}
+
+private String ipKey(String ip) {
+    "IP" + ip.split("\\.").collect { Integer.toHexString(it as int).padLeft(2, "0") }.join().toUpperCase()
+}
+
+// /info model for a Bonjour entry without TXT details, cached per IP until Refresh.
+private String probeModel(String ip) {
+    Map cache = state.ipModels ?: [:]
+    if (cache.containsKey(ip)) return cache[ip] ?: null
+    Map info = fetchInfo(ip)
+    cache[ip] = info?.model ?: ""
+    state.ipModels = cache
+    if (info?.name && info.model?.startsWith("AppleTV")) {
+        Map names = state.atvNames ?: [:]
+        names[ipKey(ip)] = info.name
+        state.atvNames = names
+    }
+    return info?.model
 }
 
 // Bonjour records plus Add by IP records, without showing the same Apple TV twice.
@@ -245,7 +289,7 @@ private void addByIp() {
         logInfo "Add by IP: ${state.pageNote}"
         return
     }
-    String key = "IP" + ip.split("\\.").collect { Integer.toHexString(it as int).padLeft(2, "0") }.join().toUpperCase()
+    String key = ipKey(ip)
     Map all = state.manualTvs ?: [:]
     all[key] = [key: key, ip: ip, port: port, model: info.model, name: info.name ?: ip]
     state.manualTvs = all
@@ -306,7 +350,10 @@ def mainPage(params = null) {
             d.componentSetAddress(a.ip as String, a.port as Integer)
         }
     }
-    List unpaired = found.findAll { !creds["ATV-${it.key}"] }.sort { atvName(it) }
+    List pairedIps = paired.collect { it.getDataValue("ip") }.findAll { it }
+    // IP-keyed records (Add by IP, or Bonjour without details) for a TV already paired under its permanent ID
+    List unpaired = found.findAll { r -> !creds["ATV-${r.key}"] && !(r.key.startsWith("IP") && r.addresses.any { it.ip in pairedIps }) }
+        .sort { atvName(it) }
     Map banner = bannerState(paired, found, unpaired)
 
     dynamicPage(name: "mainPage", install: true, uninstall: true) {
@@ -439,6 +486,8 @@ def appButtonHandler(String btn) {
     logDbg "button: ${btn}"
     if (btn == "refreshTvs") {
         state.atvNames = [:]
+        state.remove("ipModels")
+        state.logBonjourDetail = true
         try { registerMDNSListener(SERVICE) } catch (e) { logDbg "re-registering Bonjour: ${e.message}" }
         pauseExecution(1500)   // give announcements a moment before the page redraws
         return

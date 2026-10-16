@@ -1,10 +1,10 @@
 {
   "packageName": "Apple TV Integration",
-  "releaseNotes": "v1.0.3: Apple TVs that are slow to show up can now be added by IP address, and Refresh actively looks for them again. Removing and reinstalling the integration no longer starts discovery from an empty list.",
+  "releaseNotes": "v1.0.4: Apple TVs that Bonjour lists without their details are now found instead of skipped (checked the same way as Add by IP). At Full logging, Refresh lists every device Bonjour reports and why it was kept or skipped.",
   "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Apple%20TV%20Integration",
   "communityLink": "https://community.hubitat.com/t/166801",
   "author": "jdthomas24",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-10-16",
   "category": "Integrations",
