@@ -1,4 +1,4 @@
-# Apple TV Now Playing (Beta) 1.2.0.1
+# Apple TV Now Playing (Beta) 1.2.0.2
 
 Lets Hubitat see what your Apple TV is doing: **which app** is playing (Netflix, Plex, YouTube...) and whether it's **playing or paused**. Some apps also share the title.
 
@@ -25,7 +25,7 @@ It won't show up in HPM's search. That's on purpose, since it's a beta.
 
 ## Set up
 
-1. **Apps → Add User App → Apple TV Now Playing (Beta)**
+1. Open **Integrations** in the left menu and add **Apple TV Now Playing (Beta)**
 2. Your Apple TVs show up under **Found on your network**. If one is missing, wake it with its remote and tap **Refresh**, or use **Add by IP**.
 3. Tap **Pair**. A 4-digit PIN appears on the TV. Type it in and tap **Submit PIN**.
 4. Tap **Done**. The device connects on its own and starts reporting.

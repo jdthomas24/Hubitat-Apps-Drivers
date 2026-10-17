@@ -22,7 +22,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Apple TV Now Playing (Beta)"
-@Field static final String APP_VERSION = "1.2.0.1"
+@Field static final String APP_VERSION = "1.2.0.2"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/166801"
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 @Field static final String RAOP = "_raop._tcp"
@@ -36,6 +36,7 @@ definition(
     author: "jdthomas24",
     description: "BETA: which app is playing on your Apple TVs, and whether it's playing or paused. Separate from Apple TV Integration.",
     category: "Convenience",
+    menu: "Integrations",
     singleInstance: true,
     installOnOpen: true,
     iconUrl: "",
