@@ -22,7 +22,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Apple TV Now Playing (Beta)"
-@Field static final String APP_VERSION = "1.2.0.2"
+@Field static final String APP_VERSION = "1.2.0.3"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/166801"
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 @Field static final String RAOP = "_raop._tcp"
@@ -302,7 +302,7 @@ def mainPage(params = null) {
                 "<b>Full</b> adds protocol detail for troubleshooting and turns itself off after 30 minutes.</span>"
             paragraph rawHtml: true, supportLinkHtml(COMMUNITY_URL, "pi pi-comments", "Hubitat Community", "Apple TV Integration thread")
         }
-        section {
+        section(sectionClass: "app-main-footer") {
             paragraph "<div class='text-center text-color-secondary text-xs mt-2'>${APP_NAME} v${APP_VERSION}</div>"
         }
     }
@@ -529,6 +529,7 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
     line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid #d0d7de !important;
     white-space: nowrap; }
   .atv-end { border-bottom: 1px solid #e0e0e0; margin: 4px 0 18px; }
+  .app-main-footer { clear: both; }
   @media (max-width: 1000px) {
     .app-main-content, .app-main-settings { float: none; width: 100%; border-left: 0; padding-left: 0; }
   }
