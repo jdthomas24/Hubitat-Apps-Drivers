@@ -4,6 +4,8 @@ Lets Hubitat see what your Apple TV is doing: **which app** is playing (Netflix,
 
 This is an **experimental beta**. It's separate from Apple TV Integration and doesn't change it. There's no timeline, and it may or may not end up in the main integration.
 
+**How is this different from Hubitat's built-in AirPlay integration?** The built-in one shows play state and a title. This beta adds **which app is playing** and whether the TV is **awake or asleep**, as separate attributes. That lets rules tell Netflix from Plex from YouTube. Both can run side by side.
+
 ## Install
 
 **With Hubitat Package Manager (recommended, makes updates one click):**
