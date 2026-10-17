@@ -40,7 +40,7 @@ definition(
     installOnOpen: true,
     iconUrl: "",
     iconX2Url: "",
-    importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Tests%20-%20Groovy%20RAW/Apple%20TV%20Driver%20BETA%201.2.0/AppleTVNowPlayingApp.groovy"
+    importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Tests%20-%20Groovy%20RAW/Apple%20TV%20Integration%20BETA/AppleTVNowPlayingApp.groovy"
 )
 
 preferences {

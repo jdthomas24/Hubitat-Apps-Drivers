@@ -27,7 +27,7 @@ def version() { "1.2.0-beta.1" }
 
 metadata {
     definition(name: "Apple TV Now Playing (Beta)", namespace: "jdthomas24", author: "jdthomas24",
-        importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Tests%20-%20Groovy%20RAW/Apple%20TV%20Driver%20BETA%201.2.0/AppleTVNowPlayingDriver.groovy") {
+        importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Tests%20-%20Groovy%20RAW/Apple%20TV%20Integration%20BETA/AppleTVNowPlayingDriver.groovy") {
         capability "Actuator"
         capability "Initialize"
         capability "Refresh"

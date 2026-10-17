@@ -1,0 +1,33 @@
+{
+    "packageName": "Apple TV Now Playing (Beta)",
+    "releaseNotes": "1.2.0 beta 1: first beta. Shows which app is playing on each Apple TV and whether it's playing or paused, plus the title when the app shares it, and whether the TV is awake. Separate from Apple TV Integration and doesn't change it. After installing, open Apps > Add User App > Apple TV Now Playing (Beta) and pair each TV with the PIN shown on screen.",
+    "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Tests%20-%20Groovy%20RAW/Apple%20TV%20Integration%20BETA",
+    "communityLink": "https://community.hubitat.com/t/166801",
+    "author": "jdthomas24",
+    "version": "1.2.0.1",
+    "minimumHEVersion": "2.3.0",
+    "dateReleased": "2026-10-17",
+    "category": "Integrations",
+    "tags": "Entertainment",
+    "apps": [
+        {
+            "id": "ceaed505-5677-4781-a675-ebc3f46c3446",
+            "name": "Apple TV Now Playing (Beta)",
+            "namespace": "jdthomas24",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Tests%20-%20Groovy%20RAW/Apple%20TV%20Integration%20BETA/AppleTVNowPlayingApp.groovy",
+            "required": true,
+            "oauth": false,
+            "description": "Finds and pairs Apple TVs and creates one Now Playing device per TV."
+        }
+    ],
+    "drivers": [
+        {
+            "id": "3052d621-dce1-4d44-99fb-a4a9663e5ab5",
+            "name": "Apple TV Now Playing (Beta)",
+            "namespace": "jdthomas24",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Tests%20-%20Groovy%20RAW/Apple%20TV%20Integration%20BETA/AppleTVNowPlayingDriver.groovy",
+            "required": true,
+            "description": "One device per Apple TV: current app, playback state, title and awake/asleep. Also runs its two hidden helper devices."
+        }
+    ]
+}

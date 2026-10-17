@@ -4,12 +4,22 @@ Lets Hubitat see what your Apple TV is doing: **which app** is playing (Netflix,
 
 This is an **experimental beta**. It's separate from Apple TV Integration and doesn't change it. There's no timeline, and it may or may not end up in the main integration.
 
-## Install (2 links)
+## Install
+
+**With Hubitat Package Manager (recommended, makes updates one click):**
+
+1. Open **HPM → Install → From a URL**
+2. Paste this link and follow the prompts:
+   `https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Tests%20-%20Groovy%20RAW/Apple%20TV%20Integration%20BETA/packagemanifest.json`
+
+It won't show up in HPM's search. That's on purpose, since it's a beta.
+
+**Or by hand (2 links):**
 
 1. **Apps Code → New App → Import**, paste this link, then **Save**:
-   `https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Tests%20-%20Groovy%20RAW/Apple%20TV%20Driver%20BETA%201.2.0/AppleTVNowPlayingApp.groovy`
+   `https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Tests%20-%20Groovy%20RAW/Apple%20TV%20Integration%20BETA/AppleTVNowPlayingApp.groovy`
 2. **Drivers Code → New Driver → Import**, paste this link, then **Save**:
-   `https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Tests%20-%20Groovy%20RAW/Apple%20TV%20Driver%20BETA%201.2.0/AppleTVNowPlayingDriver.groovy`
+   `https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Tests%20-%20Groovy%20RAW/Apple%20TV%20Integration%20BETA/AppleTVNowPlayingDriver.groovy`
 
 ## Set up
 
@@ -55,7 +65,9 @@ Good to know:
 
 ## Updating
 
-Open each file in Apps Code / Drivers Code, click **Import**, paste the same link, and **Save**.
+- **HPM:** **Update**, like any other package.
+- **By hand:** open each file in Apps Code / Drivers Code, click **Import**, paste the same link, and **Save**.
+- **Installed by hand and want HPM to take over?** Use **HPM → Match Up**. It links what you already have to the package.
 
 ## Removing
 
