@@ -1,6 +1,6 @@
 {
     "packageName": "Apple TV Now Playing (Beta)",
-    "releaseNotes": "1.2.0 beta 1: first beta. Shows which app is playing on each Apple TV and whether it's playing or paused, plus the title when the app shares it, and whether the TV is awake. Separate from Apple TV Integration and doesn't change it. After installing, open Apps > Add User App > Apple TV Now Playing (Beta) and pair each TV with the PIN shown on screen.",
+    "releaseNotes": "1.2.0.1: first beta. Shows which app is playing on each Apple TV and whether it's playing or paused, plus the title when the app shares it, and whether the TV is awake. Separate from Apple TV Integration and doesn't change it. After installing, open Apps > Add User App > Apple TV Now Playing (Beta) and pair each TV with the PIN shown on screen.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Tests%20-%20Groovy%20RAW/Apple%20TV%20Integration%20BETA",
     "communityLink": "https://community.hubitat.com/t/166801",
     "author": "jdthomas24",
