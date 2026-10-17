@@ -1,12 +1,12 @@
 {
   "packageName": "Apple TV Integration",
-  "releaseNotes": "v1.1.0: Playback and remote control. Play, Pause, Stop, Next, Previous and Skip, Siri Remote buttons (including a Home Screen button), volume up and down, and launching apps by name. New transportStatus (playing, paused, stopped) and nowPlaying (title, for apps that share it). The last launch from Hubitat and the installed apps list are shown in State Variables.",
+  "releaseNotes": "v1.1.1: Apple TVs are also found through their AirPlay announcement, so they still show up under Found on your network when the hub's Companion list misses them. No Done needed after updating.",
   "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Apple%20TV%20Integration",
   "communityLink": "https://community.hubitat.com/t/166801",
   "author": "jdthomas24",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "minimumHEVersion": "2.3.0",
-  "dateReleased": "2026-10-16",
+  "dateReleased": "2026-10-17",
   "category": "Integrations",
   "tags": "Apple TV, TV, video, local control",
   "apps": [

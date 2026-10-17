@@ -11,6 +11,9 @@
       filtered out). DNI = "ATV-" + rpMRtID (permanent), so renames, stale Bonjour entries and
       IP changes never create duplicates. Names come from AirPlay /info (binary plist), cached
       in state.atvNames. Refresh clears the cache and re-registers the Bonjour listener.
+     -Also listens on _raop._tcp (AirPlay audio, TXT am=AppleTV*), since the hub's Companion list can
+      go stale and drop Apple TVs while RAOP still has them. A RAOP-only Apple TV is keyed "IP"+hex and
+      paired like Add by IP (Companion port 49153). Listeners can't be restarted from an app.
      -The listener is left registered on uninstall, so a reinstall doesn't start from an empty list.
      -Add by IP: fallback when Bonjour is slow or blocked. /info confirms it's an Apple TV (model
       AppleTV*). Kept in state.manualTvs under key "IP"+hex IP until paired; on pairing the device's
@@ -39,12 +42,13 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Apple TV Integration"
-@Field static final String APP_VERSION = "1.1.0"
+@Field static final String APP_VERSION = "1.1.1"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/166801"
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 @Field static final String SERVICE = "_companion-link._tcp"
+@Field static final String RAOP = "_raop._tcp"
 @Field static final Map MODELS = ["AppleTV5,3": "Apple TV HD", "AppleTV6,2": "Apple TV 4K (1st gen)",
                                   "AppleTV11,1": "Apple TV 4K (2nd gen)", "AppleTV14,1": "Apple TV 4K (3rd gen)"]
 
@@ -91,12 +95,18 @@ def initialize() {
 def systemStartHandler(evt) { startListener(true) }
 
 private void startListener(boolean force) {
-    if (!force && state.listening) return
+    if (!force && state.listening && state.listeningRaop) return
     try {
         registerMDNSListener(SERVICE)
         state.listening = true
     } catch (e) {
         logErr "could not start Bonjour discovery: ${e.message}"
+    }
+    try {
+        registerMDNSListener(RAOP)
+        state.listeningRaop = true
+    } catch (e) {
+        logDbg "could not start AirPlay discovery: ${e.message}"
     }
 }
 
@@ -197,12 +207,38 @@ private List discovered() {
     }
     List txtIps = byKey.values().collectMany { it.addresses*.ip }
     List recs = (byKey.values() as List) + probed.findAll { !(it.addresses[0].ip in txtIps) }.unique { it.key }
-    String count = "${raw.size()}/${recs.size()}"
+    List raop = raopRecords(detail == true).findAll { r -> !recs.any { it.addresses.any { a -> a.ip == r.addresses[0].ip } } }
+    recs += raop
+    String count = "${raw.size()}/${recs.size()}/${raop.size()}"
     if (detail || state.lastBonjourCount != count) {
         state.lastBonjourCount = count
-        logDbg "Bonjour: ${raw.size()} Companion entr${raw.size() == 1 ? 'y' : 'ies'}, ${countText(recs.size(), 'Apple TV')}"
+        logDbg "Bonjour: ${raw.size()} Companion entr${raw.size() == 1 ? 'y' : 'ies'}, ${countText(recs.size(), 'Apple TV')}" +
+            (raop ? " (${raop.size()} found only through AirPlay)" : "")
     }
     return recs
+}
+
+// Apple TVs from _raop._tcp (model in TXT "am"), keyed by IP like Add by IP.
+private List raopRecords(boolean detail) {
+    List raw
+    try {
+        def e = getMDNSEntries(RAOP)
+        raw = e == null ? [] : (e instanceof Map ? [e] : e as List)
+    } catch (ex) {
+        logDbg "AirPlay lookup failed: ${ex.message}"
+        return []
+    }
+    List out = []
+    raw.each { e ->
+        String md = e?.am?.toString()
+        String ip = e?.ip4Addresses?.toString()?.split(",")?.collect { it.trim() }?.find { it }
+        boolean atv = ip && md?.startsWith("AppleTV")
+        if (detail) logDbg "AirPlay entry: ${e?.server ?: '?'} ${ip ?: ''} model=${md ?: 'none'} -> ${atv ? 'Apple TV' : 'skipped'}"
+        if (atv && !out.any { it.addresses[0].ip == ip }) {
+            out << [key: ipKey(ip), model: md, host: hostName(e?.server?.toString()), addresses: [[ip: ip, port: 49153]]]
+        }
+    }
+    return out
 }
 
 private String ipKey(String ip) {
@@ -496,7 +532,7 @@ def appButtonHandler(String btn) {
         state.atvNames = [:]
         state.remove("ipModels")
         state.logBonjourDetail = true
-        try { registerMDNSListener(SERVICE) } catch (e) { logDbg "re-registering Bonjour: ${e.message}" }
+        try { registerMDNSListener(SERVICE); registerMDNSListener(RAOP) } catch (e) { logDbg "re-registering Bonjour: ${e.message}" }
         pauseExecution(1500)   // give announcements a moment before the page redraws
         return
     }
