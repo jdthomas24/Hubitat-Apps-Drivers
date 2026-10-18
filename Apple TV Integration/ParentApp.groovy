@@ -42,7 +42,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Apple TV Integration"
-@Field static final String APP_VERSION = "1.1.1"
+@Field static final String APP_VERSION = "1.1.2"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/166801"
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
@@ -633,7 +633,8 @@ private String exampleBoxHtml(String content) {
 private List tipsTopics() {
     [
         [id: "start", label: "Before you begin", title: "Before you begin", group: "Getting started", icon: "pi-sitemap",
-            body: "<p>This integration controls the Apple TV itself: on (wake), off (sleep) and live power state. " +
+            body: "<p>This integration controls the Apple TV itself: on (wake), off (sleep), live power state, playback, " +
+                "Siri Remote buttons and app launching. " +
                 "HomePods and announcements stay with Hubitat's built-in AirPlay integration.</p>" +
                 "<p>Setup moves between two places, so each step is tagged:</p>" +
                 "<p>${HUBITAT_PILL}<br>This Hubitat app or a device page.</p>" +
@@ -669,6 +670,16 @@ private List tipsTopics() {
                 "<tr style='border-top:1px solid #e0e0e0'><td style='padding:8px'><b>refresh</b></td><td style='padding:8px'>Re-reads the power state</td></tr>" +
                 "</table>" +
                 "<p>Power changes made with the Siri Remote show up in Hubitat right away, so rules can react when someone turns the Apple TV on or off.</p>"],
+        [id: "remote", label: "Remote buttons", title: "Home Screen vs TV button", group: "Using it", icon: "pi-mobile",
+            body: "<p><b>homeScreen</b> always takes the Apple TV to the Home Screen, no matter what's on screen. " +
+                "Use it in rules when you just want to go home.</p>" +
+                "<p><b>tvButton</b> presses the TV button on the Siri Remote (the one with the TV icon). One press does whatever your " +
+                "Apple TV's TV Button setting says, the Home Screen or the Apple TV app (${APPLETV_PILL} <b>Settings &rarr; Remotes and Devices " +
+                "&rarr; TV Button</b>). Two presses (<b>times</b> 2) open the App Switcher.</p>" +
+                "<p><b>closeApp</b> closes the app on screen and returns to the Home Screen, the same as opening the App Switcher " +
+                "and swiping the app away. On the Home Screen it closes the most recently used app.</p>" +
+                exampleBoxHtml("<b>Not sure which to use?</b> For rules, <b>homeScreen</b> is the safe choice."),
+            warning: "home is a shortcut for homeScreen, and tv for tvButton, if you type button names in a rule."],
 
         [id: "notfound", label: "Apple TV not found", title: "Apple TV not found", group: "Troubleshooting", icon: "pi-search",
             body: "<p>Apple TVs announce themselves over Bonjour, but a sleeping Apple TV can take a while. " +
@@ -696,7 +707,8 @@ private List tipsTopics() {
                 "<b>Settings &rarr; Remotes and Devices &rarr; Remote App and Devices</b>. Removing it there unpairs the hub.</p>" +
                 "<p><b>Why don't my iPad or Mac show up?</b><br>They announce the same service, but only Apple TVs are listed.</p>" +
                 "<p><b>What about HomePods?</b><br>Keep them on Hubitat's AirPlay integration for audio and announcements.</p>" +
-                "<p><b>Remote buttons, play/pause, volume or app launching?</b><br>Not in v1.0.0. They're next on the list.</p>"],
+                "<p><b>Which app is on screen?</b><br>The Apple TV doesn't report it over this connection. " +
+                "<b>Last Launch From Hubitat</b> in State Variables shows the last app opened from Hubitat.</p>"],
 
         [id: "removal", label: "Removing Apple TVs", title: "Remove Apple TVs safely", group: "Devices", icon: "pi-trash",
             body: "<p>Use <b>Remove</b> on the main page, not Hubitat's Devices page. That also clears the saved pairing.</p>" +
