@@ -12,6 +12,8 @@
      -Session: pair-verify, encrypted RTSP control channel, remote-control SETUP, event channel, RECORD,
       data channel, then Media Remote (MRP). Keepalive POST /feedback, default 120s (2-120s tested).
       No reply in 20s, or any channel closing, reconnects with backoff (5s to 5 min, offline after 4).
+     -Saving new driver code clears memory but leaves sockets open: healthCheck (every 5 min, keepalive, or any
+      data arriving for a forgotten session) reconnects so the device never looks connected while deaf.
      -The session survives Apple TV sleep. tvState from DEVICE_INFO(_UPDATE) logicalDeviceCount: 0 = asleep
       (applied after 4s, wake flickers 1-0-1), else awake.
      -Now playing tracked per app like pyatv: clients by bundle ID, players by ID, active client from
@@ -23,7 +25,7 @@
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { "1.2.0.3" }
+def version() { "1.2.0.4" }
 
 metadata {
     definition(name: "Apple TV Now Playing (Beta)", namespace: "jdthomas24", author: "jdthomas24",
@@ -249,6 +251,8 @@ def connect() {
     Map m = mem()
     if (m.disabled || m.mode == "pair" || m.step in SESSION_STEPS) return
     if (!creds()) { sendIfChanged("connection", "not paired"); return }
+    state.version = version()
+    runEvery5Minutes("healthCheck")
     if (!state.ip) refreshAddress()
     if (!state.ip) { scheduleRetry("no address yet"); return }
     if (!ensureHelpers()) { scheduleRetry("couldn't create the helper devices"); return }
@@ -266,6 +270,23 @@ def connect() {
     post("/pair-verify", tlv8Write([6: [0x01] as byte[], 3: ss.xPub]))
     runIn(30, "connectTimeout")
 }
+
+// Every 5 min, and whenever data arrives for a session this device no longer knows about. Saving new driver
+// code clears its memory while the sockets stay open, so the device would look connected but hear nothing.
+def healthCheck() {
+    if (role() != "main") return
+    Map m = mem()
+    if (m.disabled || m.step in PAIR_STEPS || m.step in SESSION_STEPS) return
+    if (!(device.currentValue("connection") in ["connected", "connecting"])) return   // retries already scheduled
+    if (m.healAt && now() - (m.healAt as long) < 10000) return
+    m.healAt = now()
+    logN("session was reset (driver updated or hub restarted), reconnecting")
+    m.failCount = 0
+    teardown()
+    runIn(1, "connect")
+}
+
+void channelOrphan() { if (!(mem().step in SESSION_STEPS)) runIn(1, "healthCheck") }
 
 def connectTimeout() {
     Map m = mem()
@@ -407,7 +428,7 @@ def socketStatus(String s) {
 def parse(String hex) {
     if (role() != "main") { chParse(hex); return }
     Map m = mem()
-    if (!m.step) return
+    if (!m.step) { if (m.mode != "pair") runIn(1, "healthCheck"); return }
     m.rx = (m.rx ?: "") + hex
     try {
         if (m.enc) {
@@ -588,7 +609,7 @@ void channelMessage(String kind, String summary) { logF("${kind} channel: ${summ
 
 def feedback() {
     Map m = mem()
-    if (m.step != "READY") return
+    if (m.step != "READY") { if (!m.step) healthCheck(); return }
     if (m.fbAt) {
         if (now() - (m.fbAt as long) >= 20000) { lost("no reply to keepalive in 20s"); return }
         runIn(kaSec(), "feedback")
@@ -901,7 +922,7 @@ private void chSocketStatus(String s) {
 
 private void chParse(String hex) {
     Map m = mem()
-    if (!m.open) return
+    if (!m.open) { parent?.channelOrphan(); return }
     m.rx = (m.rx ?: "") + hex
     try {
         List d = hapDecrypt(m.ss as Map, fromHex(m.rx as String))
