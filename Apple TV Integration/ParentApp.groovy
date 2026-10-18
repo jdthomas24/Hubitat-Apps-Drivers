@@ -42,7 +42,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Apple TV Integration"
-@Field static final String APP_VERSION = "1.1.2"
+@Field static final String APP_VERSION = "1.1.3"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/166801"
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
@@ -676,8 +676,6 @@ private List tipsTopics() {
                 "<p><b>tvButton</b> presses the TV button on the Siri Remote (the one with the TV icon). One press does whatever your " +
                 "Apple TV's TV Button setting says, the Home Screen or the Apple TV app (${APPLETV_PILL} <b>Settings &rarr; Remotes and Devices " +
                 "&rarr; TV Button</b>). Two presses (<b>times</b> 2) open the App Switcher.</p>" +
-                "<p><b>closeApp</b> closes the app on screen and returns to the Home Screen, the same as opening the App Switcher " +
-                "and swiping the app away. On the Home Screen it closes the most recently used app.</p>" +
                 exampleBoxHtml("<b>Not sure which to use?</b> For rules, <b>homeScreen</b> is the safe choice."),
             warning: "home is a shortcut for homeScreen, and tv for tvButton, if you type button names in a rule."],
 

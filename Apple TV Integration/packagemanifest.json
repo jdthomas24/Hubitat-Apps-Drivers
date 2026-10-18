@@ -1,10 +1,10 @@
 {
   "packageName": "Apple TV Integration",
-  "releaseNotes": "v1.1.2: new tvButton remote button (the Siri Remote's TV button; two presses open the App Switcher) and a closeApp command that closes the app on screen and returns to the Home Screen. Typing tv or tvbutton as a button name now presses the TV button (it used to go to the Home Screen; use homeScreen for that). New Tips topic: Home Screen vs TV button. No Done needed after updating.",
+  "releaseNotes": "v1.1.3: new tvButton remote button, the Siri Remote's TV button. One press follows the Apple TV's TV Button setting, two presses (times 2) open the App Switcher. Typing tv or tvbutton as a button name in a rule now presses the TV button (it used to go to the Home Screen; use homeScreen for that). New Tips topic: Home Screen vs TV button. No Done needed after updating.",
   "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Apple%20TV%20Integration",
   "communityLink": "https://community.hubitat.com/t/166801",
   "author": "jdthomas24",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-10-18",
   "category": "Integrations",
@@ -27,7 +27,7 @@
       "namespace": "jdthomas24",
       "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/AppleTVDriver.groovy",
       "required": true,
-      "description": "One per Apple TV. On/off with live power state, playback controls, Siri Remote buttons (including the TV button and closeApp), volume, app launching and now playing, over an encrypted local connection."
+      "description": "One per Apple TV. On/off with live power state, playback controls, Siri Remote buttons (including the TV button), volume, app launching and now playing, over an encrypted local connection."
     }
   ]
 }
