@@ -496,7 +496,7 @@ def mainPage() {
         section {
             paragraph rawHtml: true, integrationOverviewHtml(sourceCount, totalDeviceCount)
         }
-        section(sectionClass: "reolink-main-sources") {
+        section(sectionClass: "app-ui-links reolink-main-sources") {
             paragraph rawHtml: true, mainPageColumnHeader("Connected Sources")
             if (sources) {
                 sources.each { src ->
@@ -519,14 +519,14 @@ def mainPage() {
                 description: "Standalone camera, NVR, or Home Hub",
                 page: "addSourcePage", width: 12, style: "margin:8px;"
         }
-        section(sectionClass: "reolink-main-settings") {
+        section(sectionClass: "app-ui-links reolink-main-settings") {
             paragraph rawHtml: true, mainPageColumnHeader("Quick Settings")
             input "logLevel", "enum", title: "Log level", options: LOG_LEVELS,
                 defaultValue: "Errors Only", submitOnChange: true, width: 12,
                 style: "margin-left: 0.5em; margin-right: 0.5em; margin-top: 0; padding-right:0;"
             paragraph rawHtml: true, loggingDetailsPopupHtml()
         }
-        section(title: "<b>Help & Support</b>", sectionClass: "reolink-main-support") {
+        section(title: "<b>Help & Support</b>", sectionClass: "app-ui-links reolink-main-support") {
             href name: "tips", title: "<i class='pi pi-info-circle' aria-hidden='true'></i>" +
                     "Tips & Troubleshooting", page: "tipsPage",
                 description: "Known quirks and setup guidance", width: 4, style: "margin:8px;"
@@ -551,8 +551,8 @@ private String integrationOverviewHtml(int sourceCount, int deviceCount) {
     String summary = configured ?
         "${countText(sourceCount, 'source')} configured &middot; ${countText(deviceCount, 'device')} created" :
         "Add a source to begin discovering Reolink devices"
-    String tone = configured ? "bg-green-50 border-green-200" : "p-message p-message-warn reolink-message"
-    String iconColor = configured ? "text-green-700" : "text-yellow-700"
+    String tone = configured ? "p-message p-message-success reolink-message" : "p-message p-message-warn reolink-message"
+    String iconColor = configured ? "hub-text-success" : "hub-text-warning"
     String icon = configured ? "pi pi-check-circle" : "fa-solid fa-exclamation-triangle"
 
     return """
@@ -561,7 +561,7 @@ private String integrationOverviewHtml(int sourceCount, int deviceCount) {
   ${tipsCardCss()}
   .reolink-main-sources { float: left; width: calc(62% - 8px); }
   .reolink-main-settings {
-    float: right; width: 38%; border-left: 1px solid #e0e0e0;
+    float: right; width: 38%; border-left: 1px solid var(--surface-border);
     padding-left: 8px; box-sizing: border-box;
   }
   .reolink-main-sources > .mdl-grid, .reolink-main-settings > .mdl-grid { padding: 4px 0 !important; }
@@ -581,7 +581,7 @@ private String integrationOverviewHtml(int sourceCount, int deviceCount) {
       <div class='text-color-secondary mt-1' style='font-size:14px;'>${summary}</div>
     </div>
   </div>
-  <a href='/logs?tab=past&amp;appId=${app.id}' target='_blank' class='text-blue-700 font-semibold white-space-nowrap no-underline'>
+  <a href='/logs?tab=past&amp;appId=${app.id}' target='_blank' class='hub-text-link font-semibold white-space-nowrap no-underline'>
     View logs <i class='fa-regular fa-external-link'></i>
   </a>
 </div>
@@ -593,11 +593,11 @@ private String tipsCardCss() {
     """
   button.hrefElem[name^='_action_href_tips'] {
     position: relative;
-    background: #fff;
-    border: 1px solid #e0e0e0;
+    background: var(--surface-card);
+    border: 1px solid var(--surface-border);
     border-radius: 4px;
     box-shadow: none;
-    color: #333;
+    color: var(--text-color);
     height: 56px;
     font-family: inherit;
     font-size: 16px;
@@ -605,19 +605,19 @@ private String tipsCardCss() {
     line-height: 1.4;
     padding: 8px 28px 8px 46px;
   }
-  button.hrefElem[name^='_action_href_tips'] > span:first-child { color: #1565c0; font-weight: 600; font-size: 16px !important; }
+  button.hrefElem[name^='_action_href_tips'] > span:first-child { color: var(--hubitat-link-color); font-weight: 600; font-size: 16px !important; }
   button.hrefElem[name^='_action_href_tips'] > span.state-incomplete-text {
-    color: #777; font-size: 14px; font-weight: 500; line-height: 1.4;
+    color: var(--text-color-secondary); font-size: 14px; font-weight: 500; line-height: 1.4;
   }
   button.hrefElem[name^='_action_href_tips'] i.pi {
     position: absolute;
     left: 14px;
     top: 50%;
     transform: translateY(-50%);
-    color: #1565c0;
+    color: var(--hubitat-link-color);
     font-size: 20px;
   }
-  button.hrefElem[name^='_action_href_tips']::before { color: #1565c0; }
+  button.hrefElem[name^='_action_href_tips']::before { color: var(--hubitat-link-color); }
 """
 }
 
@@ -628,7 +628,8 @@ private String appPageSpacingCss() {
   .reolink-status-heading { font-size: 16px; }
   .p-message.reolink-message { padding: 0.75rem !important; margin: 0; border: 0 !important; }
   .reolink-message .text-color-secondary,
-  .reolink-message .text-blue-700, .reolink-message .text-yellow-700 { color: inherit !important; }
+  .reolink-message .hub-text-link, .reolink-message .hub-text-warning,
+  .reolink-message .hub-text-success, .reolink-message .hub-text-danger { color: inherit !important; }
   div.panel-body {
     padding: 0 !important;
     margin-left: -0.5em;
@@ -659,7 +660,7 @@ private String tileSecondaryTextCss() {
 
 private String emptySourcesHtml() {
     """
-<div class='border-1 border-gray-200 border-round p-3 text-color-secondary'>
+<div class='border-1 surface-border border-round p-3 text-color-secondary'>
   <div class='font-semibold text-color mb-1'>No sources configured</div>
   <div class='text-sm'>A source is one camera, one NVR, or one Home Hub with its own IP/login.</div>
 </div>
@@ -677,13 +678,13 @@ private String sourceSummaryLine(src, int deviceCount) {
     String colorClass
     if (unreachable) {
         status = "Unreachable"
-        colorClass = "text-red-700"
+        colorClass = "hub-text-danger"
     } else if (connectionMode == "connected") {
         status = "Online"
-        colorClass = "text-green-700"
+        colorClass = "hub-text-success"
     } else if (pollingOnly) {
         status = "Polling"
-        colorClass = "text-blue-700"
+        colorClass = "hub-text-link"
     } else {
         status = "Configured"
         colorClass = "text-color-secondary"
@@ -713,25 +714,25 @@ private String loggingDetailsPopupHtml() {
         .replace("<", "&lt;").replace(">", "&gt;")
     return """
 <a href='#' onclick='window.alertHubitat(${jsDetails}); return false;'
-   class='flex align-items-center justify-content-between gap-3 bg-gray-50 border-1 border-gray-200 border-round px-3 py-2 h-full text-color no-underline'>
+   class='flex align-items-center justify-content-between gap-3 surface-ground border-1 surface-border border-round px-3 py-2 h-full text-color no-underline'>
   <span>
     <span class='block font-semibold'>Logging details</span>
     <span class='block text-color-secondary mt-1' style='font-size:14px;'>What each level records</span>
   </span>
-  <i class='pi pi-chevron-right text-blue-700'></i>
+  <i class='pi pi-chevron-right hub-text-link'></i>
 </a>
 """
 }
 
 private String loggingLevelDetailHtml(String name, String description, String currentLevel) {
     String current = name == currentLevel ?
-        "<span class='text-green-700 text-xs font-bold'>Current</span>" : ""
-    String tone = name == "Errors Only" ? "bg-red-50 text-red-700" :
-        name == "Full" ? "bg-indigo-50 text-indigo-700" : "bg-blue-50 text-blue-700"
+        "<span class='hub-text-success text-xs font-bold'>Current</span>" : ""
+    String tone = name == "Errors Only" ? "p-tag p-tag-danger" :
+        name == "Full" ? "p-tag p-tag-warning" : "p-tag p-tag-info"
     String warning = name == "Full" ? warningMessageHtml(
         "<b>Full</b> is a temporary setting. It automatically reverts to <b>Errors Only</b> after 60 minutes.", "mt-3 text-base") : ""
     return """
-<div class='border-1 border-gray-200 border-round px-3 py-2 mb-2'>
+<div class='border-1 surface-border border-round px-3 py-2 mb-2'>
   <div class='flex align-items-center justify-content-between gap-3 mb-1'>
     <span class='${tone} border-round-xl px-2 py-1 text-xs font-bold'>${name}${name == "Errors Only" ? " (default)" : ""}</span>
     ${current}
@@ -745,10 +746,10 @@ private String loggingLevelDetailHtml(String name, String description, String cu
 private String supportLinkHtml(String url, String iconClass, String title, String subtitle) {
     return """
 <a href='${url}' target='_blank' rel='noopener noreferrer'
-   class='flex align-items-center gap-3 border-1 border-gray-200 border-round px-3 py-2 text-color no-underline'>
-  <i class='${iconClass} text-blue-700 text-xl flex-shrink-0'></i>
+   class='flex align-items-center gap-3 border-1 surface-border border-round px-3 py-2 text-color no-underline'>
+  <i class='${iconClass} hub-text-link text-xl flex-shrink-0'></i>
   <span class='min-w-0'>
-    <span class='block text-blue-700 font-semibold'>${title}</span>
+    <span class='block hub-text-link font-semibold'>${title}</span>
     <span class='block text-color-secondary mt-1' style='font-size:14px;'>${subtitle}</span>
   </span>
 </a>
@@ -760,20 +761,20 @@ private String countText(int count, String singular) {
 }
 
 private String pillHeader(String text) {
-    "<div class='inline-block bg-blue-50 text-blue-700 font-bold text-xs uppercase px-3 py-1 " +
+    "<div class='inline-block p-tag p-tag-info font-bold text-xs uppercase px-3 py-1 " +
     "border-round-xl mb-2'>${text.toUpperCase()}</div>"
 }
 
 /**
  * Small colored pill for a log level name, distinct from pillHeader's section-title style so
- * the two don't get visually confused. Color signals severity/verbosity at a glance: red for
- * the errors-only default, grey for the middle tier, dark blue for the noisiest/temporary one.
+ * the two do not get visually confused. Semantic styles distinguish errors, normal logging,
+ * and the temporary full-logging warning in either hub theme.
  */
 private String logLevelPill(String level) {
     def tones = [
-        "Errors Only": "bg-red-50 text-red-700",
-        "Normal":      "bg-gray-100 text-gray-700",
-        "Full":        "bg-indigo-50 text-indigo-700"
+        "Errors Only": "p-tag p-tag-danger",
+        "Normal":      "surface-ground text-color-secondary",
+        "Full":        "p-tag p-tag-warning"
     ]
     def tone = tones[level] ?: tones["Normal"]
     "<span class='inline-block ${tone} font-bold text-xs px-2 py-1 border-round-xl'>${level}</span>"
@@ -785,12 +786,12 @@ def tipsPage(params = null) {
     int topicIndex = topics.indexOf(topic)
     def nextTopic = topicIndex + 1 < topics.size() ? topics[topicIndex + 1] : null
     dynamicPage(name: "tipsPage", title: "Tips & Troubleshooting") {
-        section(sectionClass: "reolink-tips-index") {
+        section(sectionClass: "app-ui-links reolink-tips-index app-ui-navigation") {
             paragraph rawHtml: true, tipsStylesHtml()
             topics.groupBy { it.group }.each { group, entries ->
                 paragraph rawHtml: true, "<div class='reolink-status-heading font-semibold mt-2'>${group}</div>"
                 entries.each { entry ->
-                    String selected = entry.id == topic.id ? "reolink-topic-current" : ""
+                    String selected = entry.id == topic.id ? "app-ui-navigation-selected" : ""
                     href name: "tip_${entry.id}",
                         title: "<span class='${selected}'><i class='pi ${entry.icon} mr-3' aria-hidden='true'></i>${entry.label}</span>",
                         description: "", page: "tipsPage", params: [topic: entry.id],
@@ -798,14 +799,14 @@ def tipsPage(params = null) {
                 }
             }
         }
-        section(sectionClass: "reolink-tips-article") {
+        section(sectionClass: "app-ui-links reolink-tips-article") {
             paragraph rawHtml: true, tipsArticleHtml(topic)
             if (topic.id == "network") {
                 def sources = topics.find { it.id == "sources" }
                 paragraph rawHtml: true, tipsArticleHtml(sources)
             }
             if (nextTopic) {
-                href name: "nextTip", title: "<span class='text-blue-700'>${nextTopic.label}</span>",
+                href name: "nextTip", title: "<span class='hub-text-link'>${nextTopic.label}</span>",
                     description: "Next topic", page: "tipsPage", params: [topic: nextTopic.id],
                     width: 12, style: "margin:8px;"
             }
@@ -818,24 +819,16 @@ private String tipsStylesHtml() {
 <style>
   ${appPageSpacingCss()}
   .reolink-tips-index { float: left; width: calc(27% - 8px); box-sizing: border-box; }
-  .reolink-tips-article { float: right; width: 73%; border-left: 1px solid #e0e0e0; padding-left: 8px; box-sizing: border-box; }
+  .reolink-tips-article { float: right; width: 73%; border-left: 1px solid var(--surface-border); padding-left: 8px; box-sizing: border-box; }
   .reolink-tips-index > .mdl-grid, .reolink-tips-article > .mdl-grid { padding: 4px 0 !important; }
   .reolink-tips-index .mdl-cell:has(> style) { display: none; }
-  .reolink-tips-index button.hrefElem {
-    background: transparent; box-shadow: none; border: 0; border-left: 3px solid transparent;
-    border-radius: 0; padding: 9px 10px; font-family: inherit; font-size: 16px; color: #1565c0;
-  }
-  .reolink-tips-index button.hrefElem::before { display: none; }
-  .reolink-tips-index button.hrefElem:has(.reolink-topic-current) { background: #eaf2fc; border-left-color: #1565c0; font-weight: 600; }
-  .reolink-tips-index button.hrefElem:hover { background: #f3f6fa; }
-  .reolink-tips-index button.hrefElem:focus-visible { outline: 2px solid #1565c0; outline-offset: 2px; }
-  .reolink-tip-card { border: 1px solid #dfe3e8; border-radius: 4px; overflow: hidden; }
-  .reolink-tip-card-header { padding: 16px; background: #f5f7fa; border-bottom: 1px solid #e4e7ec; }
+  .reolink-tip-card { border: 1px solid var(--surface-border); border-radius: 4px; overflow: hidden; }
+  .reolink-tip-card-header { padding: 16px; background: var(--surface-ground); border-bottom: 1px solid var(--surface-border); }
   .reolink-tip-copy { padding: 16px; line-height: 1.55; overflow-wrap: anywhere; }
   .reolink-tip-copy p { margin: 0 0 16px; }
   .reolink-tip-copy p:last-child { margin-bottom: 0; }
-  .reolink-tips-article button.hrefElem { background: #fff; box-shadow: none; border: 1px solid #dfe3e8; border-radius: 4px; font-family: inherit; }
-  .reolink-tips-article button.hrefElem::before { color: #1565c0; }
+  .reolink-tips-article button.hrefElem { background: var(--surface-card); box-shadow: none; border: 1px solid var(--surface-border); border-radius: 4px; font-family: inherit; }
+  .reolink-tips-article button.hrefElem::before { color: var(--hubitat-link-color); }
   .form:has(> .reolink-tips-index) + fieldset,
   #formApp:has(.reolink-tips-index) #fieldsetAppButtons { clear: both; }
   @media (max-width: 1000px) {
@@ -848,9 +841,9 @@ private String tipsStylesHtml() {
 private String tipsArticleHtml(Map topic) {
     String extra = ""
     if (topic.id == "network") {
-        extra = "<div class='border-1 border-gray-200 border-round p-3 mb-3'>" +
+        extra = "<div class='border-1 surface-border border-round p-3 mb-3'>" +
             ["HTTP", "HTTPS", "ONVIF"].collect { service ->
-                "<div class='flex align-items-center gap-3 py-2'><i class='pi pi-check-circle text-blue-700 text-xl' aria-hidden='true'></i>" +
+                "<div class='flex align-items-center gap-3 py-2'><i class='pi pi-check-circle hub-text-link text-xl' aria-hidden='true'></i>" +
                 "<div><div class='font-semibold'>${service}</div><div class='text-sm text-color-secondary'>Enable in the camera settings.</div></div></div>"
             }.join("") + "</div>" +
             warningMessageHtml("<b>Network services are often disabled by default.</b><br>Check these before troubleshooting the connection.")
@@ -858,7 +851,7 @@ private String tipsArticleHtml(Map topic) {
     """
 <article class='reolink-tip-card'>
   <div class='reolink-tip-card-header flex align-items-center gap-3'>
-    <i class='pi ${topic.icon} text-blue-700 text-xl' aria-hidden='true'></i>
+    <i class='pi ${topic.icon} hub-text-link text-xl' aria-hidden='true'></i>
     <h4 class='reolink-status-heading font-semibold m-0'>${topic.title}</h4>
   </div>
   <div class='reolink-tip-copy'>${topic.body}${extra}</div>
@@ -1121,10 +1114,10 @@ def discoverSourcesPage() {
                 def existing = discoveredSourceMatch(candidate)
                 String title = "Reolink device (${discoveryEscapeHtml(candidate.host)})"
                 if (existing) {
-                    paragraph rawHtml: true, "<div class='border-1 border-gray-200 border-round p-3'>" +
+                    paragraph rawHtml: true, "<div class='border-1 surface-border border-round p-3'>" +
                         "<div class='font-semibold'>${title}</div>" +
                         "<div class='text-sm text-color-secondary mt-1'>ID: ${discoveryEscapeHtml(candidate.uid)}</div>" +
-                        "<div class='text-green-700 mt-2'>Already added: ${discoveryEscapeHtml(existing.label)}</div></div>"
+                        "<div class='hub-text-success mt-2'>Already added: ${discoveryEscapeHtml(existing.label)}</div></div>"
                 } else {
                     href name: "discoveredSource_${index}",
                         title: "<i class='fa-regular fa-plus mr-2' aria-hidden='true'></i>${title}",
@@ -1134,12 +1127,12 @@ def discoverSourcesPage() {
             }
             paragraph "Select a new source to review its details and enter credentials. Devices must be on the same local network; sleeping devices may not respond."
         }
-        section(sectionClass: "reolink-recovery-actions") {
+        section(sectionClass: "app-ui-links reolink-recovery-actions") {
             input "rescanSources", "button", title: "<i class='fa-solid fa-rotate-right mr-2' aria-hidden='true'></i>Search again",
-                width: 4, submitOnChange: true, disabled: busy, inputClass: "p-button"
+                width: 4, submitOnChange: true, disabled: busy, inputClass: "app-ui-button"
             input "cancelSourceDiscovery", "button",
                 title: "<i class='fa-regular fa-xmark mr-2' aria-hidden='true'></i>Cancel",
-                width: 4, submitOnChange: true, inputClass: "p-button"
+                width: 4, submitOnChange: true, inputClass: "app-ui-button"
         }
     }
 }
@@ -1240,7 +1233,7 @@ def addSourcePage(params) {
     if (action == "add") return mainPage()
     if (params?.discoveryNonce && !prepareDiscoveredSource(params)) return discoverSourcesPage()
     dynamicPage(name: "addSourcePage", title: "Add a Reolink Source") {
-        section(sectionClass: "reolink-add-form") {
+        section(sectionClass: "app-ui-links reolink-add-form") {
             paragraph rawHtml: true, recoveryStylesHtml() + addSourceStylesHtml()
             paragraph rawHtml: true, "<div class='reolink-status-heading font-semibold'>Source details</div>" +
                 "<div class='text-sm text-color-secondary mt-1'>Enter connection details for your Reolink camera, NVR, or Home Hub.</div>"
@@ -1253,7 +1246,7 @@ def addSourcePage(params) {
                 "<div class='text-sm text-color-secondary mt-1'>Multiple channels from one source.</div>",
                 defaultValue: false, styleClass: "reolink-add-source-type"
         }
-        section(sectionClass: "reolink-add-guidance") {
+        section(sectionClass: "app-ui-links reolink-add-guidance") {
             paragraph rawHtml: true, "<div class='reolink-status-heading font-semibold'>Before you connect</div>" +
                 "<div class='text-sm text-color-secondary mt-1'>Check the source's server settings in Reolink.</div>"
             paragraph rawHtml: true, warningMessageHtml("<div class='font-semibold'>Enable HTTPS first</div>" +
@@ -1263,26 +1256,26 @@ def addSourcePage(params) {
                 "<div class='font-semibold'><i class='pi pi-info-circle mr-2' aria-hidden='true'></i>Real-time events</div>" +
                 "<div class='text-sm mt-2'>Allow Hubitat to reach TCP port 9000 on the source over your local network. " +
                 "If real-time events are unavailable, the app falls back to polling.</div></div>"
-            paragraph rawHtml: true, "<div class='bg-gray-50 border-round p-3'><div class='font-semibold'>Optional services</div>" +
+            paragraph rawHtml: true, "<div class='surface-ground border-round p-3'><div class='font-semibold'>Optional services</div>" +
                 "<div class='text-sm text-color-secondary mt-2'>RTSP is required for video streaming. HTTP, RTMP, and ONVIF are optional.</div></div>"
             href name: "tips", title: "<i class='pi pi-info-circle' aria-hidden='true'></i>Tips & Troubleshooting",
                 description: "Known quirks and setup guidance", page: "tipsPage", width: 12, style: "margin:8px;"
-            paragraph rawHtml: true, "<div class='bg-gray-50 border-round p-3'><div class='font-semibold'>Compatibility note</div>" +
+            paragraph rawHtml: true, "<div class='surface-ground border-round p-3'><div class='font-semibold'>Compatibility note</div>" +
                 "<div class='text-sm text-color-secondary mt-2'>Some battery cameras, doorbells, and E1 models have additional " +
                 "connection limitations. See Tips &amp; Troubleshooting for details.</div></div>"
         }
-        section(sectionClass: "reolink-add-footer") {
+        section(sectionClass: "app-ui-links reolink-add-footer") {
             paragraph rawHtml: true, "<div class='text-sm text-color-secondary'>Fill in Label, IP address, Username, and Password, then select Add source. " +
                 "Leaving any of those blank returns to Sources without creating anything.</div>"
         }
-        section(sectionClass: "reolink-recovery-actions reolink-add-actions") {
+        section(sectionClass: "app-ui-links reolink-recovery-actions reolink-add-actions") {
             input "confirmAddSource", "button",
                 title: "<i class='fa-solid fa-plus mr-2' aria-hidden='true'></i>Add source",
                 width: 4, submitOnChange: true, styleClass: "reolink-recovery-primary",
-                inputClass: "p-button bg-hubitat-primary-green text-white"
+                inputClass: "app-ui-button app-ui-button-primary"
             input "cancelAddSource", "button",
                 title: "<i class='fa-regular fa-xmark mr-2' aria-hidden='true'></i>Cancel",
-                width: 4, submitOnChange: true, inputClass: "p-button"
+                width: 4, submitOnChange: true, inputClass: "app-ui-button"
         }
     }
 }
@@ -1293,13 +1286,13 @@ private String addSourceStylesHtml() {
   ${appPageSpacingCss()}
   ${tipsCardCss()}
   .reolink-add-form { float: left; width: calc(62% - 8px); }
-  .reolink-add-guidance { float: right; width: 38%; padding-left: 8px; border-left: 1px solid #e0e0e0; box-sizing: border-box; }
+  .reolink-add-guidance { float: right; width: 38%; padding-left: 8px; border-left: 1px solid var(--surface-border); box-sizing: border-box; }
   .reolink-add-form > .mdl-grid, .reolink-add-guidance > .mdl-grid { padding: 4px 0 !important; }
   .reolink-add-form .mdl-cell:has(> style) { display: none; }
-  .reolink-add-source-type { background: #f5f7fa; border-radius: 4px; padding: 12px; box-sizing: border-box; }
+  .reolink-add-source-type { background: var(--surface-ground); border-radius: 4px; padding: 12px; box-sizing: border-box; }
   .reolink-add-source-type .mdl-switch { height: auto; min-height: 24px; }
   .reolink-add-source-type .mdl-switch__label { line-height: 24px; }
-  .reolink-add-footer { clear: both; border-top: 1px solid #e0e0e0; margin: 0 8px !important; }
+  .reolink-add-footer { clear: both; border-top: 1px solid var(--surface-border); margin: 0 8px !important; }
   .reolink-add-actions { clear: both; }
   @media (max-width: 1000px) {
     .reolink-add-form, .reolink-add-guidance { float: none; width: 100%; padding: 0; border-left: 0; }
@@ -1383,11 +1376,11 @@ def discoverPage(params) {
                 paragraph "This source has been removed. Go back and use Add a source... if this was a mistake."
             }
         } else {
-            section(sectionClass: "reolink-discovery-summary") {
+            section(sectionClass: "app-ui-links reolink-discovery-summary") {
                 paragraph rawHtml: true, discoveryOverviewHtml(channelCount,
                     childrenForSource(sourceId as Integer).size(), !!state.lastDiscoveryError)
             }
-            section(sectionClass: "reolink-discovery-channels") {
+            section(sectionClass: "app-ui-links reolink-discovery-channels") {
                 paragraph rawHtml: true, "<div class='reolink-discovery-heading font-semibold'>Channels</div>" +
                     "<div class='text-color-secondary mt-1' style='font-size:14px;'>Toggle channels to add or remove devices.</div>", width: 7
                 href name: "runDiscovery", title: "<i class='fa-solid fa-rotate-right mr-2' aria-hidden='true'></i>Re-run discovery",
@@ -1461,8 +1454,8 @@ def discoverPage(params) {
                             forgetDeviceEverCreated(dni)
                         }
                         def doorbellTag = ch.deviceType == "doorbell" ? " (Doorbell)" : ""
-                        def statusTag = exists ? "<span class='bg-green-50 text-green-700 text-sm ml-3 px-2 py-1 border-round-xl'>Added</span>" :
-                            "<span class='bg-blue-50 text-blue-700 text-sm ml-3 px-2 py-1 border-round-xl'>New</span>"
+                        def statusTag = exists ? "<span class='p-tag p-tag-success text-sm ml-3 px-2 py-1 border-round-xl'>Added</span>" :
+                            "<span class='p-tag p-tag-info text-sm ml-3 px-2 py-1 border-round-xl'>New</span>"
                         input settingKey, "bool",
                             title: "Ch ${ch.channel}: ${discoveryEscapeHtml(ch.name)}${doorbellTag}${statusTag}",
                             defaultValue: exists, submitOnChange: true, width: 12,
@@ -1472,7 +1465,7 @@ def discoverPage(params) {
                     if (channelCount > 1) {
                         paragraph "<span class='text-sm text-color-secondary'>Select the channels you want, " +
                             "then use <b>Apply device changes</b>. Added channels already have a device; New channels do not.</span>"
-                        paragraph "<hr class='border-0 border-top-1 border-gray-200 my-2'>"
+                        paragraph "<hr class='border-0 border-top-1 surface-border my-2'>"
                         input "applyDeviceChanges_${sourceId}", "button",
                             title: "<i class='fa-solid fa-floppy-disk mr-2' aria-hidden='true'></i>Apply device changes",
                             width: 12
@@ -1492,7 +1485,7 @@ def discoverPage(params) {
             }
             section(title: "<div class='reolink-discovery-heading font-semibold'>Connection</div>" +
                     "<div class='text-color-secondary mt-1' style='font-size:14px;'>Real-time updates from this source.</div>",
-                    sectionClass: "reolink-discovery-connection") {
+                    sectionClass: "app-ui-links reolink-discovery-connection") {
                 href name: "findChangedIp", title: "<i class='fa-solid fa-magnifying-glass mr-2' aria-hidden='true'></i>Find changed IP",
                     page: "findChangedIpPage", params: [sourceId: sourceId],
                     description: "Locate this source on the local network"
@@ -1504,9 +1497,9 @@ def discoverPage(params) {
                         "<span class='block text-sm text-color-secondary mt-1'>Falls back to polling if the connection drops.</span>",
                     defaultValue: true, submitOnChange: true, styleClass: "reolink-connection-toggle"
                 def connStatus = state.sourceConnMode?.get(sourceId.toString()) ?: "not started"
-                def statusClass = connStatus == "connected" ? "text-green-700" :
+                def statusClass = connStatus == "connected" ? "hub-text-success" :
                     connStatus == "reconnecting" ? "text-orange-700" : "text-color-secondary"
-                paragraph rawHtml: true, "<div class='border-top-1 border-gray-200 pt-3'>" +
+                paragraph rawHtml: true, "<div class='border-top-1 surface-border pt-3'>" +
                     "<div class='flex gap-3 mb-3'><span class='w-6rem flex-shrink-0'>Status</span>" +
                     "<span class='${statusClass} font-semibold'>&#9679; ${discoveryEscapeHtml(connStatus.capitalize())}</span></div>" +
                     "<div class='flex gap-3'><span class='w-6rem flex-shrink-0'>Source</span>" +
@@ -1514,7 +1507,7 @@ def discoverPage(params) {
                     "<span class='block text-sm text-color-secondary mt-1'>${src.isHub ? 'Hub/NVR' : 'Standalone camera'}</span></span></div></div>"
             }
             if (src.isHub) {
-                section(sectionClass: "reolink-discovery-recording") {
+                section(sectionClass: "app-ui-links reolink-discovery-recording") {
                     paragraph rawHtml: true, "<div class='reolink-discovery-heading font-semibold'>Recording</div>" +
                         "<div class='text-sm text-color-secondary mt-1'>Configure when each channel records.</div>"
                     href name: "presetsFromDiscover", title: "<i class='pi pi-video mr-2' aria-hidden='true'></i>Recording Presets",
@@ -1522,11 +1515,11 @@ def discoverPage(params) {
                         page: "presetsPage", params: [sourceId: sourceId]
                 }
             }
-            section(sectionClass: "reolink-discovery-danger bg-red-50 border-1 border-red-200 border-round") {
-                paragraph rawHtml: true, "<div class='reolink-discovery-heading font-semibold text-red-700'>Danger zone</div>" +
+            section(sectionClass: "app-ui-links reolink-discovery-danger p-message p-message-error reolink-message border-round") {
+                paragraph rawHtml: true, "<div class='reolink-discovery-heading font-semibold hub-text-danger'>Danger zone</div>" +
                     "<div class='text-color-secondary mt-1' style='font-size:14px;'>Remove this source and its devices from Hubitat. " +
                     "You will be asked to confirm before anything is removed.</div>"
-                href name: "reviewSourceRemoval", title: "<span class='text-red-700 font-semibold'><i class='fa-solid fa-trash mr-2' aria-hidden='true'></i>Remove source...</span>",
+                href name: "reviewSourceRemoval", title: "<span class='hub-text-danger font-semibold'><i class='fa-solid fa-trash mr-2' aria-hidden='true'></i>Remove source...</span>",
                     description: "Review the source and devices before confirming",
                     page: "removeSourcePage", params: [sourceId: sourceId], width: 12, style: "margin:8px;"
             }
@@ -1560,14 +1553,14 @@ def editSourcePage(params) {
             paragraph rawHtml: true, editLoginLineHtml(src)
             paragraph "These settings apply to all devices belonging to this source."
         }
-        section(sectionClass: "reolink-recovery-actions") {
+        section(sectionClass: "app-ui-links reolink-recovery-actions") {
             input "saveSourceConnection", "button",
                 title: "<i class='fa-regular fa-floppy-disk mr-2' aria-hidden='true'></i>Save changes",
                 width: 4, submitOnChange: true, styleClass: "reolink-recovery-primary",
-                inputClass: "p-button bg-hubitat-primary-green text-white"
+                inputClass: "app-ui-button app-ui-button-primary"
             input "cancelSourceEdit", "button",
                 title: "<i class='fa-regular fa-xmark mr-2' aria-hidden='true'></i>Cancel",
-                width: 4, submitOnChange: true, inputClass: "p-button"
+                width: 4, submitOnChange: true, inputClass: "app-ui-button"
         }
     }
 }
@@ -1577,7 +1570,7 @@ private String editLoginLineHtml(src) {
     Map rec = (state.sourceLogin ?: [:])[src.id.toString()] as Map
     String login = rec?.ok == true ? "Last login OK, ${shortTime(rec.at as Long)}" :
         rec?.ok == false ? "Login failed: ${rec.reason}" : "Login not checked yet"
-    String tone = rec?.ok == true ? "text-green-700" : rec?.ok == false ? "text-red-700" : "text-color-secondary"
+    String tone = rec?.ok == true ? "hub-text-success" : rec?.ok == false ? "hub-text-danger" : "text-color-secondary"
     String icon = rec?.ok == true ? "<i class='pi pi-check-circle mr-1' aria-hidden='true'></i>" :
         rec?.ok == false ? "<i class='fa-solid fa-exclamation-triangle mr-1' aria-hidden='true'></i>" : ""
     return "<div class='text-sm font-semibold ${tone}'>${icon}Password: ${passwordSummary(src.password)} &middot; " +
@@ -1639,7 +1632,7 @@ def findChangedIpPage(params) {
     String icon = src.isHub ? "fa-server" : doorbell ? "fa-bell" : "fa-video"
     String type = src.isHub ? "Hub / NVR" : doorbell ? "Doorbell" : "Standalone camera"
     dynamicPage(name: "findChangedIpPage", title: "Find changed IP", refreshInterval: busy ? 2 : 0) {
-        section(sectionClass: "reolink-recovery-summary") {
+        section(sectionClass: "app-ui-links reolink-recovery-summary") {
             paragraph rawHtml: true, recoveryStylesHtml() +
                 "<div class='text-color-secondary mb-3'>Reconnect your device without adding it again.</div>" +
                 "<div class='reolink-status-heading font-semibold flex align-items-center gap-2'>" +
@@ -1650,7 +1643,7 @@ def findChangedIpPage(params) {
                 "<div class='text-sm text-color-secondary mt-1'>Permanent Reolink identifier</div></div></div>" +
                 "<div class='reolink-recovery-row'><span>Saved IP</span><code>${discoveryEscapeHtml(src.host)}</code></div>"
         }
-        section(sectionClass: "reolink-recovery-status") {
+        section(sectionClass: "app-ui-links reolink-recovery-status") {
             String tone = verified ? "green" : (!hasUid || recovery.phase == "error") ? "yellow" : "blue"
             String statusIcon = verified ? "fa-circle-check" : busy ? "fa-spinner fa-spin" :
                 tone == "yellow" ? "fa-circle-exclamation" : "fa-magnifying-glass"
@@ -1668,22 +1661,22 @@ def findChangedIpPage(params) {
                     "<div><div class='text-sm text-color-secondary mb-1'>New IP</div><code class='font-semibold'>${discoveryEscapeHtml(recovery.host)}</code></div></div>" : "") +
                 "<div class='text-color-secondary mt-2'>${discoveryEscapeHtml(message)}</div></div>"
         }
-        section(sectionClass: "reolink-recovery-actions") {
+        section(sectionClass: "app-ui-links reolink-recovery-actions") {
             // Use native button inputs and the same classes as the recording preset actions.
             if (verified) {
                 input "applyIp_${recovery.nonce}", "button", title: "<i class='fa-solid fa-check mr-2' aria-hidden='true'></i>Use this IP",
-                    width: 4, submitOnChange: true, styleClass: "reolink-recovery-primary", inputClass: "p-button bg-hubitat-primary-green text-white"
+                    width: 4, submitOnChange: true, styleClass: "reolink-recovery-primary", inputClass: "app-ui-button app-ui-button-primary"
             }
             if (hasUid) {
                 input "findIp_${recovery.nonce}", "button", title: "<i class='fa-solid ${verified ? 'fa-rotate-right' : 'fa-magnifying-glass'} mr-2' aria-hidden='true'></i>${verified ? 'Search again' : 'Search LAN'}",
                     width: 4, submitOnChange: true, disabled: busy, styleClass: verified ? "reolink-recovery-secondary" : "reolink-recovery-primary",
-                    inputClass: verified ? "p-button p-button-outlined" : "p-button bg-hubitat-primary-green text-white"
+                    inputClass: verified ? "app-ui-button app-ui-button-secondary" : "app-ui-button app-ui-button-primary"
             }
             input "cancelIp_${recovery.nonce}", "button", title: "<i class='fa-regular fa-xmark mr-2' aria-hidden='true'></i>Cancel",
-                width: 4, submitOnChange: true, disabled: busy, inputClass: "p-button"
+                width: 4, submitOnChange: true, disabled: busy, inputClass: "app-ui-button"
         }
-        section(sectionClass: "reolink-recovery-footer") {
-            paragraph rawHtml: true, "<div class='border-top-1 border-gray-200 pt-3 text-sm text-color-secondary'>" +
+        section(sectionClass: "app-ui-links reolink-recovery-footer") {
+            paragraph rawHtml: true, "<div class='border-top-1 surface-border pt-3 text-sm text-color-secondary'>" +
                 "${verified ? 'Your devices, labels, and automations stay in place.' : 'Devices must be on the same local network. Sleeping devices or devices on other VLANs may not respond.'}</div>"
         }
     }
@@ -1700,13 +1693,9 @@ private String recoveryStylesHtml() {
   .reolink-recovery-summary > .mdl-grid, .reolink-recovery-status > .mdl-grid,
   .reolink-recovery-actions > .mdl-grid, .reolink-recovery-footer > .mdl-grid { padding: 4px 0 !important; }
   .reolink-recovery-summary .reolink-status-heading i, .reolink-recovery-status .reolink-status-heading i { font-size: 1em; }
-  .reolink-recovery-row { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 16px; padding: 14px 0; border-top: 1px solid #e0e0e0; }
+  .reolink-recovery-row { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 16px; padding: 14px 0; border-top: 1px solid var(--surface-border); }
   .reolink-recovery-summary code, .reolink-recovery-status code { font-size: 16px; overflow-wrap: anywhere; }
   .reolink-recovery-actions button { min-width: 128px; min-height: 40px; padding: 0 16px; border-radius: 4px; font-family: inherit; font-size: 14px; }
-  .reolink-recovery-primary button { background: var(--hubitat-primary-green, #81BC00) !important; color: #fff !important; }
-  .reolink-recovery-secondary button { background: #fff; color: #1565c0; border: 1px solid #b0bec5; box-shadow: none; }
-  .reolink-recovery-actions button:disabled { opacity: 0.6; cursor: not-allowed; }
-  .reolink-recovery-actions button:focus-visible { outline: 2px solid #1565c0; outline-offset: 2px; }
   @media (max-width: 480px) { .reolink-recovery-row { grid-template-columns: 1fr; gap: 6px; } }
 </style>
 """
@@ -1927,10 +1916,10 @@ def removeSourcePage(params) {
     state.pendingSourceRemoval = [sourceId: sourceId.toString(), token: token]
     def devices = childrenForSource(sourceId as Integer)
     dynamicPage(name: "removeSourcePage", title: "Confirm source removal") {
-        section(sectionClass: "reolink-removal-confirmation") {
+        section(sectionClass: "app-ui-links reolink-removal-confirmation") {
             paragraph rawHtml: true, "<style>${tileSecondaryTextCss()} #formApp:has(.reolink-removal-confirmation) #fieldsetAppButtons button[value='Done'] { display: none !important; }</style>" +
-                "<div class='bg-red-50 border-1 border-red-200 border-round p-3'>" +
-                "<div class='font-semibold text-red-700'>Remove ${discoveryEscapeHtml(src.label)}?</div>" +
+                "<div class='p-message p-message-error reolink-message border-round p-3'>" +
+                "<div class='font-semibold hub-text-danger'>Remove ${discoveryEscapeHtml(src.label)}?</div>" +
                 "<div class='mt-2'>${discoveryEscapeHtml(src.host)} &middot; ${countText(devices.size(), 'device')}</div>" +
                 "<div class='mt-2'>This removes the source, its bridge, all devices listed below, and its saved " +
                 "recording presets from Hubitat. It cannot be undone. The physical cameras are not reset.</div></div>"
@@ -1942,7 +1931,7 @@ def removeSourcePage(params) {
             href name: "cancelSourceRemoval", title: "Cancel and keep this source",
                 description: "Return without removing anything", page: "removeSourcePage",
                 params: [sourceId: sourceId, action: "cancel"]
-            href name: "confirmSourceRemoval", title: "<span class='text-red-700 font-semibold'>Yes, remove this source</span>",
+            href name: "confirmSourceRemoval", title: "<span class='hub-text-danger font-semibold'>Yes, remove this source</span>",
                 description: "Permanently remove ${countText(devices.size(), 'device')} and this source",
                 page: "removeSourcePage", params: [sourceId: sourceId, action: "remove", token: token]
         }
@@ -1951,8 +1940,8 @@ def removeSourcePage(params) {
 
 /** Display-only markup; native Hubitat inputs and href actions remain in their sections. */
 private String discoveryOverviewHtml(int channelCount, int deviceCount, boolean discoveryFailed) {
-    String tone = discoveryFailed ? "p-message p-message-warn reolink-message" : "bg-green-50 border-green-200"
-    String icon = discoveryFailed ? "fa-solid fa-exclamation-triangle text-yellow-700" : "pi pi-check-circle text-green-700"
+    String tone = discoveryFailed ? "p-message p-message-warn reolink-message" : "p-message p-message-success reolink-message"
+    String icon = discoveryFailed ? "fa-solid fa-exclamation-triangle hub-text-warning" : "pi pi-check-circle hub-text-success"
     String title = discoveryFailed ? "Discovery needs attention" : channelCount ? "Discovery complete" : "No channels found"
     return """
 <style>
@@ -1965,7 +1954,7 @@ private String discoveryOverviewHtml(int channelCount, int deviceCount, boolean 
   .reolink-discovery-danger > .mdl-grid { padding: 4px 0 !important; }
   .reolink-discovery-channels { float: left; width: calc(62% - 8px); }
   .reolink-discovery-connection, .reolink-discovery-recording {
-    float: right; width: 38%; border-left: 1px solid #e0e0e0; padding-left: 8px; box-sizing: border-box;
+    float: right; width: 38%; border-left: 1px solid var(--surface-border); padding-left: 8px; box-sizing: border-box;
   }
   .reolink-discovery-recording { clear: right; }
   .reolink-discovery-danger {
@@ -1973,33 +1962,31 @@ private String discoveryOverviewHtml(int channelCount, int deviceCount, boolean 
     width: calc(100% - 16px); margin: 0 8px 16px !important;
   }
   .reolink-discovery-danger::before {
-    content: ''; position: absolute; left: 0; right: 0; top: -9px; border-top: 1px solid #dfe3e8;
+    content: ''; position: absolute; left: 0; right: 0; top: -9px; border-top: 1px solid var(--surface-border);
   }
   .reolink-discovery-connection > .mdl-grid {
-    margin: 12px 8px 0; padding: 4px !important; border: 1px solid #dfe3e8;
-    border-radius: 4px; background: #fff;
+    margin: 12px 8px 0; padding: 4px !important; border: 1px solid var(--surface-border);
+    border-radius: 4px; background: var(--surface-card);
   }
   .reolink-channel-toolbar {
-    background: #f7f8fa; border: 1px solid #dfe3e8; border-radius: 4px 4px 0 0;
+    background: var(--surface-ground); border: 1px solid var(--surface-border); border-radius: 4px 4px 0 0;
     padding: 12px; margin-bottom: 0;
   }
   .reolink-channel-toolbar:not(:has(~ .reolink-channel-row)) { border-radius: 4px; margin-bottom: 8px; }
   .reolink-channel-row {
-    background: #fafbfc; border: 1px solid #dfe3e8; border-top: 0;
+    background: var(--surface-ground); border: 1px solid var(--surface-border); border-top: 0;
     padding: 8px; margin-top: 0; margin-bottom: 0;
   }
   .reolink-channel-row:not(:has(~ .reolink-channel-row)) { border-radius: 0 0 4px 4px; margin-bottom: 8px; }
   .reolink-channel-row > .w-fit {
-    width: 100% !important; box-sizing: border-box; background: #fff;
-    border: 1px solid #dfe3e8; border-radius: 4px; padding: 10px 12px;
+    width: 100% !important; box-sizing: border-box; background: var(--surface-card);
+    border: 1px solid var(--surface-border); border-radius: 4px; padding: 10px 12px;
   }
   .reolink-channel-row .mdl-switch, .reolink-channel-toolbar .mdl-switch,
   .reolink-connection-toggle .mdl-switch { height: auto; min-height: 24px; }
   .reolink-channel-row .mdl-switch__label { line-height: 24px; }
-  .reolink-discovery-danger { background: #fff5f5 !important; border-color: #edb7bb !important; }
-  .reolink-discovery-summary .bg-green-50 { background: #f3faf1 !important; border-color: #bdd8b1 !important; }
   .reolink-discovery-channels button.hrefElem {
-    background: #fff; color: #1565c0; border: 1px solid #e0e0e0;
+    background: var(--surface-card); color: var(--hubitat-link-color); border: 1px solid var(--surface-border);
     border-radius: 4px; box-shadow: none;
   }
   .reolink-discovery-channels button[name^='_action_href_tips|'] {
@@ -2009,19 +1996,19 @@ private String discoveryOverviewHtml(int channelCount, int deviceCount, boolean 
     display: inline-block; padding-bottom: 0.5em;
   }
   .reolink-discovery-channels button.hrefElem .state-incomplete-text { font-size: 14px; }
-  .reolink-discovery-channels button.hrefElem::before { color: #1565c0; }
+  .reolink-discovery-channels button.hrefElem::before { color: var(--hubitat-link-color); }
   .reolink-discovery-channels .mdl-cell:has(> button[name^='_action_href_runDiscovery|']) { text-align: right; }
   .reolink-discovery-channels button[name^='_action_href_runDiscovery|'] {
     display: inline-block; width: auto !important; min-height: 36px; padding: 0 16px;
-    background: rgba(158,158,158,0.2); color: #363636; border: 0; border-radius: 4px;
+    background: var(--hubitat-control-background); color: var(--hubitat-control-text); border: 0; border-radius: 4px;
     font-family: inherit; font-size: 14px; font-weight: 500; line-height: 36px;
-    box-shadow: 0 2px 2px 0 rgba(0,0,0,.14), 0 3px 1px -2px rgba(0,0,0,.2), 0 1px 5px 0 rgba(0,0,0,.12);
+    box-shadow: var(--hubitat-control-shadow);
   }
   .reolink-discovery-channels button[name^='_action_href_runDiscovery|']::before,
   .reolink-discovery-channels button[name^='_action_href_runDiscovery|'] > br,
   .reolink-discovery-channels button[name^='_action_href_runDiscovery|'] > .state-incomplete-text { display: none; }
-  .reolink-discovery-channels button[name^='_action_href_runDiscovery|']:hover { background: #cacfc8; }
-  .reolink-discovery-channels button[name^='_action_href_runDiscovery|']:focus-visible { outline: 2px solid #386a95; outline-offset: 2px; }
+  .reolink-discovery-channels button[name^='_action_href_runDiscovery|']:hover { background: var(--hubitat-control-hover-background); }
+  .reolink-discovery-channels button[name^='_action_href_runDiscovery|']:focus-visible { outline: 2px solid var(--hubitat-link-color); outline-offset: 2px; }
   @media (max-width: 1000px) {
     .reolink-discovery-channels, .reolink-discovery-connection, .reolink-discovery-recording {
       float: none; width: 100%; border-left: 0; padding-left: 0;
@@ -2208,7 +2195,7 @@ def presetsPage(params) {
     dynamicPage(name: "presetsPage", title: "Recording Presets - ${src?.label ?: ''}",
         nextPage: "discoverPage", nextPageLabel: "Done") {
 
-        section(sectionClass: "reolink-presets-index") {
+        section(sectionClass: "app-ui-links reolink-presets-index app-ui-navigation") {
             paragraph rawHtml: true, presetsStylesHtml()
             paragraph rawHtml: true, "<div class='reolink-status-heading font-semibold'>Presets</div>"
             if (!presets) paragraph "<span class='text-base text-color-secondary'>No presets yet. Add one below to get started.</span>"
@@ -2216,17 +2203,17 @@ def presetsPage(params) {
                 def btnNum = (state.recPresetButtonNumbers ?: [:])[sourceId.toString()]?.get(name)
                 href name: "selectPreset_${index}", page: "presetsPage",
                     params: [sourceId: sourceId, preset: name],
-                    title: "<span class='text-blue-700 ${name == selectedPreset ? 'reolink-preset-selected' : ''}'>${discoveryEscapeHtml(name)}</span>",
+                    title: "<span class='hub-text-link ${name == selectedPreset ? 'app-ui-navigation-selected' : ''}'>${discoveryEscapeHtml(name)}</span>",
                     description: btnNum ? "Button ${btnNum}" : "", width: 12, style: "margin:0 8px;"
             }
-            paragraph rawHtml: true, "<div class='reolink-status-heading font-semibold border-top-1 border-gray-200 pt-3 mt-3'>Add a preset</div>"
+            paragraph rawHtml: true, "<div class='reolink-status-heading font-semibold border-top-1 surface-border pt-3 mt-3'>Add a preset</div>"
             input "newPresetName", "text", title: "New preset name (e.g. 'Away', 'Present')", submitOnChange: true
         }
         presets.each { name, chMap ->
             def btnNum = (state.recPresetButtonNumbers ?: [:])[sourceId.toString()]?.get(name)
-            section(sectionClass: "reolink-preset-editor ${name == selectedPreset ? '' : 'reolink-preset-hidden'}") {
+            section(sectionClass: "app-ui-links reolink-preset-editor ${name == selectedPreset ? '' : 'reolink-preset-hidden'}") {
                 paragraph rawHtml: true, "<div class='reolink-status-heading font-semibold'>${discoveryEscapeHtml(name)} " +
-                    (btnNum ? "<span class='text-base text-blue-700 bg-blue-50 border-round px-2 py-1 ml-2'>Button ${btnNum}</span>" : "") +
+                    (btnNum ? "<span class='text-base p-tag p-tag-info border-round px-2 py-1 ml-2'>Button ${btnNum}</span>" : "") +
                     "</div><div class='text-base text-color-secondary mt-1'>Editing or saving this preset does not load it.</div>"
                 paragraph rawHtml: true, "<div class='reolink-preset-card-heading font-semibold'>Channel recording modes</div>"
                 if (!channels) paragraph "No devices have been added for this source. Add devices on Discover Channels to configure their recording modes."
@@ -2290,9 +2277,9 @@ def presetsPage(params) {
             }
         }
 
-        section(sectionClass: "reolink-presets-help") {
+        section(sectionClass: "app-ui-links reolink-presets-help") {
             if (!presets) {
-                paragraph rawHtml: true, "<div class='border-1 border-gray-200 border-round p-3'><div class='reolink-status-heading font-semibold'>Create your first preset</div>" +
+                paragraph rawHtml: true, "<div class='border-1 surface-border border-round p-3'><div class='reolink-status-heading font-semibold'>Create your first preset</div>" +
                     "<div class='text-base text-color-secondary mt-2'>Enter a name on the left, then configure what each channel records. New channels default to Don't manage, leaving their existing schedules untouched.</div></div>"
             }
             paragraph rawHtml: true, presetsGuidanceHtml(src?.label ?: "")
@@ -2312,14 +2299,14 @@ def presetsPage(params) {
 
         if (selectedPreset != null) {
             def selectedButton = (state.recPresetButtonNumbers ?: [:])[sourceId.toString()]?.get(selectedPreset)
-            section(sectionClass: "reolink-presets-actions") {
+            section(sectionClass: "app-ui-links reolink-presets-actions") {
                 paragraph rawHtml: true, "<div class='text-base text-color-secondary'>Actions for ${discoveryEscapeHtml(selectedPreset)}</div>"
                 input "presetAction_delete_${sourceId}_${selectedButton}", "button",
                     title: "<i class='fa-regular fa-trash mr-2' aria-hidden='true'></i>Delete preset",
-                    width: 6, submitOnChange: true, styleClass: "reolink-preset-delete", inputClass: "p-button p-button-danger"
+                    width: 6, submitOnChange: true, styleClass: "reolink-preset-delete", inputClass: "app-ui-button app-ui-button-danger"
                 input "presetAction_save_${sourceId}_${selectedButton}", "button",
                     title: "<i class='fa-regular fa-floppy-disk mr-2' aria-hidden='true'></i>Save preset",
-                    width: 6, submitOnChange: true, styleClass: "reolink-preset-save", inputClass: "p-button bg-hubitat-primary-green text-white"
+                    width: 6, submitOnChange: true, styleClass: "reolink-preset-save", inputClass: "app-ui-button app-ui-button-primary"
             }
         }
     }
@@ -2397,39 +2384,27 @@ private String presetsStylesHtml() {
   ${appPageSpacingCss()}
   .reolink-presets-index { float: left; width: calc(27% - 8px); box-sizing: border-box; }
   .reolink-preset-editor, .reolink-presets-help, .reolink-presets-actions {
-    float: right; width: 73%; padding-left: 8px; border-left: 1px solid #e0e0e0; box-sizing: border-box;
+    float: right; width: 73%; padding-left: 8px; border-left: 1px solid var(--surface-border); box-sizing: border-box;
   }
   .reolink-presets-help, .reolink-presets-actions { clear: right; }
   .reolink-preset-hidden { display: none !important; }
   .reolink-presets-index > .mdl-grid, .reolink-preset-editor > .mdl-grid,
   .reolink-presets-help > .mdl-grid, .reolink-presets-actions > .mdl-grid { padding: 4px 0 !important; }
   .reolink-presets-index .mdl-cell:has(> style) { display: none; }
-  .reolink-presets-index button.hrefElem {
-    background: transparent; border: 0; border-left: 3px solid transparent;
-    border-radius: 0; box-shadow: none; padding: 12px; font-family: inherit; font-size: 16px;
-  }
-  .reolink-presets-index button.hrefElem::before { display: none; }
-  .reolink-presets-index button.hrefElem:has(.reolink-preset-selected) {
-    background: #eaf2fc; border-left-color: #1565c0;
-  }
-  .reolink-presets-index button.hrefElem:hover { background: #f3f6fa; }
-  .reolink-presets-index button.hrefElem:focus-visible { outline: 2px solid #1565c0; outline-offset: 2px; }
   .reolink-preset-card-heading {
-    font-size: 16px; background: #f5f7fa; border: 1px solid #dfe3e8; border-radius: 4px; padding: 12px;
+    font-size: 16px; background: var(--surface-ground); border: 1px solid var(--surface-border); border-radius: 4px; padding: 12px;
   }
   .reolink-preset-channel {
-    background: #fafbfc; border: 1px solid #dfe3e8; border-radius: 4px; padding: 12px; box-sizing: border-box;
+    background: var(--surface-ground); border: 1px solid var(--surface-border); border-radius: 4px; padding: 12px; box-sizing: border-box;
   }
-  .reolink-presets-actions > .mdl-grid { border-top: 1px solid #e0e0e0; margin: 0 8px; }
+  .reolink-presets-actions > .mdl-grid { border-top: 1px solid var(--surface-border); margin: 0 8px; }
   .reolink-preset-save { text-align: right; }
-  .reolink-preset-save button { background: var(--hubitat-primary-green, #81BC00) !important; color: #fff !important; border-radius: 4px; }
-  .reolink-preset-delete button { background: #D32F2F !important; color: #fff !important; border-radius: 4px; }
   .reolink-preset-editor .mdl-switch, .reolink-presets-help .mdl-switch { height: auto; min-height: 24px; }
   .reolink-preset-editor .mdl-switch__label, .reolink-presets-help .mdl-switch__label { line-height: 24px; }
-  .reolink-preset-guidance { border: 1px solid #dfe3e8; border-radius: 4px; margin-top: 16px; }
-  .reolink-preset-guidance summary { padding: 12px; background: #f5f7fa; cursor: pointer; list-style: none; font-size: 16px; }
+  .reolink-preset-guidance { border: 1px solid var(--surface-border); border-radius: 4px; margin-top: 16px; }
+  .reolink-preset-guidance summary { padding: 12px; background: var(--surface-ground); cursor: pointer; list-style: none; font-size: 16px; }
   .reolink-preset-guidance summary::-webkit-details-marker { display: none; }
-  .reolink-preset-guidance summary::after { content: '\\203A'; float: right; color: #386a95; }
+  .reolink-preset-guidance summary::after { content: '\\203A'; float: right; color: var(--hubitat-link-color); }
   .reolink-preset-guidance[open] summary::after { transform: rotate(90deg); }
   .reolink-preset-guidance p { margin: 0 0 12px; }
   .reolink-preset-guidance p:last-child { margin-bottom: 0; }
@@ -2446,7 +2421,7 @@ private String presetsStylesHtml() {
 private String presetsGuidanceHtml(String sourceLabel) {
     """
 <div class='p-message p-message-info reolink-message'>
-  <div class='reolink-status-heading font-semibold text-blue-700'><i class='pi pi-cog mr-2' aria-hidden='true'></i>Rule Machine shortcuts</div>
+  <div class='reolink-status-heading font-semibold hub-text-link'><i class='pi pi-cog mr-2' aria-hidden='true'></i>Rule Machine shortcuts</div>
   <div class='text-base mt-2'>Use <b>Reolink Device Bridge (${discoveryEscapeHtml(sourceLabel)})</b> in Rule Machine's standard Switch and Button pickers. No Custom Action is needed.</div>
   <div class='text-base mt-2'><b>Switch on/off:</b> controls master recording for all channels.<br><b>Push button N:</b> loads the preset labeled Button N.</div>
   <div class='text-base mt-2'>You can also use the bridge's <b>Load Preset</b> command with a preset name (or blank for the one picked on the bridge's Preferences). Button numbers are permanent and never reused; a deleted preset's button does nothing.</div>
