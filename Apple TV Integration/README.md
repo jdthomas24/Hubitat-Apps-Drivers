@@ -82,7 +82,7 @@ After pairing, the Apple TV lists **Hubitat** under Settings → Remotes and Dev
 **Notes**
 - `homeScreen` holds Back, like the Siri Remote, so it always goes to the Home Screen. Use it in rules when you just want to go home.
 - `tvButton` presses the Siri Remote's TV button. One press follows each Apple TV's TV Button setting (Settings → Remotes and Devices → TV Button), so it may open the Apple TV app instead of the Home Screen. Two presses (times 2) open the App Switcher.
-- `closeApp` opens the App Switcher, swipes the current app away and returns to the Home Screen. On the Home Screen it closes the most recently used app.
+- `closeApp` opens the App Switcher, swipes the current app up and away, and returns to the Home Screen. On the Home Screen it closes the most recently used app.
 - App links open only in apps that support them, and the Apple TV asks you to confirm. YouTube web links are converted to the YouTube app's own link automatically.
 
 **Turn the TV on too:** on the Apple TV, enable **Settings → Remotes and Devices → Control TVs and Receivers** (HDMI-CEC). Waking the Apple TV then wakes the TV and switches its input.

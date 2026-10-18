@@ -22,8 +22,9 @@
       Siri Remote), tvButton (HID 7, the TV button: one press follows the Apple TV's TV Button setting,
       two back to back open the App Switcher, as pyatv's double tap; max 2 so a triple press never
       triggers the accessibility shortcut). Aliases: menu = back; home = homeScreen; tv = tvButton.
-     -closeApp: App Switcher (tvButton x2), Up, Up (swipes the current app away), then homeScreen.
-      Steps are spaced by CLOSE_STEPS_MS so the switcher animation finishes first.
+     -closeApp: App Switcher (tvButton x2), a touchpad swipe up on the current app, then homeScreen.
+      D-pad Up doesn't close apps there; only the swipe does. Swipe = pyatv api.swipe: _touchStart once per
+      connection, then _hidT events ~16ms apart (Press, Holds along the path, Release), 0-1000 coordinates, y down.
      -Right after connecting the Apple TV reports its controls twice in a few ms (256, then the real
       value), so flags in the first 2s are applied once, after 2s, to avoid a false "stopped".
      -remoteButton(times) and volumeUp/Down(steps) repeat with a 150/250ms gap (max 10/20).
@@ -98,7 +99,7 @@ metadata {
 @Field static final Map MC_CMD = [play: 1, pause: 2, nextTrack: 3, previousTrack: 4, skipForward: 7, skipBackward: 7]
 @Field static final Map HID_BTN = [up: 1, down: 2, left: 3, right: 4, back: 5, select: 6,
                                    volumeUp: 8, volumeDown: 9, playPause: 14, homeScreen: 5, tvButton: 7]
-@Field static final List CLOSE_STEPS_MS = [1500, 500, 1000]   // after App Switcher, between Ups, before homeScreen
+@Field static final List CLOSE_STEPS_MS = [1500, 1000]   // after App Switcher, after the swipe
 @Field static final Map BTN_ALIAS = [menu: "back", home: "homeScreen", tv: "tvButton", tvbutton: "tvButton",
                                      enter: "select", ok: "select", homescreen: "homeScreen", mainmenu: "homeScreen"]
 // Dropdown pick -> names the Apple TV may use for it, tried exactly, in order.
@@ -316,10 +317,32 @@ def closeApp() {
 }
 
 def closeAppSwipe() {
-    press("up", 1)
-    pauseExecution(CLOSE_STEPS_MS[1] as long)
-    press("up", 1)
-    runInMillis(CLOSE_STEPS_MS[2] as long, "closeAppHome")
+    Map m = mem()
+    if (m.stage != "READY") return
+    swipe(500, 850, 500, 100, 250)
+    runInMillis(CLOSE_STEPS_MS[1] as long, "closeAppHome")
+}
+
+private void swipe(int x0, int y0, int x1, int y1, int ms) {
+    Map ss = mem().ss as Map
+    if (!ss.touchBase) {
+        request("_touchStart", ["_height": 1000.0d, "_tFl": 0, "_width": 1000.0d], "touch")
+        ss.touchBase = now()
+        pauseExecution(200)
+    }
+    int steps = Math.max(2, ms.intdiv(16))
+    touch(ss, x0, y0, 1)
+    for (int i = 1; i < steps; i++) {
+        pauseExecution(16)
+        touch(ss, x0 + ((x1 - x0) * i).intdiv(steps), y0 + ((y1 - y0) * i).intdiv(steps), 3)
+    }
+    pauseExecution(16)
+    touch(ss, x1, y1, 4)
+    logF("swiped ${x0},${y0} to ${x1},${y1}")
+}
+
+private void touch(Map ss, int x, int y, int phase) {
+    send(companionEvent(ss, "_hidT", ["_ns": (now() - (ss.touchBase as long)) * 1000000L, "_tFg": 1, "_cx": x, "_tPh": phase, "_cy": y]))
 }
 
 def closeAppHome() {
