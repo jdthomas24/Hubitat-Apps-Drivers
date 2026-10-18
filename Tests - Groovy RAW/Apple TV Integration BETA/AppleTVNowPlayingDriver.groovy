@@ -25,7 +25,7 @@
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { "1.2.0.5" }
+def version() { "1.2.0.6" }
 
 metadata {
     definition(name: "Apple TV Now Playing (Beta)", namespace: "jdthomas24", author: "jdthomas24",
@@ -637,7 +637,7 @@ private Map pb() {
 }
 
 private void mrpStart(Map m) {
-    m.np = [:]; m.clients = [:]; m.remove("activeClient"); m.remove("npKey")
+    m.np = [:]; m.clients = [:]; ["activeClient", "npKey", "owner", "ownerGone"].each { m.remove(it) }
     m.mrpStage = "DEVINFO"
     m.mrpWait = UUID.randomUUID().toString().toUpperCase()
     mrpSend(m, "DEVICE_INFO_MESSAGE", m.mrpWait as String, ["deviceInfoMessage": [
@@ -839,15 +839,30 @@ private void npUpdate(Map m, Map msg) {
     Map rc = msg.removeClientMessage as Map
     if (rc) {
         String b = ((rc.client as Map)?.bundleIdentifier ?: "") as String
+        if (b && b == m.owner) m.ownerGone = npFor(m, b) + [state: "Stopped"]
         (m.clients as Map)?.remove(b)
         if (m.activeClient == b) m.remove("activeClient")
     }
-    m.np = npPlaying(m)
+    // The last app that played owns the display; a paused app the Apple TV falls back to can't take over.
+    String played = ss?.playbackState == "Playing" ? ((((ss.playerPath as Map)?.client as Map)?.bundleIdentifier ?: "") as String) : ""
+    if (played) npTake(m, played)
+    if (m.activeClient && npFor(m, m.activeClient as String).state == "Playing") npTake(m, m.activeClient as String)
+    m.np = npShown(m)
 }
 
-// The active client's active player (or its default player).
-private Map npPlaying(Map m) {
-    Map cl = m.activeClient != null ? ((m.clients ?: [:]) as Map)[m.activeClient] as Map : null
+private void npTake(Map m, String b) { m.owner = b; m.remove("ownerGone") }
+
+private Map npShown(Map m) {
+    if (m.owner) {
+        if (((m.clients ?: [:]) as Map)[m.owner]) return npFor(m, m.owner as String)
+        if (m.ownerGone) return m.ownerGone as Map
+    }
+    return m.activeClient != null ? npFor(m, m.activeClient as String) : [:]
+}
+
+// A client's active player (or its default player).
+private Map npFor(Map m, String b) {
+    Map cl = ((m.clients ?: [:]) as Map)[b] as Map
     if (!cl) return [:]
     Map players = cl.players as Map
     Map p = (cl.activePlayer != null ? players[cl.activePlayer] : null) ?: players["MediaRemote-DefaultPlayer"] ?: (players.size() == 1 ? players.values()[0] : null)

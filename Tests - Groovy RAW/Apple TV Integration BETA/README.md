@@ -1,4 +1,4 @@
-# Apple TV Now Playing (Beta) 1.2.0.5
+# Apple TV Now Playing (Beta) 1.2.0.6
 
 Lets Hubitat see what your Apple TV is doing: **which app** is playing (Netflix, Plex, YouTube...) and whether it's **playing or paused**. Some apps also share the title.
 
@@ -56,6 +56,7 @@ Good to know:
 
 - **Leaving an app pauses it**, and **sleeping the TV pauses it**. "Paused" covers both.
 - **The home screen shows the last app as paused**, not "none".
+- **`currentApp` is the last app that actually played.** When an app closes or the TV turns off, the Apple TV sometimes falls back to an older paused app. The device ignores that and keeps showing the app you were watching (as `stopped` if it closed completely). Another app only takes over once it starts playing.
 - **YouTube ads** show up as short items with the video's title.
 
 ## Known issues
