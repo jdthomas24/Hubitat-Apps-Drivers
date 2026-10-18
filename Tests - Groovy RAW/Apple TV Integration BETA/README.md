@@ -58,6 +58,12 @@ Good to know:
 - **The home screen shows the last app as paused**, not "none".
 - **YouTube ads** show up as short items with the video's title.
 
+## Known issues
+
+- **Pausing inside Plex may still show `playing`.** Plex doesn't always tell the Apple TV it paused. Leaving Plex or sleeping the TV shows `paused` correctly.
+- **The banner at the top of the app page** (counts like "1 connected") only updates when the page reloads. The Apple TV cards update live.
+- **Not tested yet:** what happens when an Apple TV gets a new IP address, and a hub reboot. Both should recover on their own. Please tell me if they don't.
+
 ## What I'd like to hear back
 
 - Your hub model (C-5, C-7, C-8, C-8 Pro), Apple TV model and tvOS version
