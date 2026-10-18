@@ -15,6 +15,7 @@
       Apple TV found is matched to the paired identity.
      -PIN box submits on change and is sent at the top of mainPage (text boxes aren't always saved when a
       button is clicked right after typing). Buttons pause so the page redraws after the TV replies.
+     -Cards update live from the hub's /eventsocket feed (no page reload, so typing is never interrupted).
      -Log level is pushed to every device; their lines appear under this app. Full turns off after 30 minutes.
      -UI follows HubitatAppUiTemplate (as Apple TV Integration 1.1.1).
 */
@@ -22,7 +23,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Apple TV Now Playing (Beta)"
-@Field static final String APP_VERSION = "1.2.0.4"
+@Field static final String APP_VERSION = "1.2.0.5"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/166801"
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 @Field static final String RAOP = "_raop._tcp"
@@ -274,6 +275,7 @@ def mainPage(params = null) {
             Map b = bannerState(paired, found, unpaired)
             paragraph rawHtml: true, statusBannerHtml(b.ok, b.title, b.summary)
             paragraph rawHtml: true, betaNoteHtml()
+            if (paired) paragraph rawHtml: true, liveUpdateHtml()
             if (state.pageNote) {
                 paragraph rawHtml: true, warningMessageHtml(state.pageNote)
                 state.remove("pageNote")
@@ -372,23 +374,46 @@ private Map bannerState(List paired, List found, List unpaired) {
 
 private String atvCardHtml(d) {
     String conn = d.currentValue("connection") ?: "unknown"
-    String cc = conn == "connected" ? "#2e9e5b" : conn in ["offline", "not paired", "disconnected"] ? "#c62828" : "#b26a00"
     String tv = d.currentValue("tvState") ?: "unknown"
     String app = d.currentValue("currentApp") ?: "none"
     String ps = d.currentValue("playbackState") ?: "idle"
-    String title = d.currentValue("title")
-    String now = conn != "connected" ? "" : app == "none" ? "Nothing playing" :
-        "<b>${esc(app)}</b> &middot; ${ps}" + (title && title != "none" ? " &middot; ${esc(title)}" : "")
+    String title = d.currentValue("title") ?: "none"
+    String now = app == "none" ? "Nothing playing" :
+        "<b>${esc(app)}</b> &middot; ${esc(ps)}" + (title != "none" ? " &middot; ${esc(title)}" : "")
     String sub = [d.getDataValue("appleTvName"), modelName(d.getDataValue("model")), d.getDataValue("ip")].findAll { it }.join(" &middot; ")
     StringBuilder card = new StringBuilder()
-    card << "<div style='border:1px solid #ccc;border-radius:10px;padding:12px 14px;margin:4px 0 0;background:#fafafa'>"
+    card << "<div class='np-card' data-dev='${d.id}' data-app='${esc(app)}' data-ps='${esc(ps)}' data-title='${esc(title)}' data-conn='${esc(conn)}' " +
+        "style='border:1px solid #ccc;border-radius:10px;padding:12px 14px;margin:4px 0 0;background:#fafafa'>"
     card << "<div><a href='/device/edit/${d.id}' target='_blank' class='atv-link'>${d.displayName}" +
         "<i class='fa-regular fa-external-link' style='margin-left:5px;font-size:0.8em'></i></a>"
-    card << "<span style='margin-left:8px;background:${cc};color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em;font-weight:bold'>${conn}</span>"
-    card << "<span style='margin-left:6px;background:#455a64;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>${tv}</span></div>"
-    if (now) card << "<div style='margin-top:6px;font-size:0.9em'>${now}</div>"
+    card << "<span class='np-conn' style='margin-left:8px;background:${connColor(conn)};color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em;font-weight:bold'>${esc(conn)}</span>"
+    card << "<span class='np-tv' style='margin-left:6px;background:#455a64;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>${esc(tv)}</span></div>"
+    card << "<div class='np-now' style='margin-top:6px;font-size:0.9em${conn == "connected" ? "" : ";display:none"}'>${now}</div>"
     card << "<div style='margin-top:4px;color:#888;font-size:0.8em'>${sub}</div></div>"
     return card.toString()
+}
+
+private String connColor(String c) { c == "connected" ? "#2e9e5b" : c in ["offline", "not paired", "disconnected"] ? "#c62828" : "#b26a00" }
+
+// Updates the cards in place from the hub's live event feed (/eventsocket), so the page never reloads while
+// someone is typing. Started once per browser page by an image that fails to load (paragraphs don't run <script>).
+private String liveUpdateHtml() {
+    String js = '''(function(){if(window.__npLive)return;window.__npLive=1;
+var col=function(c){return c=='connected'?'#2e9e5b':(['offline','not paired','disconnected'].indexOf(c)>=0?'#c62828':'#b26a00')};
+var esc=function(v){var d=document.createElement('div');d.textContent=v;return d.innerHTML};
+var draw=function(c){var a=c.dataset.app||'none',p=c.dataset.ps||'idle',t=c.dataset.title||'none',n=c.querySelector('.np-now');
+if(!n)return;if(c.dataset.conn!='connected'){n.style.display='none';return}
+n.style.display='';n.innerHTML=a=='none'?'Nothing playing':'<b>'+esc(a)+'</b> \\u00b7 '+esc(p)+(t=='none'?'':' \\u00b7 '+esc(t))};
+var keys={currentApp:'app',playbackState:'ps',title:'title',connection:'conn',tvState:'tv'};
+var ws=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+location.host+'/eventsocket');
+ws.onmessage=function(e){var cards=document.querySelectorAll('.np-card');if(!cards.length){ws.close();return}
+var m;try{m=JSON.parse(e.data)}catch(x){return}
+var k=keys[m.name];if(m.source!='DEVICE'||!k)return;
+cards.forEach(function(c){if(c.dataset.dev!=String(m.deviceId))return;c.dataset[k]=m.value;
+if(k=='conn'){var s=c.querySelector('.np-conn');s.textContent=m.value;s.style.background=col(m.value)}
+if(k=='tv')c.querySelector('.np-tv').textContent=m.value;draw(c)})};
+ws.onclose=function(){window.__npLive=0}})()'''
+    return "<img src='data:,x' alt='' style='display:none' onerror=\"" + js.replace("\n", "") + "\">"
 }
 
 private String foundCardHtml(Map rec, String tvName) {
@@ -404,7 +429,7 @@ private String betaNoteHtml() {
         "<b>playbackState</b> (e.g. Plex + playing). Leaving an app or sleeping the TV pauses it.</div>"
 }
 
-private String esc(v) { (v ?: "").toString().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") }
+private String esc(v) { (v ?: "").toString().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("'", "&#39;").replace('"', "&quot;") }
 
 // ============================================================================
 // Buttons

@@ -1,10 +1,10 @@
 {
     "packageName": "Apple TV Now Playing (Beta)",
-    "releaseNotes": "1.2.0.4: after an update, each Apple TV now reconnects on its own (before, it could look connected but stop updating until Reconnect). First beta: Shows which app is playing on each Apple TV and whether it's playing or paused, plus the title when the app shares it, and whether the TV is awake. Separate from Apple TV Integration and doesn't change it. After installing, open Integrations, add Apple TV Now Playing (Beta), and pair each TV with the PIN shown on screen.",
+    "releaseNotes": "1.2.0.5: the Apple TV cards on the app page now update live, no page refresh needed. 1.2.0.4: after an update, each Apple TV reconnects on its own (before, it could look connected but stop updating until Reconnect). First beta: Shows which app is playing on each Apple TV and whether it's playing or paused, plus the title when the app shares it, and whether the TV is awake. Separate from Apple TV Integration and doesn't change it. After installing, open Integrations, add Apple TV Now Playing (Beta), and pair each TV with the PIN shown on screen.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Tests%20-%20Groovy%20RAW/Apple%20TV%20Integration%20BETA",
     "communityLink": "https://community.hubitat.com/t/166801",
     "author": "jdthomas24",
-    "version": "1.2.0.4",
+    "version": "1.2.0.5",
     "minimumHEVersion": "2.3.0",
     "dateReleased": "2026-10-17",
     "category": "Integrations",

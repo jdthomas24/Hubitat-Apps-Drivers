@@ -25,7 +25,7 @@
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { "1.2.0.4" }
+def version() { "1.2.0.5" }
 
 metadata {
     definition(name: "Apple TV Now Playing (Beta)", namespace: "jdthomas24", author: "jdthomas24",
