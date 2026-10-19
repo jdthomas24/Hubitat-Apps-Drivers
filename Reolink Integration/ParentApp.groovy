@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.6.12
+ * Version: 1.6.13
  *
  * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
  * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
@@ -20,6 +20,9 @@
  * exact command/param names verified against firmware (field names can
  * drift by version). Full history prior to 1.3.6 is in GitHub commit history.
  *
+ * v1.6.13 -- Dark mode (thanks @vurvantsev): hub theme colors with a light fallback for pre-2.5.3
+ *    firmware. Fixed the Find changed IP status box, Apply device changes button, Reconnecting
+ *    status and the Advanced schedule warning pill, which stayed light-colored.
  * v1.6.12 -- Hub/NVR doorbells detected from the channel's model (typeInfo), doorbellVersion
  *    or GetAiState visitor support, never the name (a Home Hub reported a doorbell as "Hub").
  *    Event pushes read status/AItype as comma-separated lists like reolink_aio ("MD,visitor"
@@ -330,7 +333,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.6.12"
+@Field static final String APP_VERSION = "1.6.13"
 
 // v1.6.5: power mode migration key; changing it re-runs migrateBatteryModes().
 @Field static final String POWER_MIGRATION_KEY = "batteryWired"
@@ -1502,7 +1505,7 @@ def discoverPage(params) {
                         paragraph "<hr class='border-0 border-top-1 surface-border my-2'>"
                         input "applyDeviceChanges_${sourceId}", "button",
                             title: "<i class='fa-solid fa-floppy-disk mr-2' aria-hidden='true'></i>Apply device changes",
-                            width: 12
+                            width: 12, inputClass: "app-ui-button"
                     } else if (channelCount == 1) {
                         paragraph "<span class='text-sm text-color-secondary'>One channel: changes apply immediately. " +
                             "Turn on to create the device; turn off to remove it.</span>"
@@ -1532,7 +1535,7 @@ def discoverPage(params) {
                     defaultValue: true, submitOnChange: true, styleClass: "reolink-connection-toggle"
                 def connStatus = state.sourceConnMode?.get(sourceId.toString()) ?: "not started"
                 def statusClass = connStatus == "connected" ? "hub-text-success" :
-                    connStatus == "reconnecting" ? "text-orange-700" : "text-color-secondary"
+                    connStatus == "reconnecting" ? "hub-text-warning" : "text-color-secondary"
                 paragraph rawHtml: true, "<div class='border-top-1 surface-border pt-3'>" +
                     "<div class='flex gap-3 mb-3'><span class='w-6rem flex-shrink-0'>Status</span>" +
                     "<span class='${statusClass} font-semibold'>&#9679; ${discoveryEscapeHtml(connStatus.capitalize())}</span></div>" +
@@ -1678,17 +1681,17 @@ def findChangedIpPage(params) {
                 "<div class='reolink-recovery-row'><span>Saved IP</span><code>${discoveryEscapeHtml(src.host)}</code></div>"
         }
         section(sectionClass: "app-ui-links reolink-recovery-status") {
-            String tone = verified ? "green" : (!hasUid || recovery.phase == "error") ? "yellow" : "blue"
+            String tone = verified ? "success" : (!hasUid || recovery.phase == "error") ? "warn" : "info"
             String statusIcon = verified ? "fa-circle-check" : busy ? "fa-spinner fa-spin" :
-                tone == "yellow" ? "fa-circle-exclamation" : "fa-magnifying-glass"
+                tone == "warn" ? "fa-circle-exclamation" : "fa-magnifying-glass"
             String heading = verified ? "Device verified" : !hasUid ? "Device identity not saved" :
                 recovery.phase == "searching" ? "Finding your device" : recovery.phase == "verifying" ? "Verifying device identity" :
                 recovery.phase == "error" ? "Unable to verify device" : recovery.phase == "done" ? "Search result" : "Ready to locate this device"
             String message = !hasUid ? "Connect this source at its current IP and refresh a device to save its identity. If it has already moved, use Edit connection settings." :
                 verified ? "The device UID matches your saved source." : recovery.message ?: "Search your local network for the same device."
-            paragraph rawHtml: true, "<div class='bg-${tone}-50 border-1 border-${tone}-200 border-round p-3'>" +
+            paragraph rawHtml: true, "<div class='p-message p-message-${tone} reolink-message border-round'>" +
                 "<div class='reolink-status-heading font-semibold flex align-items-center gap-2'>" +
-                "<i class='fa-solid ${statusIcon} text-${tone}-700' aria-hidden='true'></i><span>${heading}</span></div>" +
+                "<i class='fa-solid ${statusIcon}' aria-hidden='true'></i><span>${heading}</span></div>" +
                 (verified ? "<div class='flex align-items-center flex-wrap gap-3 mt-3'>" +
                     "<div><div class='text-sm text-color-secondary mb-1'>Saved IP</div><code>${discoveryEscapeHtml(src.host)}</code></div>" +
                     "<i class='fa-solid fa-arrow-right text-color-secondary' aria-hidden='true'></i>" +
@@ -2321,7 +2324,7 @@ def presetsPage(params) {
                 title: "Advanced: edit raw per-hour schedule strings directly (power users only)",
                 defaultValue: false, submitOnChange: true
             if (advancedMode) {
-                paragraph "<span class='inline-block bg-orange-50 text-orange-700 font-bold text-xs px-2 py-1 " +
+                paragraph "<span class='inline-block p-tag p-tag-warning font-bold text-xs px-2 py-1 " +
                     "border-round-xl mr-2'><i class='fa-solid fa-exclamation-triangle mr-2' aria-hidden='true'></i>WARNING</span>" +
                     "You're editing raw 168-character schedule strings (one digit per hour of the week, " +
                     "Sunday 12am first, 1=record/0=don't) instead of the simple picker. Almost nobody needs " +
