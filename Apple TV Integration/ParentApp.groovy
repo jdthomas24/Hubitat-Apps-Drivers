@@ -36,13 +36,15 @@
      -Log level is the only logging control. It's pushed to every Apple TV device, and each
       device sends its lines back to childLog(), so all logging appears under this app,
       labeled by device. Full turns itself off after 30 minutes.
-     -UI follows HubitatAppUiTemplate (Reolink v1.6.1, UI design by gopher.ny).
+     -UI follows HubitatAppUiTemplate (Reolink, UI design by gopher.ny). Dark mode uses the hub's theme
+      classes (hub-text-*, app-ui-button*, app-ui-links/navigation, surface-*, p-message/p-tag) and var() tokens
+      with fallbacks; legacyLightThemeCss() covers pre-2.5.3 firmware (pattern by vurvantsev, Reolink 1.6.13).
 */
 
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Apple TV Integration"
-@Field static final String APP_VERSION = "1.1.3"
+@Field static final String APP_VERSION = "1.1.4"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/166801"
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
@@ -408,7 +410,7 @@ def mainPage(params = null) {
                 state.remove("pageNote")
             }
         }
-        section(sectionClass: "app-main-content") {
+        section(sectionClass: "app-ui-links app-main-content") {
             paragraph rawHtml: true, columnHeader("Apple TVs")
             if (!paired) {
                 paragraph "<span class='text-color-secondary'>No Apple TVs paired yet. Pair one from the list below.</span>"
@@ -419,10 +421,10 @@ def mainPage(params = null) {
                 if (state.confirmRemove == key) {
                     paragraph rawHtml: true, warningMessageHtml("Remove <b>${d.displayName}</b>? Rules and dashboards that use it will stop working.")
                     input name: "confirmRemove_${key}", type: "button", title: "Yes, remove", width: 3,
-                        backgroundColor: "#c62828", textColor: "white"
-                    input name: "keepTv_${key}", type: "button", title: "Keep it", width: 3
+                        inputClass: "app-ui-button app-ui-button-danger"
+                    input name: "keepTv_${key}", type: "button", title: "Keep it", width: 3, inputClass: "app-ui-button"
                 } else {
-                    input name: "removeTv_${key}", type: "button", title: "Remove", width: 3
+                    input name: "removeTv_${key}", type: "button", title: "Remove", width: 3, inputClass: "app-ui-button"
                 }
                 paragraph rawHtml: true, "<div class='atv-end'></div>"
             }
@@ -432,15 +434,15 @@ def mainPage(params = null) {
                     "Searching. Waking an Apple TV with its remote makes it announce itself. Tap Refresh, or add it by IP below.") + "</span>"
             }
             unpaired.each { rec -> pairRow(rec) }
-            input name: "refreshTvs", type: "button", title: "Refresh", width: 3
+            input name: "refreshTvs", type: "button", title: "Refresh", width: 3, inputClass: "app-ui-button"
             input name: "manualIp", type: "text", title: "Not listed? Add by IP", description: "e.g. 192.168.1.120",
                 required: false, width: 5
-            input name: "addByIp", type: "button", title: "Add", width: 2
+            input name: "addByIp", type: "button", title: "Add", width: 2, inputClass: "app-ui-button"
             if (paired) {
                 paragraph "<span class='text-color-secondary' style='font-size:14px;'>Tap <b>Done</b> when finished. That's what finalizes the install.</span>"
             }
         }
-        section(sectionClass: "app-main-settings") {
+        section(sectionClass: "app-ui-links app-main-settings") {
             paragraph rawHtml: true, columnHeader("Quick Settings")
             input "logLevel", "enum", title: "Log level", options: LOG_LEVELS,
                 defaultValue: "Errors Only", submitOnChange: true, width: 12,
@@ -461,18 +463,18 @@ private void pairRow(Map rec) {
     paragraph rawHtml: true, foundCardHtml(rec, tvName)
     if (stage == "PIN") {
         input name: "pin_${key}", type: "text", title: "PIN shown on the TV", required: false, width: 4, submitOnChange: true
-        input name: "submitPin_${key}", type: "button", title: "Submit PIN", width: 3
-        input name: "cancelPair_${key}", type: "button", title: "Cancel", width: 3
+        input name: "submitPin_${key}", type: "button", title: "Submit PIN", width: 3, inputClass: "app-ui-button app-ui-button-primary"
+        input name: "cancelPair_${key}", type: "button", title: "Cancel", width: 3, inputClass: "app-ui-button"
     } else {
         input name: "tvName_${key}", type: "text", title: "Device name in Hubitat", defaultValue: child?.label ?: "Apple TV - ${tvName}",
             required: false, width: 6
-        input name: "pairTv_${key}", type: "button", title: stage == "FAILED" ? "Try Again" : "Pair", width: 3
-        if (child) input name: "cancelPair_${key}", type: "button", title: "Cancel", width: 3
-        else if (rec.manual) input name: "forgetIp_${key}", type: "button", title: "Forget", width: 3
+        input name: "pairTv_${key}", type: "button", title: stage == "FAILED" ? "Try Again" : "Pair", width: 3, inputClass: "app-ui-button app-ui-button-primary"
+        if (child) input name: "cancelPair_${key}", type: "button", title: "Cancel", width: 3, inputClass: "app-ui-button"
+        else if (rec.manual) input name: "forgetIp_${key}", type: "button", title: "Forget", width: 3, inputClass: "app-ui-button"
     }
     if (status && stage != "DONE") {
         paragraph rawHtml: true, stage == "FAILED" ? warningMessageHtml(status) :
-            "<div style='color:#1565c0;font-size:14px'><i class='pi pi-info-circle' style='margin-right:6px'></i>${status}</div>"
+            "<div class='hub-text-link' style='font-size:14px'><i class='pi pi-info-circle' style='margin-right:6px'></i>${status}</div>"
     }
     paragraph rawHtml: true, "<div class='atv-end'></div>"
 }
@@ -503,23 +505,23 @@ private String atvCardHtml(d) {
     String conn = d.currentValue("connection") ?: "unknown"
     String power = d.currentValue("power") ?: "unknown"
     String cc = conn == "connected" ? "#2e9e5b" : conn in ["offline", "not paired"] ? "#c62828" : "#b26a00"
-    String dot = "<span style='display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:${d.currentValue('switch') == 'on' ? '#2e9e5b' : '#bbb'}'></span>"
+    String dot = "<span style='display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:${d.currentValue('switch') == 'on' ? 'var(--hubitat-success-color, #2e9e5b)' : 'var(--text-color-secondary, #bbb)'}'></span>"
     String sub = [d.getDataValue("appleTvName"), modelName(d.getDataValue("model")), d.getDataValue("ip")].findAll { it }.join(" &middot; ")
     StringBuilder card = new StringBuilder()
-    card << "<div style='border:1px solid #ccc;border-radius:10px;padding:12px 14px;margin:4px 0 0;background:#fafafa'>"
+    card << "<div style='border:1px solid var(--surface-border, rgba(0,0,0,.12));border-radius:10px;padding:12px 14px;margin:4px 0 0;background:var(--surface-card, #fff)'>"
     card << "<div><a href='/device/edit/${d.id}' target='_blank' class='atv-link'>${dot}${d.displayName}" +
         "<i class='fa-regular fa-external-link' style='margin-left:5px;font-size:0.8em'></i></a>"
     card << "<span style='margin-left:8px;background:${cc};color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em;font-weight:bold'>${conn}</span>"
     card << "<span style='margin-left:6px;background:#455a64;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>${power}</span></div>"
-    card << "<div style='margin-top:6px;color:#888;font-size:0.8em'>${sub}</div></div>"
+    card << "<div class='text-color-secondary' style='margin-top:6px;font-size:0.8em'>${sub}</div></div>"
     return card.toString()
 }
 
 private String foundCardHtml(Map rec, String tvName) {
     String sub = [modelName(rec.model as String), (rec.addresses.last() as Map).ip].join(" &middot; ")
     String tag = rec.manual ? "<span style='margin-left:8px;background:#90a4ae;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>Added by IP</span>" : ""
-    return "<div style='border:1px dashed #ccc;border-radius:10px;padding:10px 14px;margin:4px 0 0'>" +
-        "<b>${tvName}</b><span style='color:#888;font-size:0.8em;margin-left:8px'>${sub}</span>${tag}</div>"
+    return "<div style='border:1px dashed var(--surface-border, rgba(0,0,0,.12));border-radius:10px;padding:10px 14px;margin:4px 0 0'>" +
+        "<b>${tvName}</b><span class='text-color-secondary' style='font-size:0.8em;margin-left:8px'>${sub}</span>${tag}</div>"
 }
 
 // ============================================================================
@@ -627,7 +629,7 @@ private void removeTv(String key) {
 // ============================================================================
 
 private String exampleBoxHtml(String content) {
-    "<div style='background:#f5f5f5;border-left:4px solid #5f8b6f;padding:10px 14px;margin-top:6px'>${content}</div>"
+    "<div style='background:var(--surface-ground, #f5f7fa);border-left:4px solid #5f8b6f;padding:10px 14px;margin-top:6px'>${content}</div>"
 }
 
 private List tipsTopics() {
@@ -661,13 +663,13 @@ private List tipsTopics() {
         [id: "using", label: "Scenes and rules", title: "Use it in scenes and rules", group: "Using it", icon: "pi-play",
             body: "<p>Each Apple TV is a standard <b>Switch</b>, so scenes, Rule Machine, dashboards and voice assistants work with it directly.</p>" +
                 "<table style='width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px'>" +
-                "<tr style='background:#f5f7fa'><th style='text-align:left;padding:8px'>Attribute or command</th><th style='text-align:left;padding:8px'>What it does</th></tr>" +
-                "<tr style='border-top:1px solid #e0e0e0'><td style='padding:8px'><b>on</b></td><td style='padding:8px'>Wakes the Apple TV</td></tr>" +
-                "<tr style='border-top:1px solid #e0e0e0'><td style='padding:8px'><b>off</b></td><td style='padding:8px'>Puts it to sleep. Skipped if it's already asleep.</td></tr>" +
-                "<tr style='border-top:1px solid #e0e0e0'><td style='padding:8px'><b>switch</b></td><td style='padding:8px'>on when awake or on the screensaver, off when asleep</td></tr>" +
-                "<tr style='border-top:1px solid #e0e0e0'><td style='padding:8px'><b>power</b></td><td style='padding:8px'>asleep, screensaver or awake</td></tr>" +
-                "<tr style='border-top:1px solid #e0e0e0'><td style='padding:8px'><b>connection</b></td><td style='padding:8px'>connected, connecting, reconnecting, offline or not paired</td></tr>" +
-                "<tr style='border-top:1px solid #e0e0e0'><td style='padding:8px'><b>refresh</b></td><td style='padding:8px'>Re-reads the power state</td></tr>" +
+                "<tr style='background:var(--surface-ground, #f5f7fa)'><th style='text-align:left;padding:8px'>Attribute or command</th><th style='text-align:left;padding:8px'>What it does</th></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'><b>on</b></td><td style='padding:8px'>Wakes the Apple TV</td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'><b>off</b></td><td style='padding:8px'>Puts it to sleep. Skipped if it's already asleep.</td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'><b>switch</b></td><td style='padding:8px'>on when awake or on the screensaver, off when asleep</td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'><b>power</b></td><td style='padding:8px'>asleep, screensaver or awake</td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'><b>connection</b></td><td style='padding:8px'>connected, connecting, reconnecting, offline or not paired</td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'><b>refresh</b></td><td style='padding:8px'>Re-reads the power state</td></tr>" +
                 "</table>" +
                 "<p>Power changes made with the Siri Remote show up in Hubitat right away, so rules can react when someone turns the Apple TV on or off.</p>"],
         [id: "remote", label: "Remote buttons", title: "Home Screen vs TV button", group: "Using it", icon: "pi-mobile",
@@ -727,7 +729,7 @@ private List tipsTopics() {
 // ============================================================================
 
 private void helpAndSupportSection() {
-    section(title: "<b>Help & Support</b>", sectionClass: "app-main-support") {
+    section(title: "<b>Help & Support</b>", sectionClass: "app-ui-links app-main-support") {
         href name: "tips", title: "<i class='pi pi-info-circle' aria-hidden='true'></i>Tips & Troubleshooting",
             page: "tipsPage", description: "Setup, scenes and troubleshooting", width: 4, style: "margin:8px;"
         paragraph rawHtml: true, supportLinkHtml(COMMUNITY_URL, "pi pi-comments",
@@ -746,36 +748,36 @@ private void versionFooterSection() {
 private String supportLinkHtml(String url, String iconClass, String title, String subtitle) {
     """
 <a href='${url}' target='_blank' rel='noopener noreferrer'
-   class='flex align-items-center gap-3 border-1 border-gray-200 border-round px-3 py-2 text-color no-underline'>
-  <i class='${iconClass} text-blue-700 text-xl flex-shrink-0'></i>
+   class='flex align-items-center gap-3 border-1 surface-border border-round px-3 py-2 text-color no-underline'>
+  <i class='${iconClass} hub-text-link text-xl flex-shrink-0'></i>
   <span class='min-w-0 flex-1'>
-    <span class='block text-blue-700 font-semibold'>${title}</span>
+    <span class='block hub-text-link font-semibold'>${title}</span>
     <span class='block text-color-secondary mt-1' style='font-size:14px;'>${subtitle}</span>
   </span>
-  <i class='fa-regular fa-external-link text-blue-700 flex-shrink-0'></i>
+  <i class='fa-regular fa-external-link hub-text-link flex-shrink-0'></i>
 </a>
 """
 }
 
 private String statusBannerHtml(boolean ok, String title, String summary) {
-    String tone = ok ? "bg-green-50 border-green-200" : "p-message p-message-warn app-message"
-    String icon = ok ? "pi pi-check-circle text-green-700" : "fa-solid fa-exclamation-triangle text-yellow-700"
+    String tone = ok ? "p-message p-message-success app-message" : "p-message p-message-warn app-message"
+    String icon = ok ? "pi pi-check-circle hub-text-success" : "fa-solid fa-exclamation-triangle hub-text-warning"
     """
 <style>
   ${appPageSpacingCss()}
   ${tipsCardCss()}
   .app-main-content { float: left; width: calc(62% - 8px); }
-  .app-main-settings { float: right; width: 38%; border-left: 1px solid #e0e0e0; padding-left: 8px; box-sizing: border-box; }
+  .app-main-settings { float: right; width: 38%; border-left: 1px solid var(--surface-border, rgba(0,0,0,.12)); padding-left: 8px; box-sizing: border-box; }
   .app-main-content > .mdl-grid, .app-main-settings > .mdl-grid { padding: 4px 0 !important; }
   .app-main-support { clear: both; }
-  a.atv-link { color: #1565c0; text-decoration: none; font-weight: 600; }
+  a.atv-link { color: var(--hubitat-link-color, #1565c0); text-decoration: none; font-weight: 600; }
   a.atv-link:hover { text-decoration: underline; }
   .app-main-content :is([name*='removeTv_'],[name*='confirmRemove_'],[name*='keepTv_'],[name*='pairTv_'],[name*='submitPin_'],[name*='cancelPair_'],[name='refreshTvs'],
     [id*='removeTv_'],[id*='confirmRemove_'],[id*='keepTv_'],[id*='pairTv_'],[id*='submitPin_'],[id*='cancelPair_'],[id='refreshTvs']) {
     font-size: 13px !important; padding: 3px 12px !important; min-height: 0 !important; height: auto !important;
-    line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid #d0d7de !important;
+    line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid var(--hubitat-control-border, #d0d7de) !important;
     white-space: nowrap; }
-  .atv-end { border-bottom: 1px solid #e0e0e0; margin: 4px 0 18px; }
+  .atv-end { border-bottom: 1px solid var(--surface-border, rgba(0,0,0,.12)); margin: 4px 0 18px; }
   .app-main-support button.hrefElem[name^='_action_href_tips'] { height: 61.5px; padding-bottom: 13.5px; box-sizing: border-box; }
   @media (max-width: 1000px) {
     .app-main-content, .app-main-settings { float: none; width: 100%; border-left: 0; padding-left: 0; }
@@ -789,7 +791,7 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
       <div class='text-color-secondary mt-1' style='font-size:14px;'>${summary}</div>
     </div>
   </div>
-  <a href='/logs?tab=past&amp;appId=${app.id}' target='_blank' class='text-blue-700 font-semibold white-space-nowrap no-underline'>
+  <a href='/logs?tab=past&amp;appId=${app.id}' target='_blank' class='hub-text-link font-semibold white-space-nowrap no-underline'>
     View logs <i class='fa-regular fa-external-link'></i>
   </a>
 </div>
@@ -807,7 +809,7 @@ private String countText(int count, String singular, String plural = null) {
 private String loggingDetailsPopupHtml() {
     String current = currentLogLevel()
     String details = """
-<div class='text-left text-color' style='max-width:520px;line-height:1.45;'>
+<div class='atv-dialog text-left text-color' style='max-width:520px;line-height:1.45;'>
   <div class='text-xl font-bold mb-1'>Logging levels</div>
   <div class='text-color-secondary text-base mb-3'>One setting for the app and every Apple TV device.</div>
   ${logLevelDetailHtml("Errors Only", "Warnings and errors only, such as an Apple TV going offline.", current)}
@@ -819,22 +821,22 @@ private String loggingDetailsPopupHtml() {
         .replace("&", "&amp;").replace("'", "&#39;").replace("<", "&lt;").replace(">", "&gt;")
     """
 <a href='#' onclick='window.alertHubitat(${js}); return false;'
-   class='flex align-items-center justify-content-between gap-3 bg-gray-50 border-1 border-gray-200 border-round px-3 py-2 h-full text-color no-underline'>
+   class='flex align-items-center justify-content-between gap-3 surface-ground border-1 surface-border border-round px-3 py-2 h-full text-color no-underline'>
   <span>
     <span class='block font-semibold'>Logging details</span>
     <span class='block text-color-secondary mt-1' style='font-size:14px;'>What each level records</span>
   </span>
-  <i class='pi pi-chevron-right text-blue-700'></i>
+  <i class='pi pi-chevron-right hub-text-link'></i>
 </a>
 """
 }
 
 private String logLevelDetailHtml(String name, String description, String current) {
-    String badge = name == current ? "<span class='text-green-700 text-xs font-bold'>Current</span>" : ""
-    String tone = name == "Errors Only" ? "bg-red-50 text-red-700" :
-        name == "Full" ? "bg-indigo-50 text-indigo-700" : "bg-blue-50 text-blue-700"
+    String badge = name == current ? "<span class='hub-text-success text-xs font-bold'>Current</span>" : ""
+    String tone = name == "Errors Only" ? "p-tag p-tag-danger" :
+        name == "Full" ? "p-tag p-tag-warning" : "p-tag p-tag-info"
     """
-<div class='border-1 border-gray-200 border-round px-3 py-2 mb-2'>
+<div class='border-1 surface-border border-round px-3 py-2 mb-2'>
   <div class='flex align-items-center justify-content-between gap-3 mb-1'>
     <span class='${tone} border-round-xl px-2 py-1 text-xs font-bold'>${name}${name == "Errors Only" ? " (default)" : ""}</span>
     ${badge}
@@ -850,22 +852,22 @@ def tipsPage(params = null) {
     int i = topics.indexOf(topic)
     def next = i + 1 < topics.size() ? topics[i + 1] : null
     dynamicPage(name: "tipsPage", title: "Tips & Troubleshooting") {
-        section(sectionClass: "app-tips-index") {
+        section(sectionClass: "app-ui-links app-tips-index app-ui-navigation") {
             paragraph rawHtml: true, tipsStylesHtml()
             topics.groupBy { it.group }.each { group, entries ->
                 paragraph rawHtml: true, "<div class='app-heading font-semibold mt-2'>${group}</div>"
                 entries.each { entry ->
-                    String selected = entry.id == topic.id ? "app-topic-current" : ""
+                    String selected = entry.id == topic.id ? "app-ui-navigation-selected" : ""
                     href name: "tip_${entry.id}",
                         title: "<span class='${selected}'><i class='pi ${entry.icon} mr-3' aria-hidden='true'></i>${entry.label}</span>",
                         description: "", page: "tipsPage", params: [topic: entry.id], width: 12, style: "margin:0 8px;"
                 }
             }
         }
-        section(sectionClass: "app-tips-article") {
+        section(sectionClass: "app-ui-links app-tips-article") {
             paragraph rawHtml: true, tipsArticleHtml(topic)
             if (next) {
-                href name: "nextTip", title: "<span class='text-blue-700'>${next.label}</span>",
+                href name: "nextTip", title: "<span class='hub-text-link'>${next.label}</span>",
                     description: "Next topic", page: "tipsPage", params: [topic: next.id], width: 12, style: "margin:8px;"
             }
         }
@@ -875,8 +877,8 @@ def tipsPage(params = null) {
 private String tipsArticleHtml(Map topic) {
     String extra = ""
     if (topic.checklist) {
-        extra += "<div class='border-1 border-gray-200 border-round p-3 mb-3'>" + topic.checklist.collect { item ->
-            "<div class='flex align-items-center gap-3 py-2'><i class='pi pi-check-circle text-blue-700 text-xl' aria-hidden='true'></i>" +
+        extra += "<div class='border-1 surface-border border-round p-3 mb-3'>" + topic.checklist.collect { item ->
+            "<div class='flex align-items-center gap-3 py-2'><i class='pi pi-check-circle hub-text-link text-xl' aria-hidden='true'></i>" +
             "<div><div class='font-semibold'>${item.title}</div><div class='text-sm text-color-secondary'>${item.detail}</div></div></div>"
         }.join("") + "</div>"
     }
@@ -884,7 +886,7 @@ private String tipsArticleHtml(Map topic) {
     """
 <article class='app-tip-card'>
   <div class='app-tip-card-header flex align-items-center gap-3'>
-    <i class='pi ${topic.icon} text-blue-700 text-xl' aria-hidden='true'></i>
+    <i class='pi ${topic.icon} hub-text-link text-xl' aria-hidden='true'></i>
     <h4 class='app-heading font-semibold m-0'>${topic.title}</h4>
   </div>
   <div class='app-tip-copy'>${topic.body}${extra}</div>
@@ -897,25 +899,17 @@ private String tipsStylesHtml() {
 <style>
   ${appPageSpacingCss()}
   .app-tips-index { float: left; width: calc(27% - 8px); box-sizing: border-box; }
-  .app-tips-article { float: right; width: 73%; border-left: 1px solid #e0e0e0; padding-left: 8px; box-sizing: border-box; }
+  .app-tips-article { float: right; width: 73%; border-left: 1px solid var(--surface-border, rgba(0,0,0,.12)); padding-left: 8px; box-sizing: border-box; }
   .app-tips-index > .mdl-grid, .app-tips-article > .mdl-grid { padding: 4px 0 !important; }
   .app-tips-index .mdl-cell:has(> style) { display: none; }
-  .app-tips-index button.hrefElem {
-    background: transparent; box-shadow: none; border: 0; border-left: 3px solid transparent;
-    border-radius: 0; padding: 9px 10px; font-family: inherit; font-size: 16px; color: #1565c0;
-  }
-  .app-tips-index button.hrefElem::before { display: none; }
-  .app-tips-index button.hrefElem:has(.app-topic-current) { background: #eaf2fc; border-left-color: #1565c0; font-weight: 600; }
-  .app-tips-index button.hrefElem:hover { background: #f3f6fa; }
-  .app-tips-index button.hrefElem:focus-visible { outline: 2px solid #1565c0; outline-offset: 2px; }
-  .app-tip-card { border: 1px solid #dfe3e8; border-radius: 4px; overflow: hidden; margin-bottom: 12px; }
-  .app-tip-card-header { padding: 16px; background: #f5f7fa; border-bottom: 1px solid #e4e7ec; }
+  .app-tip-card { border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 4px; overflow: hidden; margin-bottom: 12px; }
+  .app-tip-card-header { padding: 16px; background: var(--surface-ground, #f5f7fa); border-bottom: 1px solid var(--surface-border, rgba(0,0,0,.12)); }
   .app-tip-copy { padding: 16px; line-height: 1.55; overflow-wrap: anywhere; }
   .app-tip-copy p { margin: 0 0 16px; }
   .app-tip-copy p:last-child { margin-bottom: 0; }
   .app-tip-copy .app-message { margin-top: 12px; }
-  .app-tips-article button.hrefElem { background: #fff; box-shadow: none; border: 1px solid #dfe3e8; border-radius: 4px; font-family: inherit; }
-  .app-tips-article button.hrefElem::before { color: #1565c0; }
+  .app-tips-article button.hrefElem { background: var(--surface-card, #fff); box-shadow: none; border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 4px; font-family: inherit; }
+  .app-tips-article button.hrefElem::before { color: var(--hubitat-link-color, #1565c0); }
   #formApp:has(.app-tips-index) #fieldsetAppButtons { clear: both; }
   @media (max-width: 1000px) {
     .app-tips-index, .app-tips-article { float: none; width: 100%; padding: 0; border-left: 0; }
@@ -925,7 +919,7 @@ private String tipsStylesHtml() {
 }
 
 private String logLevelPill(String level) {
-    def tones = ["Errors Only": "bg-red-50 text-red-700", "Normal": "bg-gray-100 text-gray-700", "Full": "bg-indigo-50 text-indigo-700"]
+    def tones = ["Errors Only": "p-tag p-tag-danger", "Normal": "surface-ground text-color-secondary", "Full": "p-tag p-tag-warning"]
     "<span class='inline-block ${tones[level] ?: tones['Normal']} font-bold text-xs px-2 py-1 border-round-xl'>${level}</span>"
 }
 
@@ -940,29 +934,60 @@ private String appPageSpacingCss() {
   ${tileSecondaryTextCss()}
   .app-heading { font-size: 16px; }
   .p-message.app-message { padding: 0.75rem !important; margin: 0; border: 0 !important; }
-  .app-message .text-color-secondary, .app-message .text-blue-700, .app-message .text-yellow-700 { color: inherit !important; }
+  .app-message .text-color-secondary, .app-message .hub-text-link, .app-message .hub-text-warning,
+  .app-message .hub-text-success, .app-message .hub-text-danger { color: inherit !important; }
   div.panel-body { padding: 0 !important; margin-left: -0.5em; margin-right: -0.5em; }
   fieldset#fieldsetAppButtons { margin-left: 0.5em; margin-right: 0.5em; }
 """
 }
 
+// Light fallback for firmware without the hub's semantic app classes (pre-2.5.3); scoped to this app's form
+// and logging dialog. Capable firmware marks data-hubitat-app-ui-semantics="1" and these rules step aside.
+private String legacyLightThemeCss() {
+    """
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) .hub-text-link { color: var(--hubitat-link-color, #1565c0) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) .hub-text-success { color: var(--hubitat-success-color, #356700) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) .hub-text-warning { color: var(--hubitat-warning-color, #8a5a00) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) .hub-text-danger { color: var(--hubitat-validation-color, #b71c1c) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) .app-ui-links .hrefElem { color: var(--hubitat-link-color, #1565c0) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) .app-ui-links .hrefElem > .state-incomplete-text,
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) .app-ui-links .hrefElem > .state-complete-text { color: var(--text-color-secondary, #616161); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) button.mdl-button.app-ui-button { background: var(--hubitat-control-background, rgba(158,158,158,.2)); color: var(--hubitat-control-text, #363636); border: 1px solid transparent; border-radius: 4px; box-shadow: 0 2px 2px rgba(0,0,0,.14); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) button.mdl-button.app-ui-button:enabled:hover { background: var(--hubitat-control-hover-background, #cacfdc); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) button.mdl-button.app-ui-button-primary,
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) button.mdl-button.app-ui-button-primary:enabled:hover { background: var(--hubitat-brand-background, #81bc00); color: var(--hubitat-on-brand, #fff); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) button.mdl-button.app-ui-button-secondary { background: var(--surface-card, #fff); color: var(--hubitat-link-color, #1565c0); border-color: var(--hubitat-control-border, #b0bec5); box-shadow: none; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) button.mdl-button.app-ui-button-danger,
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) button.mdl-button.app-ui-button-danger:enabled:hover { background: var(--hubitat-danger-background, #d32f2f); color: var(--hubitat-on-danger, #fff); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) button.mdl-button.app-ui-button:enabled:active { box-shadow: none; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) button.mdl-button.app-ui-button:disabled { background: var(--hubitat-control-background, #eee); color: var(--text-color-secondary, #616161); opacity: .6; cursor: not-allowed; box-shadow: none; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) .app-ui-navigation .hrefElem { background: transparent; color: var(--hubitat-link-color, #1565c0) !important; border: 0; border-left: 3px solid transparent; border-radius: 0; box-shadow: none; padding: 12px; font-family: inherit; font-size: 16px; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) .app-ui-navigation .hrefElem::before { display: none; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) .app-ui-navigation .hrefElem:not(:disabled):not(:has(.app-ui-navigation-selected)):hover { background: var(--surface-hover, #f3f6fa); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) .app-ui-navigation .hrefElem:has(.app-ui-navigation-selected) { background: var(--hubitat-selection-background, #eaf2fc); border-left-color: var(--hubitat-link-color, #1565c0); font-weight: 600; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) .app-ui-navigation .hrefElem:disabled { opacity: .6; cursor: not-allowed; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) button.mdl-button.app-ui-button:focus-visible,
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .atv-dialog) .app-ui-navigation .hrefElem:focus-visible { outline: 2px solid var(--hubitat-link-color, #1565c0); outline-offset: 2px; }
+"""
+}
+
 private String tileSecondaryTextCss() {
-    "#formApp .hrefElem > .state-incomplete-text, #formApp .hrefElem > .state-complete-text { font-size: 14px !important; }"
+    legacyLightThemeCss() + "#formApp .hrefElem > .state-incomplete-text, #formApp .hrefElem > .state-complete-text { font-size: 14px !important; }"
 }
 
 private String tipsCardCss() {
     """
   button.hrefElem[name^='_action_href_tips'] {
-    position: relative; background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; box-shadow: none;
-    color: #333; height: 56px; font-family: inherit; font-size: 16px; font-weight: 500; line-height: 1.4;
+    position: relative; background: var(--surface-card, #fff); border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 4px; box-shadow: none;
+    color: var(--text-color, #333); height: 56px; font-family: inherit; font-size: 16px; font-weight: 500; line-height: 1.4;
     padding: 8px 28px 8px 46px;
   }
-  button.hrefElem[name^='_action_href_tips'] > span:first-child { color: #1565c0; font-weight: 600; font-size: 16px !important; }
-  button.hrefElem[name^='_action_href_tips'] > span.state-incomplete-text { color: #777; font-size: 14px; font-weight: 500; line-height: 1.4; }
+  button.hrefElem[name^='_action_href_tips'] > span:first-child { color: var(--hubitat-link-color, #1565c0); font-weight: 600; font-size: 16px !important; }
+  button.hrefElem[name^='_action_href_tips'] > span.state-incomplete-text { color: var(--text-color-secondary, #757575); font-size: 14px; font-weight: 500; line-height: 1.4; }
   button.hrefElem[name^='_action_href_tips'] i.pi {
-    position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: #1565c0; font-size: 20px;
+    position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--hubitat-link-color, #1565c0); font-size: 20px;
   }
-  button.hrefElem[name^='_action_href_tips']::before { color: #1565c0; }
+  button.hrefElem[name^='_action_href_tips']::before { color: var(--hubitat-link-color, #1565c0); }
 """
 }
 

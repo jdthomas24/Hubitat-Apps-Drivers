@@ -1,12 +1,12 @@
 {
   "packageName": "Apple TV Integration",
-  "releaseNotes": "v1.1.3: new tvButton remote button, the Siri Remote's TV button. One press follows the Apple TV's TV Button setting, two presses (times 2) open the App Switcher. Typing tv or tvbutton as a button name in a rule now presses the TV button (it used to go to the Home Screen; use homeScreen for that). New Tips topic: Home Screen vs TV button. No Done needed after updating.",
+  "releaseNotes": "v1.1.4: Dark mode. The app follows the hub's light or dark theme (Hubitat 2.5.3+) and keeps its current look on older firmware. No Done needed. Coming in 1.2.0, after more testing: which app is playing on each Apple TV.",
   "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Apple%20TV%20Integration",
   "communityLink": "https://community.hubitat.com/t/166801",
   "author": "jdthomas24",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "minimumHEVersion": "2.3.0",
-  "dateReleased": "2026-10-18",
+  "dateReleased": "2026-10-19",
   "category": "Integrations",
   "tags": "Apple TV, TV, video, local control",
   "apps": [
