@@ -561,7 +561,7 @@ private String integrationOverviewHtml(int sourceCount, int deviceCount) {
   ${tipsCardCss()}
   .reolink-main-sources { float: left; width: calc(62% - 8px); }
   .reolink-main-settings {
-    float: right; width: 38%; border-left: 1px solid var(--surface-border);
+    float: right; width: 38%; border-left: 1px solid var(--surface-border, rgba(0,0,0,.12));
     padding-left: 8px; box-sizing: border-box;
   }
   .reolink-main-sources > .mdl-grid, .reolink-main-settings > .mdl-grid { padding: 4px 0 !important; }
@@ -593,11 +593,11 @@ private String tipsCardCss() {
     """
   button.hrefElem[name^='_action_href_tips'] {
     position: relative;
-    background: var(--surface-card);
-    border: 1px solid var(--surface-border);
+    background: var(--surface-card, #fff);
+    border: 1px solid var(--surface-border, rgba(0,0,0,.12));
     border-radius: 4px;
     box-shadow: none;
-    color: var(--text-color);
+    color: var(--text-color, rgba(0,0,0,.87));
     height: 56px;
     font-family: inherit;
     font-size: 16px;
@@ -605,19 +605,19 @@ private String tipsCardCss() {
     line-height: 1.4;
     padding: 8px 28px 8px 46px;
   }
-  button.hrefElem[name^='_action_href_tips'] > span:first-child { color: var(--hubitat-link-color); font-weight: 600; font-size: 16px !important; }
+  button.hrefElem[name^='_action_href_tips'] > span:first-child { color: var(--hubitat-link-color, #1565c0); font-weight: 600; font-size: 16px !important; }
   button.hrefElem[name^='_action_href_tips'] > span.state-incomplete-text {
-    color: var(--text-color-secondary); font-size: 14px; font-weight: 500; line-height: 1.4;
+    color: var(--text-color-secondary, rgba(0,0,0,.6)); font-size: 14px; font-weight: 500; line-height: 1.4;
   }
   button.hrefElem[name^='_action_href_tips'] i.pi {
     position: absolute;
     left: 14px;
     top: 50%;
     transform: translateY(-50%);
-    color: var(--hubitat-link-color);
+    color: var(--hubitat-link-color, #1565c0);
     font-size: 20px;
   }
-  button.hrefElem[name^='_action_href_tips']::before { color: var(--hubitat-link-color); }
+  button.hrefElem[name^='_action_href_tips']::before { color: var(--hubitat-link-color, #1565c0); }
 """
 }
 
@@ -653,9 +653,43 @@ private String mainPageColumnHeader(String title) {
     "<div class='reolink-status-heading font-semibold'>${title}</div>"
 }
 
+/**
+ * Supplies light-only semantic styles on firmware without the hub theme marker.
+ * Both beta themes set data-hubitat-theme on the root, disabling every fallback rule.
+ * Scope covers this app form and its logging dialog without changing other hub controls.
+ * @return CSS rules for legacy firmware; beta firmware uses the hub semantic classes
+ */
+private String legacyLightThemeCss() {
+    """
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .hub-text-link { color: #1565c0 !important; }
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .hub-text-success { color: #356700 !important; }
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .hub-text-warning { color: #8a5a00 !important; }
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .hub-text-danger { color: #b71c1c !important; }
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .app-ui-links .hrefElem { color: #1565c0 !important; }
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .app-ui-links .hrefElem > .state-incomplete-text,
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .app-ui-links .hrefElem > .state-complete-text { color: #616161; }
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button { background: rgba(158,158,158,.2); color: #363636; border: 1px solid transparent; border-radius: 4px; box-shadow: 0 2px 2px rgba(0,0,0,.14); }
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button:enabled:hover { background: #cacfdc; }
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button-primary,
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button-primary:enabled:hover { background: #81bc00; color: #fff; }
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button-secondary { background: #fff; color: #1565c0; border-color: #b0bec5; box-shadow: none; }
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button-danger,
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button-danger:enabled:hover { background: #d32f2f; color: #fff; }
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button:enabled:active { box-shadow: none; }
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button:disabled { background: #eee; color: #616161; opacity: .6; cursor: not-allowed; box-shadow: none; }
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .app-ui-navigation .hrefElem { background: transparent; color: #1565c0 !important; border: 0; border-left: 3px solid transparent; border-radius: 0; box-shadow: none; padding: 12px; font-family: inherit; font-size: 16px; }
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .app-ui-navigation .hrefElem::before { display: none; }
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .app-ui-navigation .hrefElem:not(:disabled):hover { background: #f3f6fa; }
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .app-ui-navigation .hrefElem:has(.app-ui-navigation-selected) { background: #eaf2fc; border-left-color: #1565c0; font-weight: 600; }
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .app-ui-navigation .hrefElem:disabled { opacity: .6; cursor: not-allowed; }
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button:focus-visible,
+  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .app-ui-navigation .hrefElem:focus-visible { outline: 2px solid #1565c0; outline-offset: 2px; }
+"""
+}
+
 /** Match Hubitat's native href secondary text across all app pages. */
 private String tileSecondaryTextCss() {
-    "#formApp .hrefElem > .state-incomplete-text, #formApp .hrefElem > .state-complete-text { font-size: 14px !important; }"
+    legacyLightThemeCss() + "#formApp .hrefElem > .state-incomplete-text, #formApp .hrefElem > .state-complete-text { font-size: 14px !important; }"
 }
 
 private String emptySourcesHtml() {
@@ -701,7 +735,7 @@ private String sourceSummaryLine(src, int deviceCount) {
 private String loggingDetailsPopupHtml() {
     String currentLevel = LOG_LEVELS.contains(logLevel) ? logLevel : "Errors Only"
     String details = """
-<div class='text-left text-color' style='max-width:520px;line-height:1.45;'>
+<div class='reolink-dialog text-left text-color' style='max-width:520px;line-height:1.45;'>
   <div class='text-xl font-bold mb-1'>Logging levels</div>
   <div class='text-color-secondary text-base mb-3'>Choose how much activity appears in the app logs.</div>
   ${loggingLevelDetailHtml("Errors Only", "Warnings and errors only.", currentLevel)}
@@ -819,16 +853,16 @@ private String tipsStylesHtml() {
 <style>
   ${appPageSpacingCss()}
   .reolink-tips-index { float: left; width: calc(27% - 8px); box-sizing: border-box; }
-  .reolink-tips-article { float: right; width: 73%; border-left: 1px solid var(--surface-border); padding-left: 8px; box-sizing: border-box; }
+  .reolink-tips-article { float: right; width: 73%; border-left: 1px solid var(--surface-border, rgba(0,0,0,.12)); padding-left: 8px; box-sizing: border-box; }
   .reolink-tips-index > .mdl-grid, .reolink-tips-article > .mdl-grid { padding: 4px 0 !important; }
   .reolink-tips-index .mdl-cell:has(> style) { display: none; }
-  .reolink-tip-card { border: 1px solid var(--surface-border); border-radius: 4px; overflow: hidden; }
-  .reolink-tip-card-header { padding: 16px; background: var(--surface-ground); border-bottom: 1px solid var(--surface-border); }
+  .reolink-tip-card { border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 4px; overflow: hidden; }
+  .reolink-tip-card-header { padding: 16px; background: var(--surface-ground, #fafafa); border-bottom: 1px solid var(--surface-border, rgba(0,0,0,.12)); }
   .reolink-tip-copy { padding: 16px; line-height: 1.55; overflow-wrap: anywhere; }
   .reolink-tip-copy p { margin: 0 0 16px; }
   .reolink-tip-copy p:last-child { margin-bottom: 0; }
-  .reolink-tips-article button.hrefElem { background: var(--surface-card); box-shadow: none; border: 1px solid var(--surface-border); border-radius: 4px; font-family: inherit; }
-  .reolink-tips-article button.hrefElem::before { color: var(--hubitat-link-color); }
+  .reolink-tips-article button.hrefElem { background: var(--surface-card, #fff); box-shadow: none; border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 4px; font-family: inherit; }
+  .reolink-tips-article button.hrefElem::before { color: var(--hubitat-link-color, #1565c0); }
   .form:has(> .reolink-tips-index) + fieldset,
   #formApp:has(.reolink-tips-index) #fieldsetAppButtons { clear: both; }
   @media (max-width: 1000px) {
@@ -1286,13 +1320,13 @@ private String addSourceStylesHtml() {
   ${appPageSpacingCss()}
   ${tipsCardCss()}
   .reolink-add-form { float: left; width: calc(62% - 8px); }
-  .reolink-add-guidance { float: right; width: 38%; padding-left: 8px; border-left: 1px solid var(--surface-border); box-sizing: border-box; }
+  .reolink-add-guidance { float: right; width: 38%; padding-left: 8px; border-left: 1px solid var(--surface-border, rgba(0,0,0,.12)); box-sizing: border-box; }
   .reolink-add-form > .mdl-grid, .reolink-add-guidance > .mdl-grid { padding: 4px 0 !important; }
   .reolink-add-form .mdl-cell:has(> style) { display: none; }
-  .reolink-add-source-type { background: var(--surface-ground); border-radius: 4px; padding: 12px; box-sizing: border-box; }
+  .reolink-add-source-type { background: var(--surface-ground, #fafafa); border-radius: 4px; padding: 12px; box-sizing: border-box; }
   .reolink-add-source-type .mdl-switch { height: auto; min-height: 24px; }
   .reolink-add-source-type .mdl-switch__label { line-height: 24px; }
-  .reolink-add-footer { clear: both; border-top: 1px solid var(--surface-border); margin: 0 8px !important; }
+  .reolink-add-footer { clear: both; border-top: 1px solid var(--surface-border, rgba(0,0,0,.12)); margin: 0 8px !important; }
   .reolink-add-actions { clear: both; }
   @media (max-width: 1000px) {
     .reolink-add-form, .reolink-add-guidance { float: none; width: 100%; padding: 0; border-left: 0; }
@@ -1693,7 +1727,7 @@ private String recoveryStylesHtml() {
   .reolink-recovery-summary > .mdl-grid, .reolink-recovery-status > .mdl-grid,
   .reolink-recovery-actions > .mdl-grid, .reolink-recovery-footer > .mdl-grid { padding: 4px 0 !important; }
   .reolink-recovery-summary .reolink-status-heading i, .reolink-recovery-status .reolink-status-heading i { font-size: 1em; }
-  .reolink-recovery-row { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 16px; padding: 14px 0; border-top: 1px solid var(--surface-border); }
+  .reolink-recovery-row { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 16px; padding: 14px 0; border-top: 1px solid var(--surface-border, rgba(0,0,0,.12)); }
   .reolink-recovery-summary code, .reolink-recovery-status code { font-size: 16px; overflow-wrap: anywhere; }
   .reolink-recovery-actions button { min-width: 128px; min-height: 40px; padding: 0 16px; border-radius: 4px; font-family: inherit; font-size: 14px; }
   @media (max-width: 480px) { .reolink-recovery-row { grid-template-columns: 1fr; gap: 6px; } }
@@ -1954,7 +1988,7 @@ private String discoveryOverviewHtml(int channelCount, int deviceCount, boolean 
   .reolink-discovery-danger > .mdl-grid { padding: 4px 0 !important; }
   .reolink-discovery-channels { float: left; width: calc(62% - 8px); }
   .reolink-discovery-connection, .reolink-discovery-recording {
-    float: right; width: 38%; border-left: 1px solid var(--surface-border); padding-left: 8px; box-sizing: border-box;
+    float: right; width: 38%; border-left: 1px solid var(--surface-border, rgba(0,0,0,.12)); padding-left: 8px; box-sizing: border-box;
   }
   .reolink-discovery-recording { clear: right; }
   .reolink-discovery-danger {
@@ -1962,31 +1996,31 @@ private String discoveryOverviewHtml(int channelCount, int deviceCount, boolean 
     width: calc(100% - 16px); margin: 0 8px 16px !important;
   }
   .reolink-discovery-danger::before {
-    content: ''; position: absolute; left: 0; right: 0; top: -9px; border-top: 1px solid var(--surface-border);
+    content: ''; position: absolute; left: 0; right: 0; top: -9px; border-top: 1px solid var(--surface-border, rgba(0,0,0,.12));
   }
   .reolink-discovery-connection > .mdl-grid {
-    margin: 12px 8px 0; padding: 4px !important; border: 1px solid var(--surface-border);
-    border-radius: 4px; background: var(--surface-card);
+    margin: 12px 8px 0; padding: 4px !important; border: 1px solid var(--surface-border, rgba(0,0,0,.12));
+    border-radius: 4px; background: var(--surface-card, #fff);
   }
   .reolink-channel-toolbar {
-    background: var(--surface-ground); border: 1px solid var(--surface-border); border-radius: 4px 4px 0 0;
+    background: var(--surface-ground, #fafafa); border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 4px 4px 0 0;
     padding: 12px; margin-bottom: 0;
   }
   .reolink-channel-toolbar:not(:has(~ .reolink-channel-row)) { border-radius: 4px; margin-bottom: 8px; }
   .reolink-channel-row {
-    background: var(--surface-ground); border: 1px solid var(--surface-border); border-top: 0;
+    background: var(--surface-ground, #fafafa); border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-top: 0;
     padding: 8px; margin-top: 0; margin-bottom: 0;
   }
   .reolink-channel-row:not(:has(~ .reolink-channel-row)) { border-radius: 0 0 4px 4px; margin-bottom: 8px; }
   .reolink-channel-row > .w-fit {
-    width: 100% !important; box-sizing: border-box; background: var(--surface-card);
-    border: 1px solid var(--surface-border); border-radius: 4px; padding: 10px 12px;
+    width: 100% !important; box-sizing: border-box; background: var(--surface-card, #fff);
+    border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 4px; padding: 10px 12px;
   }
   .reolink-channel-row .mdl-switch, .reolink-channel-toolbar .mdl-switch,
   .reolink-connection-toggle .mdl-switch { height: auto; min-height: 24px; }
   .reolink-channel-row .mdl-switch__label { line-height: 24px; }
   .reolink-discovery-channels button.hrefElem {
-    background: var(--surface-card); color: var(--hubitat-link-color); border: 1px solid var(--surface-border);
+    background: var(--surface-card, #fff); color: var(--hubitat-link-color, #1565c0); border: 1px solid var(--surface-border, rgba(0,0,0,.12));
     border-radius: 4px; box-shadow: none;
   }
   .reolink-discovery-channels button[name^='_action_href_tips|'] {
@@ -1996,19 +2030,19 @@ private String discoveryOverviewHtml(int channelCount, int deviceCount, boolean 
     display: inline-block; padding-bottom: 0.5em;
   }
   .reolink-discovery-channels button.hrefElem .state-incomplete-text { font-size: 14px; }
-  .reolink-discovery-channels button.hrefElem::before { color: var(--hubitat-link-color); }
+  .reolink-discovery-channels button.hrefElem::before { color: var(--hubitat-link-color, #1565c0); }
   .reolink-discovery-channels .mdl-cell:has(> button[name^='_action_href_runDiscovery|']) { text-align: right; }
   .reolink-discovery-channels button[name^='_action_href_runDiscovery|'] {
     display: inline-block; width: auto !important; min-height: 36px; padding: 0 16px;
-    background: var(--hubitat-control-background); color: var(--hubitat-control-text); border: 0; border-radius: 4px;
+    background: var(--hubitat-control-background, rgba(158,158,158,.2)); color: var(--hubitat-control-text, #363636); border: 0; border-radius: 4px;
     font-family: inherit; font-size: 14px; font-weight: 500; line-height: 36px;
-    box-shadow: var(--hubitat-control-shadow);
+    box-shadow: var(--hubitat-control-shadow, 0 2px 2px rgba(0,0,0,.14));
   }
   .reolink-discovery-channels button[name^='_action_href_runDiscovery|']::before,
   .reolink-discovery-channels button[name^='_action_href_runDiscovery|'] > br,
   .reolink-discovery-channels button[name^='_action_href_runDiscovery|'] > .state-incomplete-text { display: none; }
-  .reolink-discovery-channels button[name^='_action_href_runDiscovery|']:hover { background: var(--hubitat-control-hover-background); }
-  .reolink-discovery-channels button[name^='_action_href_runDiscovery|']:focus-visible { outline: 2px solid var(--hubitat-link-color); outline-offset: 2px; }
+  .reolink-discovery-channels button[name^='_action_href_runDiscovery|']:hover { background: var(--hubitat-control-hover-background, #cacfdc); }
+  .reolink-discovery-channels button[name^='_action_href_runDiscovery|']:focus-visible { outline: 2px solid var(--hubitat-link-color, #1565c0); outline-offset: 2px; }
   @media (max-width: 1000px) {
     .reolink-discovery-channels, .reolink-discovery-connection, .reolink-discovery-recording {
       float: none; width: 100%; border-left: 0; padding-left: 0;
@@ -2384,7 +2418,7 @@ private String presetsStylesHtml() {
   ${appPageSpacingCss()}
   .reolink-presets-index { float: left; width: calc(27% - 8px); box-sizing: border-box; }
   .reolink-preset-editor, .reolink-presets-help, .reolink-presets-actions {
-    float: right; width: 73%; padding-left: 8px; border-left: 1px solid var(--surface-border); box-sizing: border-box;
+    float: right; width: 73%; padding-left: 8px; border-left: 1px solid var(--surface-border, rgba(0,0,0,.12)); box-sizing: border-box;
   }
   .reolink-presets-help, .reolink-presets-actions { clear: right; }
   .reolink-preset-hidden { display: none !important; }
@@ -2392,19 +2426,19 @@ private String presetsStylesHtml() {
   .reolink-presets-help > .mdl-grid, .reolink-presets-actions > .mdl-grid { padding: 4px 0 !important; }
   .reolink-presets-index .mdl-cell:has(> style) { display: none; }
   .reolink-preset-card-heading {
-    font-size: 16px; background: var(--surface-ground); border: 1px solid var(--surface-border); border-radius: 4px; padding: 12px;
+    font-size: 16px; background: var(--surface-ground, #fafafa); border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 4px; padding: 12px;
   }
   .reolink-preset-channel {
-    background: var(--surface-ground); border: 1px solid var(--surface-border); border-radius: 4px; padding: 12px; box-sizing: border-box;
+    background: var(--surface-ground, #fafafa); border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 4px; padding: 12px; box-sizing: border-box;
   }
-  .reolink-presets-actions > .mdl-grid { border-top: 1px solid var(--surface-border); margin: 0 8px; }
+  .reolink-presets-actions > .mdl-grid { border-top: 1px solid var(--surface-border, rgba(0,0,0,.12)); margin: 0 8px; }
   .reolink-preset-save { text-align: right; }
   .reolink-preset-editor .mdl-switch, .reolink-presets-help .mdl-switch { height: auto; min-height: 24px; }
   .reolink-preset-editor .mdl-switch__label, .reolink-presets-help .mdl-switch__label { line-height: 24px; }
-  .reolink-preset-guidance { border: 1px solid var(--surface-border); border-radius: 4px; margin-top: 16px; }
-  .reolink-preset-guidance summary { padding: 12px; background: var(--surface-ground); cursor: pointer; list-style: none; font-size: 16px; }
+  .reolink-preset-guidance { border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 4px; margin-top: 16px; }
+  .reolink-preset-guidance summary { padding: 12px; background: var(--surface-ground, #fafafa); cursor: pointer; list-style: none; font-size: 16px; }
   .reolink-preset-guidance summary::-webkit-details-marker { display: none; }
-  .reolink-preset-guidance summary::after { content: '\\203A'; float: right; color: var(--hubitat-link-color); }
+  .reolink-preset-guidance summary::after { content: '\\203A'; float: right; color: var(--hubitat-link-color, #1565c0); }
   .reolink-preset-guidance[open] summary::after { transform: rotate(90deg); }
   .reolink-preset-guidance p { margin: 0 0 12px; }
   .reolink-preset-guidance p:last-child { margin-bottom: 0; }
