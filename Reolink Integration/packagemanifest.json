@@ -1,12 +1,12 @@
 {
     "packageName": "Reolink Integration",
-    "releaseNotes": "v1.6.12: Doorbell button presses, motion and AI detections that arrive together are no longer missed (Reolink sends them as one combined event, like motion plus a press, or a person plus a vehicle). Doorbells on a Home Hub or NVR are now recognized from the device's model or doorbell support, not its name, so a doorbell the Hub reports under another name is created as a doorbell. A doorbell already created as a camera needs to be removed and added again. No Done needed after updating.",
+    "releaseNotes": "v1.6.13: Dark mode. The app follows the hub's light or dark theme (Hubitat 2.5.3+) and keeps its current look on older firmware. Thanks to vurvantsev. No Done needed. Updating from before 1.6.12? Doorbells on a Home Hub or NVR are now detected by model, so one created as a camera must be removed and added again.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "communityLink": "https://community.hubitat.com/t/165352",
     "author": "jdthomas24",
-    "version": "1.6.12",
+    "version": "1.6.13",
     "minimumHEVersion": "2.3.0",
-    "dateReleased": "2026-10-16",
+    "dateReleased": "2026-10-19",
     "category": "Integrations",
     "tags": "Cameras & Video",
     "apps": [
@@ -35,7 +35,7 @@
             "namespace": "jdthomas24",
             "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Reolink%20Integration/DoorbellDriver.groovy",
             "required": true,
-            "description": "Component driver for a Reolink doorbell channel, adds button-press (visitor) event."
+            "description": "Component driver for a Reolink doorbell channel, adds the button-press (visitor) event."
         },
         {
             "id": "8f2c6a1d-4e3b-4a7f-9c5d-2b6e8f0a1c3d",
@@ -43,7 +43,7 @@
             "namespace": "jdthomas24",
             "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Reolink%20Integration/ReolinkDeviceBridge.groovy",
             "required": true,
-            "description": "Internal per-source bridge device -- holds the real-time event connection and parents each source's camera/doorbell devices. Not user-facing; created automatically by the app."
+            "description": "Internal, one per source: holds the real-time event connection and parents its camera/doorbell devices. Created by the app."
         },
         {
             "id": "1a9d5e72-6c4f-4b8a-93e0-7d2c8f5b4a61",
@@ -51,7 +51,7 @@
             "namespace": "jdthomas24",
             "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Reolink%20Integration/StandaloneDevices.groovy",
             "required": true,
-            "description": "Internal nesting-only group device -- gives every standalone (non-Hub) camera/doorbell's bridge a shared parent so they group together in the Devices list instead of appearing separately. Not user-facing; created automatically by the app."
+            "description": "Internal group device: nests every standalone (non-Hub) camera/doorbell bridge together in the Devices list. Created by the app."
         }
     ]
 }

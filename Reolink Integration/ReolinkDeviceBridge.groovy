@@ -1,131 +1,41 @@
 /**
  * Reolink Device Bridge (Internal Parent Driver)
- * Version: 1.6.12
+ * Version: 1.6.13
  *
- * NOT user-facing. Created and managed automatically by the Reolink
- * Integration parent app -- ONE instance per SOURCE (Hub/NVR or standalone).
+ * Not user-facing. One per source, managed by the app. Holds the Baichuan TCP event subscription
+ * (cmd_id 31) and is the parent of that source's Camera/Doorbell devices (Hubitat only nests
+ * device-owned children). componentX() calls from children pass straight up to the app.
  *
- * Merges two roles: (1) holds the persistent Baichuan TCP event subscription
- * (cmd_id=31), and (2) is the PARENT that creates Camera/Doorbell as ITS OWN
- * children via createChannelDevice()/removeChannelDevice() -- this is what
- * makes them nest under this bridge in the Devices list (Hubitat's nested UI
- * only applies to device-owned children, never app-owned). Camera/Doorbell's
- * parent?.componentX(...) calls resolve to THIS device (their real parent);
- * every componentX() method below is a one-line passthrough up to this
- * bridge's own parent (the app).
- *
- * v1.6.12 -- Version sync (app now reads event status/AItype as comma-separated lists).
- * v1.6.11 -- Fix: events stopped decoding (motion, AI, sleep status) if the
- * in-memory AES key was cleared while the connection stayed up. Hub pushes
- * are marked 'c800', so 1.6.10's lost-key reconnect never fired and the
- * connection still looked healthy. Now any message on a live connection with
- * no key reconnects once for a fresh key (keepalive replies included, so it
- * recovers within 25s).
- * New sendBaichuanCommand(): sends a setting over this connection (AES, with
- * the channel extension) and hands the reply back to the app, matched by
- * message id; no reply in 15s is reported as a failure. Used for spotlight
- * when the camera refuses it over HTTP (Home Hub Mini battery cameras).
- * cmd_id 291 (floodlight status) now handled: light on/off per channel is
- * passed to the app as it changes, so the spotlight attribute follows the
- * camera even when it turns the light off by itself.
- *
- * v1.6.10 -- Per-message working data (receive buffer, last status per channel,
- * resync bookkeeping, AES key, nonce) moved from state to memory (RUNTIME),
- * so a push no longer triggers a state save to the hub database. Values left
- * in state by 1.6.9 move over on the first message, so updating doesn't drop
- * the connection; a lost key on a live connection (driver save) reconnects once.
- * The AES key no longer shows in State Variables.
- *
- * v1.6.9 -- Page cleanup, matching the camera pages. On/Off had a param label,
- * which Hubitat showed as an input box; typing in it made Off throw
- * MissingMethodException. Now bare, and a stray argument is ignored. Push
- * with no number warns instead of a NullPointerException. Load Preset blank
- * loads the Preferences pick (replaces Load Selected Preset). New Recording
- * dropdown (on/off) names what the bare On/Off buttons do. Start/Stop Event
- * Subscription folded into one Event Connection dropdown (start, stop,
- * restart). Old methods stay callable, undeclared, for existing rules.
- * componentSetManualRecord() passthrough.
- *
- * v1.6.8 -- componentSetSpotlightAuto() passthrough (spotlight auto on/off).
- *
- * v1.6.6 -- The source password is no longer stored in this device's state,
- * where State Variables showed it in plain text. It's held in memory only
- * (SOURCE_SECRETS) and re-fetched from the app after a reboot or driver save.
- * State now shows "Password: Saved, N characters", plus Login (last result,
- * pushed by the app) and Last Good Login. scrubState() also replaces a password
- * left by an older driver (any update order) and drops retired state keys.
- *
- * v1.6.5 -- RTSP validation queue passthroughs. The harmless "unable to
- * decrypt body" message (marker 'c800' is a reply status code, not an
- * encryption marker) moved to Full logging and now includes the cmd_id.
- *
- * v1.5.0 -- NVR recording control (confirmed on a real RLN16-410): Switch on/off
- * is the source's master record enable (every channel at once, no per-channel
- * call exists); presets write per-channel schedules (see ParentApp.groovy).
- * Rule Machine passes NUMBER arguments as BigDecimal; a command param with a
- * name but no type renders as an input box and is passed through as an argument.
- *
- * v1.6.4 -- No more silent dead ends. A failed socket open, a socket drop
- * mid-handshake, and a handshake reply without a nonce each reported
- * "disconnected" (or nothing) and stopped, with no retry; the app kept a stale
- * "reconnecting" and never restarted them (found in production: five
- * standalone cameras polling for a day). All three now go through the normal
- * reconnect ladder. retryEventSubscription() lets the app retry a given-up
- * source. Offline warning and give-up error now log once per outage, not once
- * per retry cycle.
- *
- * v1.6.3 -- Connection watchdog and logging rework:
- *  - Fixes a 1.6.2 regression: the atomicState timestamp was overwritten by
- *    this driver's own state saves (they share storage), so every connection
- *    looked stale at the first keepalive (~25s) and reconnected forever.
- *    Traffic time now lives in an in-memory map (LAST_REAL_TRAFFIC) that no
- *    save can overwrite; a missing entry (reboot, driver save) counts as fresh.
- *  - Stale threshold 90s -> 180s.
- *  - Routine reconnects are silent. Warn once when a source goes offline (3rd
- *    consecutive attempt), info when it's back, error on giving up, and warn
- *    once if it reconnects more than 5 times in 10 minutes (flapping).
- *  - The app pushes its log level here (setLogRank), so suppressed messages
- *    never make the cross-device call to the app.
- *  - Keepalive replies (cmd_id 93) handled quietly instead of as unrecognized.
- *  - isEventConnectionAlive() lets the app restart a subscription whose
- *    socket didn't survive a reboot or driver reload.
- *
- * v1.6.2 -- lastRealMessageAt moved from state to atomicState. Hubitat saves
- * state when each execution finishes, so a sendKeepalive() execution that
- * overlapped a parse() could save its stale copy over the fresh timestamp,
- * tripping the 90s watchdog on a healthy connection (worse under hub load).
- * atomicState writes immediately.
- *
- * v1.5.3 -- HOTFIX: restored the stale-connection watchdog (documented in
- * the 1.4.4 history below but found genuinely absent from sendKeepalive()
- * during a real 5-day-silent production outage) and fixed sendKeepalive()
- * silently failing to reschedule itself on an unexpected stage change.
- * Added isEventConnectionStale() for the app's new independent audit job.
- * See ParentApp.groovy's v1.5.3 note for the full incident.
- * Logging refined after real-world feedback: the trigger for a reconnect
- * (staleness detected, socket closed, handshake timeout) is now silent
- * by default (logNormal), not log.warn -- a single reconnect is routine.
- * scheduleReconnect() itself now escalates: attempt 1 stays silent,
- * attempt 2+ is log.warn, and exhausting all 10 attempts is log.error.
- *
- * v1.4.2 -- No functional change to this driver (version kept in sync with
- * the app); the paragraph() hotfix was in the Camera/Doorbell driver files.
- * v1.4.1 -- No functional change (app-side batteryMode self-heal only).
- * v1.3.8 -- Magic-header resync logging dropped to debug tier (confirmed
- * benign, self-recovering Hub-side wire noise under load via multi-day soak
- * testing; still warns after 20 failed resync attempts or an unrecognized
- * message type). On a magic-header mismatch, now scans forward for the next
- * real header and resyncs from there instead of discarding the whole buffer
- * (capped at 20 attempts/read). Added componentSetPir() passthrough. Fixed
- * this driver logging directly via log.info/log.debug, bypassing the app's
- * Log level entirely -- routine logging now goes through
- * parent?.logNormal()/logFull(); genuine failures (socket errors, give-up-
- * after-20-resync, decrypt failure, unrecognized message type) stay
- * unconditional log.warn.
- *
- * UNCONFIRMED: translateToLegacyShape()'s status/AItype -> aiState/mdState
- * mapping (in ParentApp.groovy). Sleep-status pushes (cmd_id=145) are
- * received/logged but not yet acted on.
+ * v1.6.13 -- Version sync (dark mode is in the app).
+ * v1.6.12 -- Version sync (the app splits event status/AItype lists).
+ * v1.6.11 -- Events stopped decoding if the in-memory AES key was cleared on a live connection
+ *    (Hub pushes are 'c800', so the lost-key check never fired). Any keyless message now
+ *    reconnects once (recovers within 25s). sendBaichuanCommand(): settings over this connection,
+ *    reply matched by message id, 15s timeout (spotlight on Home Hub Mini battery cams).
+ *    cmd_id 291 (floodlight status) passed to the app.
+ * v1.6.10 -- Per-message data (buffer, last status, resync, AES key, nonce) moved from state to
+ *    memory, so pushes don't write the hub database. AES key no longer in State Variables.
+ * v1.6.9 -- On/Off bare (a param label made Off throw), Push without a number warns, blank Load
+ *    Preset loads the Preferences pick, Recording and Event Connection dropdowns. Old methods
+ *    still callable.
+ * v1.6.6 -- Password held in memory only (SOURCE_SECRETS), re-fetched from the app; State shows
+ *    "Password: Saved, N characters", Login and Last Good Login. scrubState() clears old values.
+ * v1.6.5 -- RTSP queue passthroughs. "unable to decrypt body" ('c800' is a status code) moved to
+ *    Full logging.
+ * v1.6.4 -- Failed socket open, mid-handshake drop and nonce-less reply now use the reconnect
+ *    ladder (five standalone cameras sat polling for a day). retryEventSubscription(). Offline
+ *    and give-up messages log once per outage.
+ * v1.6.3 -- Traffic time in memory (LAST_REAL_TRAFFIC): state saves overwrote it and every link
+ *    looked stale at ~25s. Stale threshold 180s. Quiet routine reconnects; warn once offline,
+ *    info when back, error on give-up, warn on flapping (>5 in 10 min). setLogRank from the app.
+ *    Keepalive replies (93) handled quietly. isEventConnectionAlive().
+ * v1.5.3 -- Stale watchdog restored after a 5-day silent outage; keepalive always reschedules.
+ *    Reconnect logging escalates: attempt 1 silent, 2+ warn, give-up after 10 is error.
+ * v1.5.0 -- Switch = source master record (every channel), presets per channel. Rule Machine
+ *    passes NUMBER args as BigDecimal; a named untyped param becomes an argument slot.
+ * v1.3.8 -- Header resync scans forward to the next real header (cap 20/read), resync noise at
+ *    debug. Logging goes through the app's Log level.
+ * UNCONFIRMED: translateToLegacyShape() mapping in the app. Sleep pushes (145) logged, not used.
  */
 import groovy.transform.Field
 import java.security.MessageDigest

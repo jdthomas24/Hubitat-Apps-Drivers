@@ -1,36 +1,23 @@
 /**
  * Reolink Doorbell (Component Driver)
- * Version: 1.6.12
+ * Version: 1.6.13
  *
- * Same delegation pattern as Reolink Camera, plus a "visitor" (button press)
- * event so Rule Machine can trigger straight off "pushed 1" for a doorbell
- * ring, separate from AI person/motion detection.
+ * Same delegation as Reolink Camera, plus a visitor (button press) event: "pushed 1" for a ring,
+ * separate from person/motion detection.
  *
- * v1.6.12 -- Version sync (doorbell detection and event list parsing are in the app).
- * v1.6.11 -- Version sync only (Device Bridge event decoding fix).
- * v1.6.10 -- Version sync only (Device Bridge memory change).
+ * v1.6.13 -- Version sync (dark mode is in the app).
+ * v1.6.12 -- Version sync.
  * v1.6.9 -- Manual Record command (on/off, optional seconds) and manualRecord attribute.
- * v1.6.8 -- Commands grouped into dropdowns (8 to 4): Check, Set Interval,
- * Set Pir. The old command names are kept as plain methods (not listed on the
- * page) so existing rules keep working.
- * v1.6.6 -- pirOn/pirOff added (battery doorbells have PIR), same as the
- * camera driver: PIR Enabled updates only once the doorbell confirms it.
- * batteryWired drops the percentage, which the Battery row already shows.
- * v1.6.5 -- Same changes as the camera driver: RTSP validation queued through
- * the app and retried on timeout, lastMotionTime/lastMotionType, the new
- * "batteryWired" summary attribute (replaces batteryMode; wired/battery kept in the
- * powerMode data value), chargingStatus "plugged_in", and no battery values
- * on wired devices.
- * v1.6.0 -- Added RTSPStream support (same hub video stream service and
- * parent-managed source settings as the camera driver).
- * v1.5.0 -- excludeFromRecordingPresets lock and checkRecordingSchedule()
- * diagnostic (see CameraDriver.groovy). Primary use: keeping a battery WiFi
- * doorbell out of a preset meant for wired channels.
- * v1.4.2 -- HOTFIX: driver preferences use input(type: "paragraph").
- * v1.4.1 -- Added chargingStatus attribute.
- * v1.3.9 -- Added Battery capability, so a battery doorbell shows a % and
- * joins the app's auto battery-check scheduler.
- * Full history prior to 1.3.9 is in GitHub commit history.
+ * v1.6.8 -- Commands grouped into dropdowns (8 to 4): Check, Set Interval, Set Pir. Old names
+ *    kept as hidden methods for existing rules.
+ * v1.6.6 -- pirOn/pirOff (battery doorbells have PIR); PIR Enabled updates once confirmed.
+ * v1.6.5 -- Same as the camera: queued RTSP validation, lastMotionTime/Type, batteryWired,
+ *    chargingStatus "plugged_in", no battery values on wired devices.
+ * v1.6.0 -- RTSPStream support.
+ * v1.5.0 -- excludeFromRecordingPresets lock (keeps a battery doorbell out of wired presets)
+ *    and checkRecordingSchedule().
+ * v1.4.2 -- Preferences use input(type: "paragraph"). v1.4.1 -- chargingStatus.
+ * v1.3.9 -- Battery capability, so it joins the app's battery-check scheduler.
  */
 metadata {
     definition(name: "Reolink Doorbell", namespace: "jdthomas24", author: "Jason", component: true) {

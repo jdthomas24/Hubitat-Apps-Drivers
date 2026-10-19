@@ -1,113 +1,27 @@
 /**
  * Reolink Standalone Devices (Internal Group Driver)
- * Version: 1.6.12
+ * Version: 1.6.13
  *
- * NOT user-facing. Created and managed automatically by the Reolink
- * Integration parent app -- exactly ONE instance total, shared across every
- * standalone (non-Hub/NVR) source.
+ * Not user-facing. One shared instance, managed by the app. A nesting anchor only: each standalone
+ * camera/doorbell still has its own Device Bridge (rawSocket is one connection per driver), and
+ * those bridges nest under this device. Because this device is their real parent, every
+ * parent?.componentX() call a bridge makes must have a passthrough here to the app; a missing one
+ * throws MissingMethodException inside the bridge and never reaches the app's logs.
  *
- * Purpose: purely a nesting anchor in the Devices list. Each standalone
- * camera/doorbell still gets its own independent "Reolink Device Bridge"
- * (its own persistent event connection -- Hubitat's rawSocket is one-
- * connection-per-driver-instance, so that part can't be shared). What CAN
- * be shared is where those bridges nest: instead of each standalone bridge
- * sitting directly under the app (unnested, unlike an NVR/Hub's channels
- * which all nest under one shared bridge), every standalone source's bridge
- * becomes a child of THIS device instead -- one collapsible entry holding
- * every standalone camera/doorbell's bridge, instead of N separate unnested
- * bridges.
- *
- * v1.6.12 -- Version sync (doorbell detection and event list parsing are in the app).
- * v1.6.11 -- componentBaichuanReply() and componentEventSpotlightUpdate() passthroughs.
- * v1.6.10 -- Version sync only (Device Bridge memory change).
- * v1.6.9 -- componentSetManualRecord() passthrough.
- * v1.6.8 -- componentSetSpotlightAuto() passthrough (spotlight auto on/off).
- *
- * v1.6.6 -- componentGetSourceSecret() passthrough: standalone bridges fetch
- * the source password from the app after a reboot or driver save, since it's
- * no longer kept in the bridge's state.
- *
- * v1.6.5 -- RTSP validation queue passthroughs (same pattern as v1.5.1).
- *
- * v1.5.1 -- HOTFIX: six passthrough gaps found and closed, all the same
- * root-cause pattern as v1.4.3/v1.4.6 below -- ReolinkDeviceBridge.groovy
- * calls parent?.componentX(...) for a method this file never mirrored.
- *  1. componentEventConnectionStatus() -- reported in production:
- *     MissingMethodException the moment a standalone doorbell's event
- *     subscription came up (also fires on every connecting/reconnecting/
- *     disconnected transition). Every standalone source has been silently
- *     losing this call since whichever release first added it to the
- *     bridge (before v1.5.0; exact version not pinned down).
- *  2. componentEventSleepUpdate() -- same gap for sleep-status pushes
- *     (cmd_id=145). Lower-probability in practice, since standalone
- *     battery devices are a closed, unsupported case (see the app's Tips
- *     page), but a wired standalone doorbell could still trigger this.
- *  3-6. componentLoadPreset(), componentSetRecordingEnabled(),
- *     componentBridgeButtonPushed(), componentGetPresetNames() -- all four
- *     added to the bridge in v1.5.0 for NVR recording control. The app's
- *     UI only ever links to that feature for Hub/NVR sources
- *     (discoverPage()'s Recording Control section is gated on src.isHub),
- *     so none of v1.5.0's beta testing (done entirely against a real
- *     RLN16-410 NVR) ever exercised these against a standalone bridge.
- *     The bridge's Switch/PushableButton capabilities are declared
- *     unconditionally on every bridge though (standalone included), so
- *     on()/off()/push()/loadPreset() were reachable right now via Rule
- *     Machine or the device page on a standalone source and would have
- *     thrown the same MissingMethodException as #1 above.
- *     componentGetPresetNames() doesn't crash -- the bridge's own
- *     getAvailablePresetNames() wraps that call in a try/catch -- but
- *     silently left the "Preset to load" dropdown permanently empty for a
- *     standalone source instead of erroring loudly.
- *
- * v1.4.6 -- HOTFIX: a standalone wired doorbell was throwing
- * MissingMethodException on componentEventChannelUpdate() for every real-
- * time event push. Same root cause as the v1.4.3 fix, just a different
- * method: ReolinkDeviceBridge.groovy's own componentEventChannelUpdate()
- * calls parent?.componentEventChannelUpdate(...), which for a standalone
- * source resolves to THIS device -- and this driver never forwarded that
- * one method, only the componentX() set that existed as of 1.4.3. That set
- * predates componentEventChannelUpdate(), which was added to the app/bridge
- * later for the real-time push path and never got mirrored here. Motion/AI
- * polling was unaffected (push-based, doesn't route through this passthrough
- * at all), but every real event push for a standalone source failed inside
- * the bridge driver itself, before ever reaching the app. Fixed by adding
- * the missing passthrough, mirroring the exact signature used everywhere
- * else in this integration.
- * v1.4.3 -- HOTFIX: a standalone source's bridge has THIS device as its
- * real Hubitat parent (not the app directly) -- same root cause as the
- * v1.4.1 logNormal()/logFull() fix, but this time for every OTHER
- * component command a device sends upward (takeSnapshot, refresh, PTZ,
- * spotlight, night vision, siren, PIR, battery/abilities checks, poll and
- * snapshot interval). ReolinkDeviceBridge.groovy's own componentX()
- * passthroughs call parent?.componentX(...), which for a standalone
- * source's bridge resolves to THIS device -- and this driver never defined
- * any of them, only logNormal()/logFull(). Every one of those calls threw
- * a MissingMethodException inside the bridge driver itself, before ever
- * reaching the app -- which is why the app's own logs showed nothing at
- * all for e.g. a failed Take Snapshot (the app method is never reached;
- * the failure shows up as a device error under the BRIDGE's own Logs tab
- * instead). Hub/NVR bridges (parented directly off the app) were never
- * affected. Reported against a standalone doorbell whose snapshotUrl
- * attribute never populated and Take Snapshot logged nothing, but this
- * affected every standalone source since the v1.3.8 bridge/group
- * restructuring, not something v1.4.2 introduced -- just newly surfaced.
- * Fixed by adding the full set of componentX() passthroughs already used
- * by ReolinkDeviceBridge.groovy's own equivalent forwarding to the app,
- * mirrored here one level up.
- * v1.4.1 -- FIX: a standalone source's bridge has THIS device as its real
- * Hubitat parent (not the app directly), so its parent?.logNormal()/
- * logFull() calls (used throughout ReolinkDeviceBridge.groovy, including
- * the first line of startEventSubscription()) threw a MissingMethodException
- * every time -- this driver had no such methods at all, meaning the actual
- * socket connection never even started for ANY standalone source. Hub/NVR
- * bridges (parented directly off the app) were never affected. Found via
- * real-hardware testing of a standalone battery camera (Argus 4 Pro, whose
- * HTTP CGI API is fully absent -- see the app's Tips page) while testing
- * whether its Baichuan event port might still respond, which surfaced this
- * as a blocking bug before the socket attempt could even happen. Fixed by
- * adding logNormal()/logFull() passthroughs that forward to this device's
- * own parent (the app) -- same pattern already used for
- * createBridgeDevice()/removeBridgeDevice() below.
+ * v1.6.13 -- Version sync (dark mode is in the app).
+ * v1.6.12 -- Version sync.
+ * v1.6.11 -- componentBaichuanReply(), componentEventSpotlightUpdate() passthroughs.
+ * v1.6.9 -- componentSetManualRecord(). v1.6.8 -- componentSetSpotlightAuto().
+ * v1.6.6 -- componentGetSourceSecret() (password fetched from the app after reboot/driver save).
+ * v1.6.5 -- RTSP validation queue passthroughs.
+ * v1.5.1 -- Six missing passthroughs: componentEventConnectionStatus() (crashed when a standalone
+ *    doorbell's events came up), componentEventSleepUpdate(), componentLoadPreset(),
+ *    componentSetRecordingEnabled(), componentBridgeButtonPushed(), componentGetPresetNames()
+ *    (bridge Switch/Button capabilities are declared on standalone bridges too).
+ * v1.4.6 -- componentEventChannelUpdate() (every standalone event push failed).
+ * v1.4.3 -- Full set of device command passthroughs (snapshot, refresh, PTZ, spotlight, siren,
+ *    PIR, checks, intervals all failed on standalone sources since v1.3.8).
+ * v1.4.1 -- logNormal()/logFull() passthroughs (standalone sockets never started).
  */
 metadata {
     definition(name: "Reolink Standalone Devices", namespace: "jdthomas24", author: "Jason", component: true) {

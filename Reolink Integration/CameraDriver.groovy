@@ -1,48 +1,26 @@
 /**
  * Reolink Camera (Component Driver)
- * Version: 1.6.12
+ * Version: 1.6.13
  *
- * Thin device: no HTTP of its own. Delegates everything to the parent app via
- * parent.componentX(this, ...), using data values sourceId/channel to
- * identify which source/channel this device maps to.
+ * No HTTP of its own: everything goes through parent.componentX(this, ...), using the sourceId
+ * and channel data values.
  *
- * v1.6.12 -- Version sync (doorbell detection and event list parsing are in the app).
- * v1.6.11 -- spotlight attribute changes only when the camera accepts (receiveSpotlight()),
- * not on every command; the app re-reads it after Reolink's manual light timer.
- * v1.6.10 -- Version sync only (Device Bridge memory change).
+ * v1.6.13 -- Version sync (dark mode is in the app).
+ * v1.6.12 -- Version sync.
+ * v1.6.11 -- spotlight changes only when the camera accepts (receiveSpotlight()).
  * v1.6.9 -- Manual Record command (on/off, optional seconds) and manualRecord attribute.
- * v1.6.8 -- Commands grouped into dropdowns (21 to 9): Check, Set Interval,
- * Ptz (now includes Calibrate, which follows up on its own status), Ptz Preset,
- * Set Spotlight, Set Siren, Set Pir. The old command names are kept as plain
- * methods (not listed on the page) so existing rules keep working.
- * Set Spotlight "auto on"/"auto off" control whether the spotlight turns on by
- * itself for motion at night (Reolink app: Spotlight > Modes). New spotlightAuto
- * attribute (on/off), filled in by Refresh or Check > abilities on Spotlight cameras.
- * v1.6.6 -- PIR fixes. pirOn()/pirOff() never changed the camera (it rejected
- * every request) but updated PIR Enabled anyway. They now just ask the app,
- * and receivePirState() updates PIR Enabled only once the camera confirms it.
- * pirStatusNote retired (PIR Enabled says the same; the note couldn't clear
- * without a page reload). batteryWired drops the percentage, which the
- * Battery row already shows.
- * v1.6.5 -- RTSP validation is queued through the app (one device at a time,
- * retried on timeout) instead of firing immediately; refresh() only
- * revalidates when not already validated. Added lastMotionTime and
- * lastMotionType (most important type wins within one motion event:
- * person > vehicle > pet > package > motion). New "batteryWired" summary
- * attribute ("Wired", "Battery, 87%, charging", "Battery, 100%, plugged in",
- * "Battery, 64%") replaces batteryMode; wired/battery is now kept in the
- * powerMode data value. chargingStatus adds "plugged_in" (adapter connected,
- * not charging, e.g. already full), which previously showed as not_charging.
- * Wired devices never show battery values (clearBatteryInfo()).
- * v1.5.0 -- NVR recording-control support: excludeFromRecordingPresets
- * preference (below) is read directly by the app inside
- * componentLoadPreset() -- when true, no preset will ever write a new
- * schedule to this device. Also added checkRecordingSchedule(), a
- * read-only diagnostic (Full logging to see the result).
- * v1.4.2 -- HOTFIX: bare paragraph("text") calls in preferences are App-DSL
- * only; fixed via input(type: "paragraph").
- * v1.4.1 -- Added chargingStatus attribute from GetBatteryInfo.
- * Full history prior to 1.4.1 is in GitHub commit history.
+ * v1.6.8 -- Commands grouped into dropdowns (21 to 9): Check, Set Interval, Ptz (with
+ *    Calibrate), Ptz Preset, Set Spotlight, Set Siren, Set Pir. Old names kept as hidden methods
+ *    for existing rules. Set Spotlight auto on/off (Reolink app Spotlight > Modes) and
+ *    spotlightAuto attribute.
+ * v1.6.6 -- PIR Enabled updates only once the camera confirms (receivePirState()).
+ *    pirStatusNote retired; batteryWired drops the percentage.
+ * v1.6.5 -- RTSP validation queued through the app. lastMotionTime/lastMotionType (person >
+ *    vehicle > pet > package > motion). batteryWired replaces batteryMode (powerMode data value).
+ *    chargingStatus "plugged_in". No battery values on wired devices.
+ * v1.5.0 -- excludeFromRecordingPresets lock; checkRecordingSchedule() read-only diagnostic.
+ * v1.4.2 -- Driver preferences use input(type: "paragraph") (paragraph() is App-only).
+ * v1.4.1 -- chargingStatus attribute.
  */
 metadata {
     definition(name: "Reolink Camera", namespace: "jdthomas24", author: "Jason", component: true) {

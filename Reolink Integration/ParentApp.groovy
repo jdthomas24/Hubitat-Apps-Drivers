@@ -2,317 +2,73 @@
  * Reolink Integration (Parent App)
  * Version: 1.6.13
  *
- * Architecture: a "source" is anything answering the Reolink HTTP/JSON API
- * (standalone camera, PoE NVR, or Home Hub), each with its own IP + creds. A
- * multi-channel source (NVR/Hub) reports channels 0..N-1; a standalone camera
- * is a degenerate source with one channel: 0. Every child device is tagged
- * (sourceId, channel) and talks only through parent.componentX() -- never
- * HTTP directly. Poll interval is per-child (wired 2-5s tight, battery loose)
- * to avoid hammering sleeping devices. Each source is fronted by a "Reolink
- * Device Bridge" device (one per source) that holds the persistent real-time
- * event subscription and is the real parent of Camera/Doorbell, so they nest
- * under it in the Devices list. Event-driven updates are the standard path;
- * a source falls back to polling automatically on connection loss and
- * silently resumes event mode on reconnect.
+ * A "source" is anything answering the Reolink HTTP/JSON API (standalone camera, NVR or Home Hub),
+ * each with its own IP and login; NVR/Hub channels are 0..N-1, a standalone camera is channel 0.
+ * Child devices are tagged (sourceId, channel) and only call parent.componentX(), never HTTP.
+ * Each source has one "Reolink Device Bridge" that holds the real-time event connection and is the
+ * real parent of its Camera/Doorbell devices. Events are the normal path; a source falls back to
+ * polling when the connection drops and returns to events on reconnect. Poll intervals are per
+ * device (wired 2-5s, battery loose). Device quirks live in the README and Tips page. TODO markers
+ * flag API names still to verify against firmware. Full history is in GitHub commit history.
  *
- * Device-specific findings/limitations/setup gotchas live in the README and
- * in-app Tips page, not duplicated here. TODO markers mark spots needing
- * exact command/param names verified against firmware (field names can
- * drift by version). Full history prior to 1.3.6 is in GitHub commit history.
- *
- * v1.6.13 -- Dark mode (thanks @vurvantsev): hub theme colors with a light fallback for pre-2.5.3
- *    firmware. Fixed the Find changed IP status box, Apply device changes button, Reconnecting
- *    status and the Advanced schedule warning pill, which stayed light-colored.
- * v1.6.12 -- Hub/NVR doorbells detected from the channel's model (typeInfo), doorbellVersion
- *    or GetAiState visitor support, never the name (a Home Hub reported a doorbell as "Hub").
- *    Event pushes read status/AItype as comma-separated lists like reolink_aio ("MD,visitor"
- *    was missing both the press and the motion; "people,vehicle" missed both).
- * v1.6.11 -- Device Bridge fix: events could stop decoding after its in-memory
- *    key was cleared (see the bridge header).
- *  - Spotlight: on/off and auto refused over HTTP (-13, Home Hub Mini battery
- *    cameras) are retried over the Bridge's event connection, like reolink_aio
- *    (on/off: FloodlightManual 288; auto: read 289, write 290). The spotlight
- *    attribute changes only once the camera accepts, follows the camera's
- *    floodlight status push (cmd_id 291) live, is re-read 190s after "on" only
- *    when the event connection is down, and is synced by the auto/Refresh read.
- *    Battery cameras send on/off over Baichuan first (HTTP "on" only flashes
- *    the light from standby; tested on a Home Hub Pro), HTTP as fallback.
- *    The light only lasts while a battery camera is awake (~30s), so "on" is
- *    re-sent every 20s for 180s, then turned off (same as a wired camera),
- *    whichever path turned it on. Baichuan status 400 (camera still waking) is
- *    retried after 1.5s, up to 3 attempts, like reolink_aio.
- *    reolinkApiOutcome() returns rspCode with the value. Tips: Spotlight.
- *
- * v1.6.10 -- Device Bridge keeps per-message data in memory instead of state
- *    (see the bridge header). Tips: Manual recording rewritten after testing
- *    on a Home Hub Pro (events-only vs continuous, post-recording, FTP, NVR
- *    firmware note).
- *
- * v1.6.9 -- Device Bridge page cleanup (see the bridge header): On/Off bare,
- *    Push without a number warns, blank Load Preset loads the Preferences pick,
- *    one Event Connection dropdown, Recording dropdown.
- *  - Manual Record (camera and doorbell): componentSetManualRecord() sends
- *    SetManualRec {channel, enable, duration}, the call Home Assistant uses.
- *    Optional seconds (default and max 600); the app sends off at that time.
- *  - Tips: new Manual recording topic; PIR (Pre-recording) and Recording
- *    presets updated.
- *
- * v1.6.8 -- Device page cleanup and spotlight auto (1.6.7 was internal only):
- *  - Camera/Doorbell commands grouped into dropdowns (camera 21 to 9, doorbell
- *    8 to 4); see the driver headers. hasSpotlight() now keys off setSpotlight.
- *  - componentSetSpotlightAuto() sets WhiteLed "mode" (the Reolink app's
- *    Spotlight > Modes: 0 = Off, 1 = Night Smart Mode, other values on some
- *    models), separate from the on/off "state" Spotlight On/Off already uses.
- *    Partial write {channel, mode}, so the light's current on/off is untouched.
- *    Turning auto back on restores the mode the camera had before (kept in the
- *    device's spotlightAutoMode data value), else Night Smart Mode.
- *  - Called with on == null it only reads the mode. Check > abilities does
- *    this for Spotlight devices, and so does Refresh, at most once every 10
- *    minutes per device (SPOTLIGHT_READ_MIN_MS) to spare battery devices and
- *    rules that refresh often.
- *  - Tips: new Spotlight topic; PTZ, calibration and PIR topics use the new
- *    command names. Topics missing from the order list are appended, not dropped.
- *
- * v1.6.6 -- Source password no longer shown in plain text:
- *  - Each bridge kept the source password in its state, so State Variables
- *    showed it in plain text (and in any screenshot of that page). The bridge
- *    now holds it in memory only and asks the app for it after a reboot or
- *    driver save (componentGetSourceSecret()). Its State Variables show
- *    "Password: Saved, N characters", Login ("OK, 10:42 AM" / "Failed: wrong
- *    username or password") and Last Good Login. migrateCredentials()
- *    overwrites the old value on every existing bridge once, without Done.
- *  - Edit connection settings shows the same password summary and last login
- *    result under the password field. Login is confirmed by any successful
- *    HTTP login, and by a live event connection (checked on Done and every
- *    15 minutes), since event-connected sources don't poll.
- *  - The password was never written to any log; unchanged.
- *  - PIR on/off never worked: SetPirInfo was rejected every time ("get config
- *    failed", rspCode -12), yet the camera page showed the new state anyway.
- *    componentSetPir() now reads the camera's PIR settings (GetPirInfo),
- *    changes only "enable", writes the full object back under the key the
- *    camera itself used, and the camera page updates only once the camera
- *    accepts it (receivePirState()). A failure logs a warning instead.
- *
- * v1.6.5 -- Battery detection, power summary, RTSP validation, last motion:
- *  - Battery vs wired now comes from GetAbility's per-channel "battery"
- *    ability. An NVR answers GetBatteryInfo even for PoE channels, with junk
- *    data (zero voltage, shifted fields), so "the probe answered" flagged
- *    every PoE channel behind an NVR as battery. The probe is now only a
- *    fallback when the ability is missing, and its data must look real.
- *  - batteryMode attribute retired. Wired/battery lives in each device's
- *    powerMode data value (read via powerModeOf()), and devices show a
- *    one-line "batteryWired" attribute ("Wired", "Battery, 100%, plugged
- *    in"), named to sort right after Battery on the device page.
- *    migrateBatteryModes() converts existing devices and corrects
- *    wrongly-marked wired ones. It starts on its own from schedulerTick()
- *    after a code update (no Done needed) and retries every 10 minutes
- *    until every device converts.
- *  - chargingStatus "plugged_in": adapter connected but not charging (e.g.
- *    full), previously reported as not_charging (driver-side change).
- *  - RTSP validation is queued: one device at a time, RTSP_GAP_SEC apart,
- *    retried on timeout (RTSP_RETRY_DELAYS). Simultaneous validations through
- *    one Home Hub timed out, and nothing retried them. The app queues devices
- *    itself when it pushes stream settings (receiveRtspConfig() returns true),
- *    so no device calls back into the app mid-call (singleThreaded).
- *  - Softer "No response" discovery wording (no longer implies battery-class).
- *
- * v1.6.4 -- Stuck and given-up event connections now recover on their own:
- *  - The saved connection status is only a hint. Done/reboot now restarts any
- *    source whose bridge can't prove live traffic, not just ones saved as
- *    "connected" (a stale "reconnecting" left five cameras polling for a day).
- *  - A given-up source retries as soon as its camera answers again
- *    (unreachable -> reachable), otherwise at most once an hour via the audit.
- *  - Add source IP field labeled "IP address or hostname".
- *
- * v1.6.3 -- Connection and logging fixes (watchdog regression fix is in
- * ReolinkDeviceBridge.groovy):
- *  - After a hub reboot the saved "connected" status survived but the socket
- *    didn't, so ensureSourceBridge() skipped the restart and the bridge sat
- *    silent while showing online (likely the original 5-day outage). Reboot
- *    now clears saved connection modes, and "connected" is confirmed against
- *    the bridge's live traffic before a restart is skipped.
- *  - Log level is pushed to each bridge (setLogRank) so suppressed bridge
- *    logging never makes the cross-device call. Per-status connection
- *    changes log at Full; offline/back-online transitions come from the bridge.
- *  - singleInstance and installOnOpen set (gopher.ny).
- *  - Tips: many standalone cameras are better served by an NVR/Home Hub.
- *
- * v1.6.2 -- Scheduler ticks every 1s only while a source needs polling,
- * otherwise every IDLE_TICK_SEC (30s), and skips unchanged state writes.
- * A 1s tick with nothing to do (every source event-connected) still made a
- * cross-device bridge lookup per source per tick; on an 8-standalone-source
- * install that was ~34% of total hub time and triggered Hubitat's
- * LimitExceededException throttling. A connection drop kicks an immediate
- * tick so polling fallback still starts within ~1s.
- *
- * v1.6.1 -- Pass RTSP port and output width defaults when configuring newly
- * created children so the doorbell driver saves all stream settings at creation.
- *
- * BREAKING CHANGE (v1.3.8): every camera/doorbell became a child of a new
- * per-source "Reolink Device Bridge" instead of a child of this app directly
- * -- existing installs had to delete/recreate devices (and repoint
- * dashboards/rules) via re-discovery under each source.
- *
- * v1.5.3 -- HOTFIX: found during a real production outage where a Home
- * Hub's entire shared event connection (all channels) silently died for
- * 5 days with zero log trace, while still self-reporting "connected."
- * Root cause: the 90s stale-connection watchdog documented in the 1.4.4
- * history below was lost at some point during the 1.5.0 recording-control
- * rewrite (confirmed absent from the actual sendKeepalive() code in
- * ReolinkDeviceBridge.groovy) -- with it gone, a half-open TCP connection
- * (remote side or a router's NAT mapping disappears without a proper
- * close/error) could sit indefinitely reporting healthy with nothing to
- * catch it. A related bug in the same method (sendKeepalive() returning
- * early on a stage change without rescheduling itself) meant even the
- * ordinary keepalive loop could silently stop running under the right
- * conditions.
- * Fixed: the staleness watchdog is restored (ReolinkDeviceBridge.groovy
- * tracks a real last-message timestamp, sendKeepalive() checks it every
- * cycle and forces a reconnect past 90s of silence), and sendKeepalive()
- * now always reschedules itself regardless of which branch it takes.
- * Also added a new, structurally independent audit job (auditEventConnections(),
- * app-level, every 15 minutes via Hubitat's own schedule() rather than this
- * app's runIn chain) that double-checks every source's real liveness and
- * force-reconnects any source its own watchdog missed -- a second layer
- * specifically because the first layer already failed silently once in
- * production.
- * Logging refined after real-world feedback: detecting staleness and
- * starting a reconnect is routine (could just be a transient IP/network
- * blip) and now stays silent by default; log.warn only fires if a
- * reconnect needs a SECOND attempt, and giving up after all 10 attempts
- * is now log.error, not log.warn, since that's the one outcome that
- * actually needs attention. The Full-logging auto-revert (60 minutes)
- * now reverts to Errors Only instead of Normal, matching this app's
- * actual default.
- *
- * v1.5.2 -- HOTFIX: discoverPage()'s per-channel checkbox self-heal logic
- * (added to correct a stale-checked checkbox left over when a device was
- * deleted outside the app -- see the Tips page's "Deleting a device the
- * wrong way" topic) could not distinguish that case from "a brand-new
- * channel the user just toggled on, not yet applied." Both look identical
- * to that check: no device currently exists for this DNI, and the checkbox
- * is true. Since every channel checkbox reposts the page on change
- * (submitOnChange: true), toggling on a never-before-created channel on a
- * multi-channel Hub/NVR source triggered the self-heal on the very next
- * render and silently reset the checkbox back to false before Apply could
- * ever be clicked -- reported as new channels "bouncing back to
- * unselected" and never becoming selectable. Single-channel standalone
- * sources were unaffected (they apply immediately on toggle, no repost in
- * between), and any ALREADY-created device was unaffected (exists == true
- * skips the check entirely regardless of registry state).
- * Fixed by adding a persistent per-app registry (state.knownDeviceDnis) of
- * every DNI this app has actually created at least once. The self-heal
- * check now only fires for a DNI that's genuinely in that registry --
- * i.e. a device that existed and was removed some other way -- never for
- * a channel that's simply never been created yet. markDeviceEverCreated()
- * is called the moment a channel device is actually created;
- * forgetDeviceEverCreated() is called both on an intentional removal
- * (createSelectedChildren()'s uncheck-and-apply path, so re-adding that
- * channel later behaves like a fresh add, not a stale-checkbox case) and
- * on full source removal (removeSource()), alongside the existing
- * forgetSchedulingState() cleanup.
- *
- * v1.5.0 -- NVR recording control: a master record on/off switch, plus
- * named per-channel schedule presets loaded on demand. Confirmed against a
- * real RLN16-410 NVR (6 Elite Wifi floodlights + 1 Gen2 battery wifi
- * doorbell, hub is a C-8 Pro) across many rounds of live testing before
- * release.
- *  - componentSetRecordingEnabled() flips the NVR's master record switch
- *    (SetRecV20 with NO channel field) -- CONFIRMED this call is genuinely
- *    untargeted at the API level: it always applies to every channel of the
- *    source at once, there is no per-channel version of it. The per-camera
- *    "Enable Record" screen in the Reolink app does nothing for NVR-side
- *    recording; it only controls onboard SD-card recording, which these
- *    cameras don't have.
- *  - componentLoadPreset() writes a named, per-channel 168-char hourly
- *    schedule (defined on the in-app Recording Presets page) to the NVR,
- *    one channel at a time, via a fresh read-modify-write (fetch the
- *    channel's current full schedule, flip only the relevant field(s),
- *    send the whole thing back) -- CONFIRMED a minimal/partial Rec object
- *    is silently accepted (rspCode 200) but produces NO actual change, so
- *    the full read-modify-write is required, not optional. A channel with
- *    no string saved for a given preset is skipped entirely, which is how
- *    a battery-class channel (e.g. a WiFi doorbell) stays excluded from a
- *    preset meant for wired channels.
- *  - A permanent per-device "Exclude from ALL recording presets" lock
- *    (excludeFromRecordingPresets on the Camera/Doorbell drivers) is
- *    enforced here inside componentLoadPreset() -- a locked channel is
- *    skipped on every preset load regardless of what that preset specifies
- *    for it, distinct from the ordinary "skipped (no data)" case (a
- *    channel simply left blank in one particular preset). presetsPage()
- *    greys out a locked channel's picker with a 🔒 instead of rendering an
- *    editable input for it. Direct manual commands aimed at a locked
- *    device are unaffected -- only preset-driven writes are blocked.
- *  - Schedule API generation: GetRecV20 is tried first regardless of any
- *    GetAbility capability flag, falling back to classic GetRec only if
- *    V20 itself returns no usable value -- CONFIRMED GetAbility's own
- *    scheduleVersion field doesn't reliably predict which generation a
- *    given NVR actually needs. scheduleEnable is a TOP-LEVEL field on Rec
- *    (sibling to "schedule"), NOT nested inside schedule.enable -- source:
- *    reading reolink_aio's (Home Assistant's Reolink integration library)
- *    actual set_recording() implementation, confirmed against real raw
- *    schedule dumps. Every key already present in the device's OWN
- *    returned schedule.table gets set, rather than assuming a specific key
- *    name like "TIMING" -- real hardware showed this can't be assumed.
- *  - Ordering: the master enable call must fire AFTER every per-channel
- *    schedule write, not before -- CONFIRMED writing a per-channel
- *    schedule silently re-flips the master enable flag back on as a side
- *    effect, so sending master-enable=0 before per-channel writes gets
- *    undone by them. A ~300ms pause between per-channel writes
- *    (REC_CHANNEL_SETTLE_MS) is also required -- back-to-back writes
- *    closer together than that produced intermittent per-channel misses
- *    on real hardware (6 WiFi floodlight channels).
- *  - Preset button numbers (componentBridgeButtonPushed(),
- *    getOrAssignButtonNumber()/retireButtonNumber()) are assigned once per
- *    preset, permanently, from a per-source counter that never resets or
- *    reuses a retired number -- deliberately avoids a positional/numbered-
- *    button scheme's fragility: a deleted preset's old Rule Machine
- *    trigger just goes inert instead of ever silently firing whatever
- *    different preset happens to reuse its old number.
- *  - The Recording Presets page's default UI is a plain-language picker
- *    (Continuous / "Never record" / a daily time range / don't manage)
- *    that generates the 168-char string automatically; an opt-in
- *    "Advanced" toggle reveals the raw string field for a schedule the
- *    simple picker can't express. "Don't manage" leaves whatever schedule
- *    already exists untouched; "Never record" actively writes an all-zero
- *    schedule -- a real distinction the reporting user's own workaround
- *    surfaced during development.
- *  - checkRecordingSchedule() is a read-only diagnostic (Camera/Doorbell
- *    drivers and their bridge/standalone passthroughs) that reads and logs
- *    a channel's current schedule without writing anything -- useful for
- *    confirming a channel's schedule shape before defining a preset
- *    against it.
- *  - Two earlier designs were built, tested, and fully abandoned during
- *    development in favor of the above: a cache-and-restore recording
- *    toggle (replayed a schedule snapshot from the first time it was ever
- *    used, which went stale the moment a real custom schedule was set
- *    later), and a set of separate virtual child devices for the master
- *    switch/preset buttons (replaced by adding Switch/PushableButton
- *    capabilities directly to the bridge itself, since exactly one bridge
- *    already exists per source). Neither exists in the code anymore.
- *  - Two confirmed Hubitat/Rule Machine platform quirks worth remembering
- *    for future driver work: (1) a bridge command declared with
- *    description-only metadata (no real argument) renders fine on that
- *    device's own Commands tab, but Rule Machine's Custom Action treats it
- *    as a real argument slot and passes through whatever's typed -- a risk
- *    for any genuinely zero-argument command (on()/off()/
- *    loadSelectedPreset() are declared bare for this reason; see
- *    ReolinkDeviceBridge.groovy). (2) Rule Machine hands a NUMBER-type
- *    command argument to a method as BigDecimal, not Integer, and Groovy
- *    does not auto-coerce between them in that call context -- push(btn)
- *    takes BigDecimal accordingly.
- *
- * v1.3.6 through v1.4.5 (condensed, full detail in GitHub commit history):
- * discoverPage() checkbox-toggle fixes and clearer wording; standalone
- * (non-Hub) camera/doorbell support, later found in testing to need a
- * Home Hub or NVR after all (see the "Standalone battery-device support,
- * closed" note below); PIR enable/disable; real-time event-driven updates
- * over a persistent Baichuan subscription, falling back to polling
- * automatically; several scheduler/battery-check gating bugs found via
- * real hardware and fixed (stuck batteryMode, stale due-times surviving
- * an upgrade); a DuplicateDNIException crash on orphaned devices caught
- * gracefully; explicit uninstalled() teardown added rather than relying
- * on Hubitat's implicit cascade-delete.
+ * v1.6.13 -- Dark mode (thanks @vurvantsev): hub theme classes, with a scoped light fallback
+ *    (legacyLightThemeCss) for pre-2.5.3 firmware. Also fixed Find changed IP status box, Apply
+ *    device changes button, Reconnecting status and the Advanced schedule warning pill.
+ * v1.6.12 -- Hub/NVR doorbells detected from typeInfo, doorbellVersion or GetAiState visitor,
+ *    never the name (a Home Hub reported one as "Hub"). Event status/AItype read as
+ *    comma-separated lists like reolink_aio ("MD,visitor", "people,vehicle" were missed).
+ * v1.6.11 -- Spotlight refused over HTTP (-13, Home Hub Mini battery cams) retried over the
+ *    Bridge (Baichuan: manual 288, auto read 289/write 290); battery cams use Baichuan first (HTTP
+ *    "on" only flashes from standby). Attribute changes only when the camera accepts, follows the
+ *    floodlight push (291), re-read 190s after "on" only when events are down. Battery "on" is
+ *    re-sent every 20s for 180s (light lasts ~30s awake), then off. Baichuan 400 (waking) retried
+ *    after 1.5s, up to 3 times.
+ * v1.6.10 -- Bridge keeps per-message data in memory. Tips: Manual recording rewritten.
+ * v1.6.9 -- Manual Record via SetManualRec {channel, enable, duration} (as Home Assistant);
+ *    optional seconds, default and max 600, the app sends off at the end.
+ * v1.6.8 -- Device commands grouped into dropdowns (old names still work). Spotlight auto =
+ *    WhiteLed "mode" (0 off, 1 Night Smart), partial write so on/off is untouched; turning auto
+ *    back on restores the saved mode (spotlightAutoMode data value). Mode read by Check >
+ *    abilities and Refresh, at most every 10 min per device (SPOTLIGHT_READ_MIN_MS).
+ * v1.6.6 -- Source password kept in memory only (bridges ask the app after reboot/driver save);
+ *    State shows "Password: Saved, N characters" plus last login. Never logged. PIR on/off fixed:
+ *    SetPirInfo was always rejected (-12); now read GetPirInfo, change "enable", write the full
+ *    object back, update the page only once the camera accepts.
+ * v1.6.5 -- Battery vs wired from GetAbility "battery" (an NVR answers GetBatteryInfo with junk
+ *    for PoE channels). batteryMode retired for powerMode data value + "batteryWired" attribute;
+ *    migration runs on its own after update, retrying every 10 min. chargingStatus "plugged_in".
+ *    RTSP validation queued one device at a time, retried on timeout.
+ * v1.6.4 -- Done/reboot restarts any source whose bridge can't prove live traffic; a given-up
+ *    source retries when its camera answers again, else hourly via the audit.
+ * v1.6.3 -- Reboot clears saved connection modes ("connected" survived, the socket didn't: likely
+ *    the 5-day outage). Log level pushed to bridges (setLogRank). singleInstance, installOnOpen.
+ * v1.6.2 -- Scheduler ticks 1s only while a source polls, else 30s (IDLE_TICK_SEC); an idle 1s
+ *    tick was ~34% of hub time on 8 standalone sources and hit LimitExceededException.
+ * v1.6.1 -- RTSP port and width defaults passed to new children.
+ * v1.5.3 -- After a 5-day silent Home Hub outage: Bridge stale watchdog restored, keepalive always
+ *    reschedules, plus an independent 15-min audit (auditEventConnections, via schedule()).
+ *    Full logging reverts to Errors Only after 60 min.
+ * v1.5.2 -- state.knownDeviceDnis: the deleted-device checkbox self-heal only applies to DNIs
+ *    this app created before (new channels were bouncing back to unselected).
+ * v1.5.0 -- NVR recording control, confirmed on an RLN16-410:
+ *  - Master record (SetRecV20, no channel) always applies to every channel; no per-channel call.
+ *    The Reolink app's per-camera Enable Record only controls SD-card recording.
+ *  - Presets write 168-char hourly schedules per channel by full read-modify-write (a partial
+ *    Rec returns 200 but changes nothing). Blank channel = skipped; excludeFromRecordingPresets
+ *    locks a device out of every preset (manual commands unaffected).
+ *  - GetRecV20 first, GetRec fallback (GetAbility scheduleVersion is unreliable). scheduleEnable
+ *    is top-level on Rec, not in schedule; set every key in the device's own schedule.table.
+ *  - Master enable goes after the per-channel writes (they re-enable it); ~300ms between channel
+ *    writes (REC_CHANNEL_SETTLE_MS) or some are missed.
+ *  - Preset button numbers are permanent and never reused, so a deleted preset's rule goes inert.
+ *  - "Don't manage" leaves a schedule alone; "Never record" writes all zeros.
+ *  - Platform quirks: a command param with a name but no type becomes a Rule Machine argument
+ *    slot (keep zero-arg commands bare); RM passes NUMBER arguments as BigDecimal.
+ * BREAKING (v1.3.8): devices moved under a per-source Device Bridge; existing installs had to
+ *    re-discover and repoint rules and dashboards.
+ * v1.3.6-1.4.5 -- Standalone device support (battery standalones later closed), PIR, real-time
+ *    events with polling fallback, scheduler/battery-check fixes, DuplicateDNIException handled,
+ *    explicit uninstalled() teardown.
  */
 
 import groovy.transform.Field
