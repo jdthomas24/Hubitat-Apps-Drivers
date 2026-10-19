@@ -1,0 +1,41 @@
+{
+    "packageName": "Bambu Lab Integration",
+    "releaseNotes": "v0.1.0 (beta): Local monitoring of Bambu Lab printers over the LAN: print state, stage, progress, time left, layers, temperatures (including H2 series), speed, chamber light, HMS errors and a dashboard tile, plus one device per AMS unit with humidity, temperature and filament per tray. Each printer is Monitor only (works with Bambu Cloud and the Bambu apps) or Monitor and control (Developer Mode: pause, resume, stop, speed and a light switch). One Log level, dark mode.",
+    "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Bambu%20Lab%20Integration",
+    "author": "jdthomas24",
+    "version": "0.1.0",
+    "minimumHEVersion": "2.3.0",
+    "dateReleased": "2026-10-19",
+    "category": "Integrations",
+    "tags": "3D Printing",
+    "apps": [
+        {
+            "id": "f38a10cd-7f4b-4609-bd6e-ce9bef81e3e0",
+            "name": "Bambu Lab Integration",
+            "namespace": "jdthomas24",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Bambu%20Lab%20Integration/ParentApp.groovy",
+            "required": true,
+            "oauth": false,
+            "primary": true,
+            "description": "Adds your Bambu Lab printers by IP, serial and access code, sets each one to Monitor only or Monitor and control, and lets you choose which devices Hubitat creates."
+        }
+    ],
+    "drivers": [
+        {
+            "id": "655c8f29-20e8-4c57-b78f-1a41219ac391",
+            "name": "Bambu Lab Printer",
+            "namespace": "jdthomas24",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Bambu%20Lab%20Integration/PrinterDriver.groovy",
+            "required": true,
+            "description": "One per printer: the local MQTT connection, print status, temperatures, errors and tile, plus print control in control mode. Created by the app."
+        },
+        {
+            "id": "83c3bd09-ff13-4dcf-b67a-3ef6b7555c14",
+            "name": "Bambu Lab AMS",
+            "namespace": "jdthomas24",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Bambu%20Lab%20Integration/AMSDriver.groovy",
+            "required": true,
+            "description": "One per AMS unit: humidity, temperature, and filament type, color and amount for each tray."
+        }
+    ]
+}
