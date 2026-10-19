@@ -1,6 +1,6 @@
 {
     "packageName": "Bambu Lab Integration",
-    "releaseNotes": "v0.1.0 (beta): Local monitoring of Bambu Lab printers over the LAN: print state, stage, progress, time left, layers, temperatures (including H2 series), speed, HMS errors and a dashboard tile. Chamber light switch and one device per AMS unit with humidity, temperature and filament per tray. Optional pause, resume, stop and speed (newer firmware needs Developer Mode). One Log level, dark mode.",
+    "releaseNotes": "v0.1.0 (beta): Local monitoring of Bambu Lab printers over the LAN: print state, stage, progress, time left, layers, temperatures (including H2 series), speed, chamber light, HMS errors and a dashboard tile, plus one device per AMS unit with humidity, temperature and filament per tray. Each printer is Monitor only (works with Bambu Cloud and the Bambu apps) or Monitor and control (Developer Mode: pause, resume, stop, speed and a light switch). One Log level, dark mode.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Bambu%20Lab%20Integration",
     "author": "jdthomas24",
     "version": "0.1.0",
@@ -17,7 +17,7 @@
             "required": true,
             "oauth": false,
             "primary": true,
-            "description": "Adds your Bambu Lab printers by IP, serial and access code, and lets you choose which light and AMS devices Hubitat creates."
+            "description": "Adds your Bambu Lab printers by IP, serial and access code, sets each one to Monitor only or Monitor and control, and lets you choose which devices Hubitat creates."
         }
     ],
     "drivers": [
@@ -27,7 +27,7 @@
             "namespace": "jdthomas24",
             "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Bambu%20Lab%20Integration/PrinterDriver.groovy",
             "required": true,
-            "description": "One per printer: the local MQTT connection, print status, temperatures, errors, tile and optional print control. Created by the app."
+            "description": "One per printer: the local MQTT connection, print status, temperatures, errors and tile, plus print control in control mode. Created by the app."
         },
         {
             "id": "83c3bd09-ff13-4dcf-b67a-3ef6b7555c14",

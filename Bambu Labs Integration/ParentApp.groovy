@@ -7,7 +7,8 @@
       complete slot and removes devices for printers taken out. Devices are keyed by serial.
      -Access codes stay in this app's settings and are never logged or stored on a device. getAccessCode() hands
       one to its Printer at connect time.
-     -Options go to every Printer: update interval for busy printers, temperature step, Allow print control.
+     -Mode is per printer (pN_mode): Monitor only (default, works with Bambu Cloud) or Monitor and control
+      (Developer Mode). Shared options: update interval for busy printers, temperature step.
      -Equipment page as in IntelliCenter, one section per printer; state.pushedExcluded is per printer.
      -Log level is the only logging control. App -> Printer -> light/AMS; every line comes back to childLog().
       Full turns off after 30 minutes.
@@ -37,6 +38,8 @@ import groovy.transform.Field
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
 @Field static final Map INTERVALS        = ["2": "2 seconds", "5": "5 seconds", "10": "10 seconds", "30": "30 seconds"]
 @Field static final Map TEMP_STEPS       = ["0.5": "0.5°", "1": "1°", "2": "2°", "5": "5°"]
+@Field static final Map MODES            = [monitor: "Monitor only (works with Bambu Cloud and the Bambu apps)",
+                                            control: "Monitor and control (needs Developer Mode, no Bambu Cloud)"]
 
 preferences {
     page(name: "mainPage")
@@ -53,7 +56,8 @@ private Map configuredPrinters() {
     (1..slotCount()).each { i ->
         String s = settings["p${i}_serial"]?.toString()?.trim()?.toUpperCase()
         String ip = settings["p${i}_ip"]?.toString()?.trim()
-        if (s && ip && settings["p${i}_code"]) out[s] = [serial: s, name: (settings["p${i}_name"]?.toString()?.trim() ?: "Bambu ${s.takeRight(4)}"), ip: ip]
+        if (s && ip && settings["p${i}_code"]) out[s] = [serial: s, name: (settings["p${i}_name"]?.toString()?.trim() ?: "Bambu ${s.takeRight(4)}"), ip: ip,
+                                                         control: settings["p${i}_mode"] == "control"]
     }
     return out
 }
@@ -85,13 +89,19 @@ def mainPage() {
                 input "p${i}_ip", "text", title: "IP address", description: "e.g. 192.168.1.60", required: false, width: 6
                 input "p${i}_serial", "text", title: "Serial number", required: false, width: 6
                 input "p${i}_code", "password", title: "LAN access code", required: false, width: 6
+                input "p${i}_mode", "enum", title: "Mode", options: MODES, defaultValue: "monitor", submitOnChange: true, width: 12
+                if (settings["p${i}_mode"] == "control") {
+                    paragraph rawHtml: true, warningMessageHtml("<b>Needs Developer Mode on the printer</b> (Settings, LAN Only, Developer Mode), " +
+                        "which disconnects it from Bambu Cloud: no remote printing or monitoring from the Bambu Handy app. Bambu Studio still works on your network. " +
+                        "<b>Stop ends the print for good</b>, so keep it out of rules and voice assistants you don't trust.")
+                }
             }
             paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;'>On the printer: <b>Settings, WLAN</b> (or <b>LAN Only</b>) shows the IP " +
                 "address and access code; <b>Settings, Device</b> shows the serial. A DHCP reservation keeps the IP from changing.</div>"
             if (printerDevices()) {
                 Map eq = equipmentCounts()
                 href name: "toEquipment", title: "<i class='fa-solid fa-cube mr-2' aria-hidden='true'></i>Equipment",
-                    description: eq.total ? "${eq.on} of ${eq.total} lights and AMS units included. Choose which devices Hubitat creates." :
+                    description: eq.total ? "${eq.on} of ${eq.total} AMS units and lights included. Choose which devices Hubitat creates." :
                         "Appears once a printer connects and reports its light and AMS.",
                     page: "equipmentPage", width: 12, style: "margin:8px;"
             }
@@ -100,12 +110,6 @@ def mainPage() {
                 description: "X1 and H2 printers report every second while printing. State changes always go through right away."
             input "tempStep", "enum", title: "Report temperature changes of", options: TEMP_STEPS, defaultValue: "1", width: 6,
                 description: "Smaller changes are skipped to keep hub load down"
-            input "allowControl", "bool", title: "Allow print control", defaultValue: false, submitOnChange: true, width: 12,
-                description: "Pause, Resume, Stop and Set Speed on the printer devices"
-            if (allowControl) {
-                paragraph rawHtml: true, warningMessageHtml("<b>Stop ends the print for good.</b> Any rule, dashboard or voice command that runs it " +
-                    "cancels the job. On newer firmware, control from Hubitat also needs <b>Developer Mode</b> on the printer (Settings, LAN Only).")
-            }
         }
         section(sectionClass: "app-ui-links app-main-settings") {
             paragraph rawHtml: true, columnHeader("Quick Settings")
@@ -217,8 +221,7 @@ def initialize() {
     state.remove("fullLogArmed")   // unschedule() cleared its timer
     armLogRevert()
     Map cfg = configuredPrinters()
-    Map opts = [interval: ((updateInterval ?: "5") as String).toInteger(), tempStep: ((tempStep ?: "1") as String).toBigDecimal(),
-                control: allowControl == true]
+    Map shared = [interval: ((updateInterval ?: "5") as String).toInteger(), tempStep: ((tempStep ?: "1") as String).toBigDecimal()]
     printerDevices().each { dev ->
         String s = dev.deviceNetworkId - "bambu-"
         if (!cfg.containsKey(s)) {
@@ -239,7 +242,7 @@ def initialize() {
                 return
             }
         }
-        dev.configure(p as Map, opts)
+        dev.configure([serial: p.serial, name: p.name, ip: p.ip], shared + [control: p.control])
         dev.setLogLevel(currentLogLevel())
     }
     state.pushedLogLevel = currentLogLevel()

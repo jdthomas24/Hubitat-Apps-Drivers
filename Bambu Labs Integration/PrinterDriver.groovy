@@ -14,10 +14,12 @@
      -Temperatures: classic print.* fields first; H2 series fall back to print.device (extruder.info[n].temp,
       ctc.info.temp), packed as current = low 16 bits, target = high 16 bits. Unconfirmed until a real H2 log.
       Reported in the hub's scale, only when they move by the app's temperature step.
-     -Children (chosen on the app's Equipment page): chamber light (Generic Component Switch) and one AMS
-      device per unit. Exclusions as in IntelliCenter.
-     -Pause, resume, stop and speed only when the app allows print control. Newer firmware rejects unsigned
-      commands (84033543) unless Developer Mode is on; that is reported once with the fix.
+     -Mode is per printer, from the app. Monitor only (default): works alongside Bambu Cloud and the Bambu
+      apps; chamberLight is read-only and commands are refused locally. Monitor and control: needs Developer
+      Mode (LAN Only, no Bambu Cloud); adds the chamber light switch device and Pause, Resume, Stop, Set Speed.
+      Unsigned commands refused by the printer (84033543) are reported once with the fix.
+     -Children (chosen on the app's Equipment page): one AMS device per unit, plus the chamber light
+      (Generic Component Switch) in control mode. Exclusions as in IntelliCenter.
      -Reconnect backoff 5 s to 5 min. Quiet for 6 min: pushall. Still quiet a minute later: reconnect.
       A drop logs at Normal; still down after 4 tries warns once; recovery logs.
      -Tile stays under the dashboard's 1024-character limit.
@@ -47,6 +49,8 @@ metadata {
         attribute "bedTarget",        "number"
         attribute "chamberTemp",      "number"
         attribute "speed",            "string"
+        attribute "chamberLight",     "string"
+        attribute "mode",             "string"
         attribute "activeTray",       "string"
         attribute "errorCount",       "number"
         attribute "errors",           "string"
@@ -150,6 +154,20 @@ void configure(Map printer, Map opts) {
     if (state.printer != printer) state.printer = printer
     if (state.opts != opts) state.opts = opts
     mem().remove("opts")
+    report("mode", opts?.control ? "Monitor and control" : "Monitor only")
+    if (!opts?.control) dropLight()
+}
+
+// Monitor only: no light switch device. Forgotten, not excluded, so control mode recreates it.
+private void dropLight() {
+    def child = getChildDevice(dniFor("light"))
+    if (child) {
+        try { deleteChildDevice(child.deviceNetworkId); logN "removed ${child.displayName} (monitor only)" } catch (e) { }
+    }
+    Map c = (state.catalog ?: [:]) as Map
+    if (c.containsKey("light")) { c.remove("light"); state.catalog = c; mem().remove("cat") }
+    if (((state.known ?: []) as List).contains("light")) state.known = ((state.known ?: []) as List) - "light"
+    if (((state.excluded ?: []) as List).contains("light")) state.excluded = ((state.excluded ?: []) as List) - "light"
 }
 
 private opt(String k) {
@@ -357,7 +375,7 @@ private void checkResult(Map r, String kind) {
     if (err.contains(DEV_MODE_ERR) || (r.reason ?: "").toString().toLowerCase().contains("sign")) {
         if (!mem().devModeWarned) {
             mem().devModeWarned = true
-            logE "the printer refused ${r.command ?: 'a command'}: this firmware needs Developer Mode for control from Hubitat (on the printer: Settings, LAN Only, Developer Mode). Monitoring keeps working."
+            logE "the printer refused ${r.command ?: 'a command'}: control from Hubitat needs Developer Mode on the printer (Settings, LAN Only, Developer Mode), which turns off Bambu Cloud. Or set this printer to Monitor only in the app. Monitoring keeps working."
         }
         return
     }
@@ -509,9 +527,12 @@ private void light(Map r) {
     if (!(r.lights_report instanceof List)) return
     Map l = r.lights_report.find { it.node == "chamber_light" } as Map
     if (!l) return
+    String v = l.mode == "off" ? "off" : "on"
+    report("chamberLight", v)
+    if (!opt("control")) return
     catalogPut("light", [k: "light", n: "Chamber light"])
     def child = childFor("light")
-    if (child) child.parse([[name: "switch", value: l.mode == "off" ? "off" : "on"]])
+    if (child) child.parse([[name: "switch", value: v]])
 }
 
 void componentOn(cd)  { setLight(true) }
@@ -519,13 +540,14 @@ void componentOff(cd) { setLight(false) }
 void componentRefresh(cd) { pushAll() }
 
 private void setLight(boolean on) {
+    if (!opt("control")) { logE "monitor only: control the light from the Bambu apps, or set this printer to Monitor and control in the app."; return }
     publish([system: [sequence_id: seq(), command: "ledctrl", led_node: "chamber_light", led_mode: on ? "on" : "off",
                       led_on_time: 500, led_off_time: 500, loop_times: 0, interval_time: 0]])
     logN "chamber light ${on ? 'on' : 'off'}"
 }
 
 // ============================================================
-// Print control (gated by the app)
+// Print control (Monitor and control mode only)
 // ============================================================
 
 def pause()  { printCommand("pause", "") }
@@ -540,7 +562,7 @@ def setSpeed(String speed) {
 
 private void printCommand(String cmd, String param) {
     if (!opt("control")) {
-        logE "print control is off. Turn on Allow print control in the Bambu Lab Integration app to use ${cmd}."
+        logE "monitor only: ${cmd} not sent. Use the Bambu apps, or set this printer to Monitor and control in the Bambu Lab Integration app (needs Developer Mode)."
         return
     }
     if (!state.connected) { logE "not connected to the printer, ${cmd} not sent"; return }
