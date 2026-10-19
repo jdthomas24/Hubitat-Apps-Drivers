@@ -97,6 +97,17 @@
                 "Entertainment",
                 "Remotes & Buttons"
             ]
+        },
+        {
+            "name": "Leviton Smart Load Center",
+            "category": "Integrations",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Leviton%20Smart%20Load%20Center/packagemanifest.json",
+            "description": "Leviton LWHEM and LDATA smart panels: per-breaker and CT clamp power, current, voltage and energy, with optional remote trip and reset.",
+            "descriptive": "",
+            "tags": [
+                "Energy Monitoring",
+                "Monitoring"
+            ]
         }
     ]
 }
