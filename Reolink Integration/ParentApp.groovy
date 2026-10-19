@@ -654,36 +654,36 @@ private String mainPageColumnHeader(String title) {
 }
 
 /**
- * Supplies light-only semantic styles on firmware without the hub theme marker.
- * Both beta themes set data-hubitat-theme on the root, disabling every fallback rule.
+ * Supplies semantic styles when firmware does not advertise the app UI class contract.
+ * The hub app container advertises version 1 only when its semantic classes are available.
  * Scope covers this app form and its logging dialog without changing other hub controls.
- * @return CSS rules for legacy firmware; beta firmware uses the hub semantic classes
+ * @return scoped fallback CSS; capable firmware uses the hub semantic classes
  */
 private String legacyLightThemeCss() {
     """
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .hub-text-link { color: #1565c0 !important; }
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .hub-text-success { color: #356700 !important; }
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .hub-text-warning { color: #8a5a00 !important; }
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .hub-text-danger { color: #b71c1c !important; }
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .app-ui-links .hrefElem { color: #1565c0 !important; }
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .app-ui-links .hrefElem > .state-incomplete-text,
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .app-ui-links .hrefElem > .state-complete-text { color: #616161; }
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button { background: rgba(158,158,158,.2); color: #363636; border: 1px solid transparent; border-radius: 4px; box-shadow: 0 2px 2px rgba(0,0,0,.14); }
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button:enabled:hover { background: #cacfdc; }
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button-primary,
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button-primary:enabled:hover { background: #81bc00; color: #fff; }
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button-secondary { background: #fff; color: #1565c0; border-color: #b0bec5; box-shadow: none; }
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button-danger,
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button-danger:enabled:hover { background: #d32f2f; color: #fff; }
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button:enabled:active { box-shadow: none; }
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button:disabled { background: #eee; color: #616161; opacity: .6; cursor: not-allowed; box-shadow: none; }
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .app-ui-navigation .hrefElem { background: transparent; color: #1565c0 !important; border: 0; border-left: 3px solid transparent; border-radius: 0; box-shadow: none; padding: 12px; font-family: inherit; font-size: 16px; }
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .app-ui-navigation .hrefElem::before { display: none; }
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .app-ui-navigation .hrefElem:not(:disabled):hover { background: #f3f6fa; }
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .app-ui-navigation .hrefElem:has(.app-ui-navigation-selected) { background: #eaf2fc; border-left-color: #1565c0; font-weight: 600; }
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .app-ui-navigation .hrefElem:disabled { opacity: .6; cursor: not-allowed; }
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button:focus-visible,
-  :root:not([data-hubitat-theme]) :is(#formApp, .reolink-dialog) .app-ui-navigation .hrefElem:focus-visible { outline: 2px solid #1565c0; outline-offset: 2px; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) .hub-text-link { color: var(--hubitat-link-color, #1565c0) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) .hub-text-success { color: var(--hubitat-success-color, #356700) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) .hub-text-warning { color: var(--hubitat-warning-color, #8a5a00) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) .hub-text-danger { color: var(--hubitat-validation-color, #b71c1c) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) .app-ui-links .hrefElem { color: var(--hubitat-link-color, #1565c0) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) .app-ui-links .hrefElem > .state-incomplete-text,
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) .app-ui-links .hrefElem > .state-complete-text { color: var(--text-color-secondary, #616161); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button { background: var(--hubitat-control-background, rgba(158,158,158,.2)); color: var(--hubitat-control-text, #363636); border: 1px solid transparent; border-radius: 4px; box-shadow: 0 2px 2px rgba(0,0,0,.14); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button:enabled:hover { background: var(--hubitat-control-hover-background, #cacfdc); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button-primary,
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button-primary:enabled:hover { background: var(--hubitat-brand-background, #81bc00); color: var(--hubitat-on-brand, #fff); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button-secondary { background: var(--surface-card, #fff); color: var(--hubitat-link-color, #1565c0); border-color: var(--hubitat-control-border, #b0bec5); box-shadow: none; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button-danger,
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button-danger:enabled:hover { background: var(--hubitat-danger-background, #d32f2f); color: var(--hubitat-on-danger, #fff); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button:enabled:active { box-shadow: none; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button:disabled { background: var(--hubitat-control-background, #eee); color: var(--text-color-secondary, #616161); opacity: .6; cursor: not-allowed; box-shadow: none; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) .app-ui-navigation .hrefElem { background: transparent; color: var(--hubitat-link-color, #1565c0) !important; border: 0; border-left: 3px solid transparent; border-radius: 0; box-shadow: none; padding: 12px; font-family: inherit; font-size: 16px; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) .app-ui-navigation .hrefElem::before { display: none; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) .app-ui-navigation .hrefElem:not(:disabled):not(:has(.app-ui-navigation-selected)):hover { background: var(--surface-hover, #f3f6fa); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) .app-ui-navigation .hrefElem:has(.app-ui-navigation-selected) { background: var(--hubitat-selection-background, #eaf2fc); border-left-color: var(--hubitat-link-color, #1565c0); font-weight: 600; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) .app-ui-navigation .hrefElem:disabled { opacity: .6; cursor: not-allowed; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) button.mdl-button.app-ui-button:focus-visible,
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .reolink-dialog) .app-ui-navigation .hrefElem:focus-visible { outline: 2px solid var(--hubitat-link-color, #1565c0); outline-offset: 2px; }
 """
 }
 
