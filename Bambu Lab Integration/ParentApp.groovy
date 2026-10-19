@@ -6,7 +6,8 @@
      -Local only. Each printer is a slot (name, IP, serial, LAN access code); Done creates one Printer device per
       complete slot and removes devices for printers taken out. Devices are keyed by serial.
      -Access codes stay in this app's settings and are never logged or stored on a device. getAccessCode() hands
-      one to its Printer at connect time.
+      one to its Printer at connect time. Plain text input on purpose: a password field makes browsers autofill
+      the user's own login into the serial field. Serials must be 8 to 20 letters and digits.
      -Mode is per printer (pN_mode): Monitor only (default, works with Bambu Cloud) or Monitor and control
       (Developer Mode). Shared options: update interval for busy printers, temperature step.
      -Equipment page as in IntelliCenter, one section per printer; state.pushedExcluded is per printer.
@@ -49,6 +50,7 @@ preferences {
 private String printerDni(String serial) { "bambu-${serial}" }
 private List printerDevices() { getChildDevices().findAll { it.deviceNetworkId.startsWith("bambu-") } }
 private int slotCount() { ((printerCount ?: "1") as String).toInteger() }
+private boolean validSerial(String s) { s ==~ /[A-Z0-9]{8,20}/ }
 
 // Complete slots only: serial -> [serial, name, ip]
 private Map configuredPrinters() {
@@ -56,7 +58,7 @@ private Map configuredPrinters() {
     (1..slotCount()).each { i ->
         String s = settings["p${i}_serial"]?.toString()?.trim()?.toUpperCase()
         String ip = settings["p${i}_ip"]?.toString()?.trim()
-        if (s && ip && settings["p${i}_code"]) out[s] = [serial: s, name: (settings["p${i}_name"]?.toString()?.trim() ?: "Bambu ${s.takeRight(4)}"), ip: ip,
+        if (s && validSerial(s) && ip && settings["p${i}_code"]) out[s] = [serial: s, name: (settings["p${i}_name"]?.toString()?.trim() ?: "Bambu ${s.takeRight(4)}"), ip: ip,
                                                          control: settings["p${i}_mode"] == "control"]
     }
     return out
@@ -88,7 +90,11 @@ def mainPage() {
                 input "p${i}_name", "text", title: "Name", required: false, width: 6
                 input "p${i}_ip", "text", title: "IP address", description: "e.g. 192.168.1.60", required: false, width: 6
                 input "p${i}_serial", "text", title: "Serial number", required: false, width: 6
-                input "p${i}_code", "password", title: "LAN access code", required: false, width: 6
+                input "p${i}_code", "text", title: "LAN access code", description: "8 characters, shown on the printer", required: false, width: 6
+                if (s && !validSerial(s)) {
+                    paragraph rawHtml: true, warningMessageHtml("That doesn't look like a serial number (letters and numbers only, like 00M09A123456789). " +
+                        "If your browser filled in your email here, clear it and type the serial from the printer.")
+                }
                 input "p${i}_mode", "enum", title: "Mode", options: MODES, defaultValue: "monitor", submitOnChange: true, width: 12
                 if (settings["p${i}_mode"] == "control") {
                     paragraph rawHtml: true, warningMessageHtml("<b>Needs Developer Mode on the printer</b> (Settings, LAN Only, Developer Mode), " +
