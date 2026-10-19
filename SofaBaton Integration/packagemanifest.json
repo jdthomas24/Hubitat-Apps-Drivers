@@ -1,10 +1,10 @@
 {
     "packageName": "Sofabaton Integration",
-    "releaseNotes": "v1.1.1: X2 hubs now reconnect to MQTT on their own after a hub reboot or firmware update, even when Hubitat's built-in broker starts after the integration. Retries every few minutes until connected, with no Force Reconnect needed.",
+    "releaseNotes": "v1.1.2: Dark mode. The app follows the hub's light or dark theme (Hubitat 2.5.3+) and keeps its current look on older firmware. No Done needed.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/SofaBaton%20Integration",
     "communityLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/SofaBaton%20Integration",
     "author": "jdthomas24",
-    "version": "1.1.1",
+    "version": "1.1.2",
     "minimumHEVersion": "2.5.2.126",
     "dateReleased": "",
     "category": "Integrations",

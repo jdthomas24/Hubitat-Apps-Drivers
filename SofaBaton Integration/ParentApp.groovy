@@ -35,13 +35,15 @@
       Every driver sends its log lines back up to childLog(), so all Sofabaton logging appears
       under this app, labeled [Bridge], [hub], or [activity]. View logs shows everything.
      -Refresh and Add Hub pause 1.5s so the page redraws after the hub's list reply (~0.3s).
-     -UI follows HubitatAppUiTemplate (Reolink v1.6.1, UI design by gopher.ny).
+     -UI follows HubitatAppUiTemplate (Reolink, UI design by gopher.ny). Dark mode uses the hub's theme
+      classes (hub-text-*, app-ui-button*, app-ui-links/navigation, surface-*, p-message/p-tag) and var() tokens
+      with fallbacks; legacyLightThemeCss() covers pre-2.5.3 firmware (pattern by vurvantsev, Reolink 1.6.13).
 */
 
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Sofabaton Integration"
-@Field static final String APP_VERSION = "1.1.1"
+@Field static final String APP_VERSION = "1.1.2"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com"   // TODO: release thread
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
@@ -56,18 +58,19 @@ import groovy.transform.Field
     border: 1px solid transparent !important; border-radius: 4px !important; box-shadow: none !important;
     font-size: 15px !important; font-weight: 600 !important; text-align: center !important; line-height: 1.4 !important;
     cursor: pointer; transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.15s; }
-  button.hrefElem[name^='_action_href_sbCancel'] { background: #f1f3f5 !important; border-color: #d0d7de !important; }
-  button.hrefElem[name^='_action_href_sbCancel']:hover { background: #eaf2fc !important; border-color: #1565c0 !important; }
-  button.hrefElem[name^='_action_href_sbCancel']:hover span { color: #1565c0 !important; }
-  button.hrefElem[name^='_action_href_sbSave'] { background: #bdbdbd !important; border-color: #bdbdbd !important; }
+  button.hrefElem[name^='_action_href_sbCancel'] { background: var(--hubitat-control-background, #f1f3f5) !important; border-color: var(--hubitat-control-border, #d0d7de) !important; }
+  button.hrefElem[name^='_action_href_sbCancel']:hover { background: var(--hubitat-control-hover-background, #eaf2fc) !important; border-color: var(--hubitat-link-color, #1565c0) !important; }
+  button.hrefElem[name^='_action_href_sbCancel']:hover span { color: var(--hubitat-link-color, #1565c0) !important; }
+  button.hrefElem[name^='_action_href_sbSave'] { background: var(--hubitat-control-background, #bdbdbd) !important; border-color: var(--hubitat-control-background, #bdbdbd) !important; opacity: .6; }
   button.hrefElem[name^='_action_href_sbSave']:not([name*='Ready']) { cursor: not-allowed !important; }
-  button.hrefElem[name*='Ready'] { background: #2e7d32 !important; border-color: #2e7d32 !important; }
-  button.hrefElem[name*='Ready']:hover { background: #1b5e20 !important; border-color: #1b5e20 !important;
+  button.hrefElem[name*='Ready'] { background: var(--hubitat-brand-background, #81bc00) !important; border-color: var(--hubitat-brand-background, #81bc00) !important; opacity: 1; }
+  button.hrefElem[name*='Ready']:hover { filter: brightness(.92);
     box-shadow: 0 2px 6px rgba(0,0,0,0.25) !important; transform: translateY(-1px); }
   button.hrefElem[name^='_action_href_sbCancel']::before, button.hrefElem[name^='_action_href_sbSave']::before,
   button.hrefElem[name^='_action_href_sbCancel']::after, button.hrefElem[name^='_action_href_sbSave']::after { display: none !important; }
-  button.hrefElem[name^='_action_href_sbCancel'] span { color: #333 !important; font-size: 15px !important; }
-  button.hrefElem[name^='_action_href_sbSave'] span { color: #fff !important; font-size: 15px !important; }
+  button.hrefElem[name^='_action_href_sbCancel'] span { color: var(--hubitat-control-text, #333) !important; font-size: 15px !important; }
+  button.hrefElem[name^='_action_href_sbSave'] span { color: var(--hubitat-control-text, #333) !important; font-size: 15px !important; }
+  button.hrefElem[name*='Ready'] span { color: var(--hubitat-on-brand, #fff) !important; }
   button.hrefElem[name^='_action_href_sbCancel'] .state-incomplete-text, button.hrefElem[name^='_action_href_sbSave'] .state-incomplete-text,
   button.hrefElem[name^='_action_href_sbCancel'] .state-complete-text, button.hrefElem[name^='_action_href_sbSave'] .state-complete-text { display: none !important; }
   .mdl-cell:has(> button.hrefElem[name^='_action_href_sbCancel']), .mdl-cell:has(> button.hrefElem[name^='_action_href_sbSave']) {
@@ -227,7 +230,7 @@ def mainPage(params = null) {
         section {
             paragraph rawHtml: true, statusBannerHtml(banner.ok, banner.title, banner.summary)
         }
-        section(sectionClass: "app-main-content") {
+        section(sectionClass: "app-ui-links app-main-content") {
             paragraph rawHtml: true, columnHeader("Hubs")
             if (!hubs) {
                 paragraph "<span class='text-color-secondary'>No hubs added yet. Tap Add a Hub below.</span>"
@@ -239,20 +242,20 @@ def mainPage(params = null) {
                 paragraph rawHtml: true, hubCardHtml(hub, activities)
                 // Hubitat can't put inputs inside HTML, so these sit tight under the card (see sb-hub-btn CSS).
                 if (hub.currentValue("hubModel") == "X2") {
-                    input name: "editHub_${dni}", type: "button", title: "Edit Hub", width: 3
-                    input name: "syncHub_${dni}", type: "button", title: "Refresh Activities", width: 3
+                    input name: "editHub_${dni}", type: "button", title: "Edit Hub", width: 3, inputClass: "app-ui-button"
+                    input name: "syncHub_${dni}", type: "button", title: "Refresh Activities", width: 3, inputClass: "app-ui-button"
                     href name: "btnActs_${dni}", title: "Button Actions", description: "", page: "buttonActionsPage", params: [hub: dni], width: 3
-                    input name: "removeHub_${dni}", type: "button", title: "Remove Hub", width: 3
+                    input name: "removeHub_${dni}", type: "button", title: "Remove Hub", width: 3, inputClass: "app-ui-button"
                     activities.findAll { it.currentValue("onHub") == "false" }.each { act ->
                         input name: "removeAct_${dni}_${act.deviceNetworkId}", type: "button", title: "Remove ${shortName(act, hubLabel)}", width: 3,
-                            backgroundColor: "#c62828", textColor: "white"
+                            inputClass: "app-ui-button app-ui-button-danger"
                     }
                 } else {
-                    input name: "editHub_${dni}", type: "button", title: "Edit Hub", width: 3
-                    input name: "removeHub_${dni}", type: "button", title: "Remove Hub", width: 3
+                    input name: "editHub_${dni}", type: "button", title: "Edit Hub", width: 3, inputClass: "app-ui-button"
+                    input name: "removeHub_${dni}", type: "button", title: "Remove Hub", width: 3, inputClass: "app-ui-button"
                     activities.each { act ->
-                        input name: "editAct_${dni}_${act.deviceNetworkId}", type: "button", title: "Edit ${shortName(act, hubLabel)}", width: 3
-                        input name: "removeAct_${dni}_${act.deviceNetworkId}", type: "button", title: "Remove ${shortName(act, hubLabel)}", width: 3
+                        input name: "editAct_${dni}_${act.deviceNetworkId}", type: "button", title: "Edit ${shortName(act, hubLabel)}", width: 3, inputClass: "app-ui-button"
+                        input name: "removeAct_${dni}_${act.deviceNetworkId}", type: "button", title: "Remove ${shortName(act, hubLabel)}", width: 3, inputClass: "app-ui-button"
                     }
                 }
                 paragraph rawHtml: true, "<div class='sb-hub-end'></div>"
@@ -265,7 +268,7 @@ def mainPage(params = null) {
                 paragraph "<span class='text-color-secondary' style='font-size:14px;'>Tap <b>Done</b> when finished. That's what finalizes the install.</span>"
             }
         }
-        section(sectionClass: "app-main-settings") {
+        section(sectionClass: "app-ui-links app-main-settings") {
             paragraph rawHtml: true, columnHeader("Quick Settings")
             if (bridge) {
                 paragraph rawHtml: true, supportLinkHtml("/device/edit/${bridge.id}", "pi pi-sitemap",
@@ -319,19 +322,19 @@ private String hubCardHtml(hub, List activities) {
     String hubLabel = hub.getLabel()
     String idShown = x2 ? (hub.currentValue("remoteMac") ?: "no MAC set") : (hub.currentValue("remoteIp") ?: "no IP set")
     StringBuilder card = new StringBuilder()
-    card << "<div style='border:1px solid #ccc;border-radius:10px;padding:12px 14px;margin:4px 0 0;background:#fafafa'>"
+    card << "<div style='border:1px solid var(--surface-border, rgba(0,0,0,.12));border-radius:10px;padding:12px 14px;margin:4px 0 0;background:var(--surface-card, #fff)'>"
     String badge = x2 ? "#5f8b6f" : "#e8a33d"   // matches the Remote driver's pills
     card << "<div><span style='background:${badge};color:#fff;border-radius:8px;padding:2px 9px;font-size:0.9em;font-weight:bold'>${model}</span> "
     card << "<a href='/device/edit/${hub.id}' target='_blank' class='sb-link' style='font-size:0.85em'>${hubLabel}" +
         "<i class='fa-regular fa-external-link' style='margin-left:5px;font-size:0.8em'></i></a> "
-    card << "<span style='color:#888;font-size:0.8em'>${idShown}</span></div>"
+    card << "<span class='text-color-secondary' style='font-size:0.8em'>${idShown}</span></div>"
     if (x2) {
         String seen = hub.currentValue("lastMqttMessage")
-        card << "<div style='margin-top:6px;font-size:0.8em;color:${seen ? '#5f8b6f' : '#b26a00'}'>"
+        card << "<div class='${seen ? 'hub-text-success' : 'hub-text-warning'}' style='margin-top:6px;font-size:0.8em'>"
         card << (seen ? "Last heard from hub: ${seen}" : "Waiting for the hub to reply") << "</div>"
     }
     if (!activities) {
-        card << "<div style='margin-top:10px;color:#aaa;font-size:0.85em'>"
+        card << "<div class='text-color-secondary' style='margin-top:10px;font-size:0.85em'>"
         card << (x2 ? "Loading activities from the hub. Reload this page in a few seconds." : "No activities yet. Tap Add an Activity.") << "</div>"
     } else {
         card << "<div style='margin-top:10px;display:flex;flex-wrap:wrap;gap:8px'>"
@@ -347,11 +350,11 @@ private String hubCardHtml(hub, List activities) {
 private String activityPillHtml(act, boolean x2, String hubLabel) {
     String sw = act.currentValue("switch")
     String status = act.currentValue("activityStatus")
-    String dot = "<span style='display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:${sw == 'on' ? '#2e9e5b' : '#bbb'}'></span>"
+    String dot = "<span style='display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:${sw == 'on' ? 'var(--hubitat-success-color, #2e9e5b)' : 'var(--text-color-secondary, #bbb)'}'></span>"
     String extra = ""
     if (x2) {
         extra += " <span style='margin-left:6px;background:#455a64;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em;font-weight:bold'>ID ${act.currentValue('sofabatonActivityId') ?: '?'}</span>"
-        if (status in ["starting", "stopping"]) extra += " <span style='color:#b26a00;font-size:0.8em'>${status}...</span>"
+        if (status in ["starting", "stopping"]) extra += " <span class='hub-text-warning' style='font-size:0.8em'>${status}...</span>"
         if (act.currentValue("onHub") == "false") extra += " <span style='margin-left:6px;background:#c62828;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>Not on hub</span>"
     } else {
         String body = act.currentValue("bodyValue")
@@ -360,7 +363,7 @@ private String activityPillHtml(act, boolean x2, String hubLabel) {
         if (!act.getSetting("webhookUrlOn")) extra += " <span style='margin-left:6px;background:#90a4ae;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>Follow only</span>"
     }
     return "<a href='/device/edit/${act.id}' target='_blank' class='sb-pill' title='Open ${act.getLabel()?.replace("'", "&#39;")}'>${dot}${shortName(act, hubLabel)}${extra}" +
-        "<i class='fa-regular fa-external-link' style='margin-left:8px;font-size:0.75em;color:#1565c0'></i></a>"
+        "<i class='fa-regular fa-external-link hub-text-link' style='margin-left:8px;font-size:0.75em'></i></a>"
 }
 
 // X2 remote buttons: which device they come from and the number-to-name map.
@@ -375,19 +378,19 @@ private String buttonMapHtml(hub) {
     } catch (e) { }
     StringBuilder out = new StringBuilder("<div style='margin-top:12px;font-size:0.85em'>")
     if (devId == null) {
-        out << "<span style='color:#888'>Remote buttons: not set up. Press a Hubitat Control button on the remote (Tips, X2 setup step 4).</span>"
+        out << "<span class='text-color-secondary'>Remote buttons: not set up. Press a Hubitat Control button on the remote (Tips, X2 setup step 4).</span>"
     } else {
         String devName = devs[devId.toString()] ?: "device ${devId}"
-        out << "<span style='font-weight:600;color:#555'>Remote buttons</span> <span style='color:#888'>from ${devName}</span>"
+        out << "<span class='text-color' style='font-weight:600'>Remote buttons</span> <span class='text-color-secondary'>from ${devName}</span>"
         if (!btns) {
-            out << "<div style='margin-top:4px;color:#aaa'>Loading button names from the hub. Tap Refresh Activities if they don't appear.</div>"
+            out << "<div class='text-color-secondary' style='margin-top:4px'>Loading button names from the hub. Tap Refresh Activities if they don't appear.</div>"
         } else {
             out << "<div style='margin-top:6px;display:flex;flex-wrap:wrap;gap:6px'>"
             String dni = hub.deviceNetworkId
             btns.sort { a, b -> (a.key as Integer) <=> (b.key as Integer) }.each { k, v ->
                 String assigned = buttonAssignmentText(dni, k.toString())
-                out << "<span style='background:#eef2f6;border-radius:10px;padding:2px 10px'><b>${k}</b> &middot; ${v}" +
-                    (assigned ? " <span style='color:#1565c0'>&rarr; ${assigned}</span>" : " <span style='color:#aaa'>(not assigned)</span>") + "</span>"
+                out << "<span class='text-color' style='background:var(--surface-ground, #f5f7fa);border:1px solid var(--surface-border, rgba(0,0,0,.12));border-radius:10px;padding:2px 10px'><b>${k}</b> &middot; ${v}" +
+                    (assigned ? " <span class='hub-text-link'>&rarr; ${assigned}</span>" : " <span class='text-color-secondary'>(not assigned)</span>") + "</span>"
             }
             out << "</div>"
         }
@@ -398,8 +401,8 @@ private String buttonMapHtml(hub) {
 
 private String mqttStatusHtml(bridge, List x2Hubs) {
     String status = bridge?.currentValue("mqttStatus") ?: "not connected"
-    String tone = status == "connected" ? "bg-green-50 text-green-700" :
-        status in ["error", "connect failed", "broker off"] ? "bg-red-50 text-red-700" : "bg-gray-100 text-gray-700"
+    String tone = status == "connected" ? "p-tag p-tag-success" :
+        status in ["error", "connect failed", "broker off"] ? "p-tag p-tag-danger" : "surface-ground text-color-secondary"
     Boolean broker = null
     try { broker = bridge?.checkBuiltInBroker() } catch (e) { }
     String attr = bridge?.currentValue("brokerRunning")
@@ -413,7 +416,7 @@ private String mqttStatusHtml(bridge, List x2Hubs) {
         "<span class='text-color-secondary' style='font-size:14px;'>${h.currentValue('lastMqttMessage') ?: 'No reply yet'}</span></div>"
     }.join("")
     """
-<div class='border-1 border-gray-200 border-round px-3 py-2 mb-2'>
+<div class='border-1 surface-border border-round px-3 py-2 mb-2'>
   <div class='flex align-items-center justify-content-between gap-3 mb-1'>
     <span class='font-semibold'>MQTT</span>
     <span class='${tone} border-round-xl px-2 py-1 text-xs font-bold'>${status}</span>
@@ -630,20 +633,20 @@ def addHubPage(params = [:]) {
                 section("Find your X2") {
                     paragraph "<span class='text-color-secondary' style='font-size:14px;'>1. Tap <b>${state.discoveryStarted ? 'Check Again' : 'Find My X2'}</b>. " +
                         "2. On the Sofabaton remote, start or switch any activity. 3. Tap <b>Check Again</b>.</span>"
-                    if (state.findError) paragraph "<b style='color:#c00'>${state.findError}</b>"
+                    if (state.findError) paragraph "<b class='hub-text-danger'>${state.findError}</b>"
                     input name: "findX2Btn", type: "button", title: state.discoveryStarted ? "Check Again" : "Find My X2"
                     List found = bridge?.getDiscoveredMacs() ?: []
                     if (found) {
                         input name: "newHubMacPick", type: "enum", title: "X2 hubs found", options: found, submitOnChange: true
                     } else if (state.discoveryStarted) {
-                        paragraph "<span style='color:#b26a00'>Nothing yet. Volume and channel presses don't count, it has to be an activity change.</span>"
+                        paragraph "<span class='hub-text-warning'>Nothing yet. Volume and channel presses don't count, it has to be an activity change.</span>"
                     }
                     input name: "newHubMac", type: "text", title: "Or enter the MAC manually (optional)", required: false, submitOnChange: true
                 }
             }
         }
         section {
-            if (saveError) paragraph "<b style='color:#c00'>${saveError}</b>"
+            if (saveError) paragraph "<b class='hub-text-danger'>${saveError}</b>"
             formButtons("Hub", editingHub ? "Save Changes" : "Add This Hub", hubReady)
         }
     }
@@ -818,7 +821,7 @@ def addActivityPage() {
                     "Sent by the Sofabaton IP control device when this activity starts. Filled in from the name.")
                 input name: "newActivityBody", type: "text", title: "<b>Body Value</b>", submitOnChange: true
                 if (body) paragraph rawHtml: true, "<div style='font-size:14px'>In the Sofabaton app, set the body to " +
-                    "<code style='background:#eef2f6;padding:2px 8px;border-radius:6px;font-size:15px'>${body}</code> " +
+                    "<code style='background:var(--surface-ground, #f5f7fa);padding:2px 8px;border-radius:6px;font-size:15px'>${body}</code> " +
                     "<span class='text-color-secondary'>(X1S setup, step 3)</span></div>"
             }
             section {
@@ -830,7 +833,7 @@ def addActivityPage() {
             }
         }
         section {
-            if (saveError) paragraph "<b style='color:#c00'>${saveError}</b>"
+            if (saveError) paragraph "<b class='hub-text-danger'>${saveError}</b>"
             boolean activityReady = (!missing && !clash) as boolean
             formButtons("Activity", editingActivity ? "Save Changes" : "Add This Activity", activityReady)
         }
@@ -964,7 +967,7 @@ private String ipToHexForApp(String ipAddress) {
 // ============================================================================
 
 private String exampleBoxHtml(String content) {
-    "<div style='background:#f5f5f5;border-left:4px solid #5f8b6f;padding:10px 14px;margin-top:6px'>${content}</div>"
+    "<div style='background:var(--surface-ground, #f5f7fa);border-left:4px solid #5f8b6f;padding:10px 14px;margin-top:6px'>${content}</div>"
 }
 
 private List tipsTopics() {
@@ -972,11 +975,11 @@ private List tipsTopics() {
         [id: "start", label: "Before you begin", title: "Before you begin", group: "Getting started", icon: "pi-sitemap",
             body: "<p>Find your hub below, then follow its setup in the sidebar.</p>" +
                 "<table style='width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px'>" +
-                "<tr style='background:#f5f7fa'><th style='text-align:left;padding:8px'>Hub</th><th style='text-align:left;padding:8px'>Hubitat knows the activity</th>" +
+                "<tr style='background:var(--surface-ground, #f5f7fa)'><th style='text-align:left;padding:8px'>Hub</th><th style='text-align:left;padding:8px'>Hubitat knows the activity</th>" +
                 "<th style='text-align:left;padding:8px'>Hubitat starts/stops it</th><th style='text-align:left;padding:8px'>Activities</th></tr>" +
-                "<tr style='border-top:1px solid #e0e0e0'><td style='padding:8px'><b>X2</b></td><td style='padding:8px'>Yes, local</td><td style='padding:8px'>Yes, local</td><td style='padding:8px'>Added automatically</td></tr>" +
-                "<tr style='border-top:1px solid #e0e0e0'><td style='padding:8px'><b>X1S</b></td><td style='padding:8px'>Yes, local</td><td style='padding:8px'>Optional, through Sofabaton's cloud</td><td style='padding:8px'>Added by you</td></tr>" +
-                "<tr style='border-top:1px solid #e0e0e0'><td style='padding:8px'><b>X1</b></td><td style='padding:8px' colspan='3'>Not supported. See Common questions.</td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'><b>X2</b></td><td style='padding:8px'>Yes, local</td><td style='padding:8px'>Yes, local</td><td style='padding:8px'>Added automatically</td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'><b>X1S</b></td><td style='padding:8px'>Yes, local</td><td style='padding:8px'>Optional, through Sofabaton's cloud</td><td style='padding:8px'>Added by you</td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'><b>X1</b></td><td style='padding:8px' colspan='3'>Not supported. See Common questions.</td></tr>" +
                 "</table>" +
                 "<p>Setup moves back and forth between two apps, so each step is tagged:</p>" +
                 "<p>${HUBITAT_PILL}<br>This Hubitat app or a device page.</p>" +
@@ -1090,7 +1093,7 @@ private List tipsTopics() {
 // ============================================================================
 
 private void helpAndSupportSection() {
-    section(title: "<b>Help & Support</b>", sectionClass: "app-main-support") {
+    section(title: "<b>Help & Support</b>", sectionClass: "app-ui-links app-main-support") {
         href name: "tips", title: "<i class='pi pi-info-circle' aria-hidden='true'></i>Tips & Troubleshooting",
             page: "tipsPage", description: "Setup guides for X2 and X1S", width: 4, style: "margin:8px;"
         paragraph rawHtml: true, supportLinkHtml(COMMUNITY_URL, "pi pi-comments",
@@ -1109,51 +1112,51 @@ private void versionFooterSection() {
 private String supportLinkHtml(String url, String iconClass, String title, String subtitle) {
     """
 <a href='${url}' target='_blank' rel='noopener noreferrer'
-   class='flex align-items-center gap-3 border-1 border-gray-200 border-round px-3 py-2 text-color no-underline'>
-  <i class='${iconClass} text-blue-700 text-xl flex-shrink-0'></i>
+   class='flex align-items-center gap-3 border-1 surface-border border-round px-3 py-2 text-color no-underline'>
+  <i class='${iconClass} hub-text-link text-xl flex-shrink-0'></i>
   <span class='min-w-0 flex-1'>
-    <span class='block text-blue-700 font-semibold'>${title}</span>
+    <span class='block hub-text-link font-semibold'>${title}</span>
     <span class='block text-color-secondary mt-1' style='font-size:14px;'>${subtitle}</span>
   </span>
-  <i class='fa-regular fa-external-link text-blue-700 flex-shrink-0'></i>
+  <i class='fa-regular fa-external-link hub-text-link flex-shrink-0'></i>
 </a>
 """
 }
 
 private String statusBannerHtml(boolean ok, String title, String summary) {
-    String tone = ok ? "bg-green-50 border-green-200" : "p-message p-message-warn app-message"
-    String icon = ok ? "pi pi-check-circle text-green-700" : "fa-solid fa-exclamation-triangle text-yellow-700"
+    String tone = ok ? "p-message p-message-success app-message" : "p-message p-message-warn app-message"
+    String icon = ok ? "pi pi-check-circle hub-text-success" : "fa-solid fa-exclamation-triangle hub-text-warning"
     """
 <style>
   ${appPageSpacingCss()}
   ${tipsCardCss()}
   .app-main-content { float: left; width: calc(62% - 8px); }
-  .app-main-settings { float: right; width: 38%; border-left: 1px solid #e0e0e0; padding-left: 8px; box-sizing: border-box; }
+  .app-main-settings { float: right; width: 38%; border-left: 1px solid var(--surface-border, rgba(0,0,0,.12)); padding-left: 8px; box-sizing: border-box; }
   .app-main-content > .mdl-grid, .app-main-settings > .mdl-grid { padding: 4px 0 !important; }
   .app-main-support { clear: both; }
-  a.sb-pill { display: inline-flex; align-items: center; background: #e3eaf3; border-radius: 20px; padding: 6px 14px;
+  a.sb-pill { display: inline-flex; align-items: center; background: var(--hubitat-selection-background, #e3eaf3); border-radius: 20px; padding: 6px 14px;
     font-size: 0.9em; color: inherit; text-decoration: none; cursor: pointer; transition: background 0.15s; }
-  a.sb-pill:hover { background: #cfdcec; }
-  a.sb-link { color: #1565c0; text-decoration: none; }
+  a.sb-pill:hover { background: var(--surface-hover, #cfdcec); }
+  a.sb-link { color: var(--hubitat-link-color, #1565c0); text-decoration: none; }
   .app-main-content :is([name*='editHub_'],[name*='syncHub_'],[name*='removeHub_'],[name*='editAct_'],[name*='removeAct_'],
     [id*='editHub_'],[id*='syncHub_'],[id*='removeHub_'],[id*='editAct_'],[id*='removeAct_']) {
     font-size: 13px !important; padding: 3px 12px !important; min-height: 0 !important; height: auto !important;
-    line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid #d0d7de !important;
+    line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid var(--hubitat-control-border, #d0d7de) !important;
     white-space: nowrap; }
   .mdl-cell:has(> button.hrefElem[name^='_action_href_btnActs_']) {
     background: transparent !important; border: 0 !important; box-shadow: none !important; padding: 0 !important; }
   .app-main-content button.hrefElem[name^='_action_href_btnActs_'] {
     width: auto !important; min-width: 0 !important; display: inline-block !important;
     font-size: 13px !important; padding: 3px 12px !important; min-height: 0 !important; height: auto !important;
-    line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid #d0d7de !important;
-    border-radius: 2px !important; background: #eeeeee !important; color: #333 !important; text-align: center !important; white-space: nowrap; }
-  .app-main-content button.hrefElem[name^='_action_href_btnActs_']:hover { background: #e0e0e0 !important; }
-  .app-main-content button.hrefElem[name^='_action_href_btnActs_'] span { font-size: 13px !important; font-weight: 400 !important; color: #333 !important; }
+    line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid var(--hubitat-control-border, #d0d7de) !important;
+    border-radius: 2px !important; background: var(--hubitat-control-background, #eeeeee) !important; color: var(--hubitat-control-text, #333) !important; text-align: center !important; white-space: nowrap; }
+  .app-main-content button.hrefElem[name^='_action_href_btnActs_']:hover { background: var(--hubitat-control-hover-background, #e0e0e0) !important; }
+  .app-main-content button.hrefElem[name^='_action_href_btnActs_'] span { font-size: 13px !important; font-weight: 400 !important; color: var(--hubitat-control-text, #333) !important; }
   .app-main-content button.hrefElem[name^='_action_href_btnActs_']::before,
   .app-main-content button.hrefElem[name^='_action_href_btnActs_']::after,
   .app-main-content button.hrefElem[name^='_action_href_btnActs_'] .state-incomplete-text,
   .app-main-content button.hrefElem[name^='_action_href_btnActs_'] .state-complete-text { display: none !important; }
-  .sb-hub-end { border-bottom: 1px solid #e0e0e0; margin: 4px 0 18px; }
+  .sb-hub-end { border-bottom: 1px solid var(--surface-border, rgba(0,0,0,.12)); margin: 4px 0 18px; }
   a.sb-link:hover { text-decoration: underline; }
   .app-main-support button.hrefElem[name^='_action_href_tips'] { height: 61.5px; padding-bottom: 13.5px; box-sizing: border-box; }
   @media (max-width: 1000px) {
@@ -1168,7 +1171,7 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
       <div class='text-color-secondary mt-1' style='font-size:14px;'>${summary}</div>
     </div>
   </div>
-  <a href='/logs?tab=past&amp;appId=${app.id}' target='_blank' class='text-blue-700 font-semibold white-space-nowrap no-underline'>
+  <a href='/logs?tab=past&amp;appId=${app.id}' target='_blank' class='hub-text-link font-semibold white-space-nowrap no-underline'>
     View logs <i class='fa-regular fa-external-link'></i>
   </a>
 </div>
@@ -1186,7 +1189,7 @@ private String countText(int count, String singular, String plural = null) {
 private String loggingDetailsPopupHtml() {
     String current = currentLogLevel()
     String details = """
-<div class='text-left text-color' style='max-width:520px;line-height:1.45;'>
+<div class='sb-dialog text-left text-color' style='max-width:520px;line-height:1.45;'>
   <div class='text-xl font-bold mb-1'>Logging levels</div>
   <div class='text-color-secondary text-base mb-3'>One setting for the app and every Sofabaton device.</div>
   ${logLevelDetailHtml("Errors Only", "Warnings and errors only.", current)}
@@ -1198,22 +1201,22 @@ private String loggingDetailsPopupHtml() {
         .replace("&", "&amp;").replace("'", "&#39;").replace("<", "&lt;").replace(">", "&gt;")
     """
 <a href='#' onclick='window.alertHubitat(${js}); return false;'
-   class='flex align-items-center justify-content-between gap-3 bg-gray-50 border-1 border-gray-200 border-round px-3 py-2 h-full text-color no-underline'>
+   class='flex align-items-center justify-content-between gap-3 surface-ground border-1 surface-border border-round px-3 py-2 h-full text-color no-underline'>
   <span>
     <span class='block font-semibold'>Logging details</span>
     <span class='block text-color-secondary mt-1' style='font-size:14px;'>What each level records</span>
   </span>
-  <i class='pi pi-chevron-right text-blue-700'></i>
+  <i class='pi pi-chevron-right hub-text-link'></i>
 </a>
 """
 }
 
 private String logLevelDetailHtml(String name, String description, String current) {
-    String badge = name == current ? "<span class='text-green-700 text-xs font-bold'>Current</span>" : ""
-    String tone = name == "Errors Only" ? "bg-red-50 text-red-700" :
-        name == "Full" ? "bg-indigo-50 text-indigo-700" : "bg-blue-50 text-blue-700"
+    String badge = name == current ? "<span class='hub-text-success text-xs font-bold'>Current</span>" : ""
+    String tone = name == "Errors Only" ? "p-tag p-tag-danger" :
+        name == "Full" ? "p-tag p-tag-warning" : "p-tag p-tag-info"
     """
-<div class='border-1 border-gray-200 border-round px-3 py-2 mb-2'>
+<div class='border-1 surface-border border-round px-3 py-2 mb-2'>
   <div class='flex align-items-center justify-content-between gap-3 mb-1'>
     <span class='${tone} border-round-xl px-2 py-1 text-xs font-bold'>${name}${name == "Errors Only" ? " (default)" : ""}</span>
     ${badge}
@@ -1229,26 +1232,26 @@ def tipsPage(params = null) {
     int i = topics.indexOf(topic)
     def next = i + 1 < topics.size() ? topics[i + 1] : null
     dynamicPage(name: "tipsPage", title: "Tips & Troubleshooting") {
-        section(sectionClass: "app-tips-index") {
+        section(sectionClass: "app-ui-links app-tips-index app-ui-navigation") {
             paragraph rawHtml: true, tipsStylesHtml()
             topics.groupBy { it.group }.each { group, entries ->
                 paragraph rawHtml: true, "<div class='app-heading font-semibold mt-2'>${group}</div>"
                 entries.each { entry ->
-                    String selected = entry.id == topic.id ? "app-topic-current" : ""
+                    String selected = entry.id == topic.id ? "app-ui-navigation-selected" : ""
                     href name: "tip_${entry.id}",
                         title: "<span class='${selected}'><i class='pi ${entry.icon} mr-3' aria-hidden='true'></i>${entry.label}</span>",
                         description: "", page: "tipsPage", params: [topic: entry.id], width: 12, style: "margin:0 8px;"
                 }
             }
         }
-        section(sectionClass: "app-tips-article") {
+        section(sectionClass: "app-ui-links app-tips-article") {
             paragraph rawHtml: true, tipsArticleHtml(topic)
             if (topic.append) {
                 def extra = topics.find { it.id == topic.append }
                 if (extra) paragraph rawHtml: true, tipsArticleHtml(extra)
             }
             if (next) {
-                href name: "nextTip", title: "<span class='text-blue-700'>${next.label}</span>",
+                href name: "nextTip", title: "<span class='hub-text-link'>${next.label}</span>",
                     description: "Next topic", page: "tipsPage", params: [topic: next.id], width: 12, style: "margin:8px;"
             }
         }
@@ -1258,8 +1261,8 @@ def tipsPage(params = null) {
 private String tipsArticleHtml(Map topic) {
     String extra = ""
     if (topic.checklist) {
-        extra += "<div class='border-1 border-gray-200 border-round p-3 mb-3'>" + topic.checklist.collect { item ->
-            "<div class='flex align-items-center gap-3 py-2'><i class='pi pi-check-circle text-blue-700 text-xl' aria-hidden='true'></i>" +
+        extra += "<div class='border-1 surface-border border-round p-3 mb-3'>" + topic.checklist.collect { item ->
+            "<div class='flex align-items-center gap-3 py-2'><i class='pi pi-check-circle hub-text-link text-xl' aria-hidden='true'></i>" +
             "<div><div class='font-semibold'>${item.title}</div><div class='text-sm text-color-secondary'>${item.detail}</div></div></div>"
         }.join("") + "</div>"
     }
@@ -1267,7 +1270,7 @@ private String tipsArticleHtml(Map topic) {
     """
 <article class='app-tip-card'>
   <div class='app-tip-card-header flex align-items-center gap-3'>
-    <i class='pi ${topic.icon} text-blue-700 text-xl' aria-hidden='true'></i>
+    <i class='pi ${topic.icon} hub-text-link text-xl' aria-hidden='true'></i>
     <h4 class='app-heading font-semibold m-0'>${topic.title}</h4>
   </div>
   <div class='app-tip-copy'>${topic.body}${extra}</div>
@@ -1280,25 +1283,17 @@ private String tipsStylesHtml() {
 <style>
   ${appPageSpacingCss()}
   .app-tips-index { float: left; width: calc(27% - 8px); box-sizing: border-box; }
-  .app-tips-article { float: right; width: 73%; border-left: 1px solid #e0e0e0; padding-left: 8px; box-sizing: border-box; }
+  .app-tips-article { float: right; width: 73%; border-left: 1px solid var(--surface-border, rgba(0,0,0,.12)); padding-left: 8px; box-sizing: border-box; }
   .app-tips-index > .mdl-grid, .app-tips-article > .mdl-grid { padding: 4px 0 !important; }
   .app-tips-index .mdl-cell:has(> style) { display: none; }
-  .app-tips-index button.hrefElem {
-    background: transparent; box-shadow: none; border: 0; border-left: 3px solid transparent;
-    border-radius: 0; padding: 9px 10px; font-family: inherit; font-size: 16px; color: #1565c0;
-  }
-  .app-tips-index button.hrefElem::before { display: none; }
-  .app-tips-index button.hrefElem:has(.app-topic-current) { background: #eaf2fc; border-left-color: #1565c0; font-weight: 600; }
-  .app-tips-index button.hrefElem:hover { background: #f3f6fa; }
-  .app-tips-index button.hrefElem:focus-visible { outline: 2px solid #1565c0; outline-offset: 2px; }
-  .app-tip-card { border: 1px solid #dfe3e8; border-radius: 4px; overflow: hidden; margin-bottom: 12px; }
-  .app-tip-card-header { padding: 16px; background: #f5f7fa; border-bottom: 1px solid #e4e7ec; }
+  .app-tip-card { border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 4px; overflow: hidden; margin-bottom: 12px; }
+  .app-tip-card-header { padding: 16px; background: var(--surface-ground, #f5f7fa); border-bottom: 1px solid var(--surface-border, rgba(0,0,0,.12)); }
   .app-tip-copy { padding: 16px; line-height: 1.55; overflow-wrap: anywhere; }
   .app-tip-copy p { margin: 0 0 16px; }
   .app-tip-copy p:last-child { margin-bottom: 0; }
   .app-tip-copy .app-message { margin-top: 12px; }
-  .app-tips-article button.hrefElem { background: #fff; box-shadow: none; border: 1px solid #dfe3e8; border-radius: 4px; font-family: inherit; }
-  .app-tips-article button.hrefElem::before { color: #1565c0; }
+  .app-tips-article button.hrefElem { background: var(--surface-card, #fff); box-shadow: none; border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 4px; font-family: inherit; }
+  .app-tips-article button.hrefElem::before { color: var(--hubitat-link-color, #1565c0); }
   #formApp:has(.app-tips-index) #fieldsetAppButtons { clear: both; }
   @media (max-width: 1000px) {
     .app-tips-index, .app-tips-article { float: none; width: 100%; padding: 0; border-left: 0; }
@@ -1308,7 +1303,7 @@ private String tipsStylesHtml() {
 }
 
 private String logLevelPill(String level) {
-    def tones = ["Errors Only": "bg-red-50 text-red-700", "Normal": "bg-gray-100 text-gray-700", "Full": "bg-indigo-50 text-indigo-700"]
+    def tones = ["Errors Only": "p-tag p-tag-danger", "Normal": "surface-ground text-color-secondary", "Full": "p-tag p-tag-warning"]
     "<span class='inline-block ${tones[level] ?: tones['Normal']} font-bold text-xs px-2 py-1 border-round-xl'>${level}</span>"
 }
 
@@ -1323,28 +1318,59 @@ private String appPageSpacingCss() {
   ${tileSecondaryTextCss()}
   .app-heading { font-size: 16px; }
   .p-message.app-message { padding: 0.75rem !important; margin: 0; border: 0 !important; }
-  .app-message .text-color-secondary, .app-message .text-blue-700, .app-message .text-yellow-700 { color: inherit !important; }
+  .app-message .text-color-secondary, .app-message .hub-text-link, .app-message .hub-text-warning,
+  .app-message .hub-text-success, .app-message .hub-text-danger { color: inherit !important; }
   div.panel-body { padding: 0 !important; margin-left: -0.5em; margin-right: -0.5em; }
   fieldset#fieldsetAppButtons { margin-left: 0.5em; margin-right: 0.5em; }
 """
 }
 
+// Light fallback for firmware without the hub's semantic app classes (pre-2.5.3); scoped to this app's form
+// and logging dialog. Capable firmware marks data-hubitat-app-ui-semantics="1" and these rules step aside.
+private String legacyLightThemeCss() {
+    """
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) .hub-text-link { color: var(--hubitat-link-color, #1565c0) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) .hub-text-success { color: var(--hubitat-success-color, #356700) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) .hub-text-warning { color: var(--hubitat-warning-color, #8a5a00) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) .hub-text-danger { color: var(--hubitat-validation-color, #b71c1c) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) .app-ui-links .hrefElem { color: var(--hubitat-link-color, #1565c0) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) .app-ui-links .hrefElem > .state-incomplete-text,
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) .app-ui-links .hrefElem > .state-complete-text { color: var(--text-color-secondary, #616161); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) button.mdl-button.app-ui-button { background: var(--hubitat-control-background, rgba(158,158,158,.2)); color: var(--hubitat-control-text, #363636); border: 1px solid transparent; border-radius: 4px; box-shadow: 0 2px 2px rgba(0,0,0,.14); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) button.mdl-button.app-ui-button:enabled:hover { background: var(--hubitat-control-hover-background, #cacfdc); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) button.mdl-button.app-ui-button-primary,
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) button.mdl-button.app-ui-button-primary:enabled:hover { background: var(--hubitat-brand-background, #81bc00); color: var(--hubitat-on-brand, #fff); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) button.mdl-button.app-ui-button-secondary { background: var(--surface-card, #fff); color: var(--hubitat-link-color, #1565c0); border-color: var(--hubitat-control-border, #b0bec5); box-shadow: none; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) button.mdl-button.app-ui-button-danger,
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) button.mdl-button.app-ui-button-danger:enabled:hover { background: var(--hubitat-danger-background, #d32f2f); color: var(--hubitat-on-danger, #fff); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) button.mdl-button.app-ui-button:enabled:active { box-shadow: none; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) button.mdl-button.app-ui-button:disabled { background: var(--hubitat-control-background, #eee); color: var(--text-color-secondary, #616161); opacity: .6; cursor: not-allowed; box-shadow: none; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) .app-ui-navigation .hrefElem { background: transparent; color: var(--hubitat-link-color, #1565c0) !important; border: 0; border-left: 3px solid transparent; border-radius: 0; box-shadow: none; padding: 12px; font-family: inherit; font-size: 16px; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) .app-ui-navigation .hrefElem::before { display: none; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) .app-ui-navigation .hrefElem:not(:disabled):not(:has(.app-ui-navigation-selected)):hover { background: var(--surface-hover, #f3f6fa); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) .app-ui-navigation .hrefElem:has(.app-ui-navigation-selected) { background: var(--hubitat-selection-background, #eaf2fc); border-left-color: var(--hubitat-link-color, #1565c0); font-weight: 600; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) .app-ui-navigation .hrefElem:disabled { opacity: .6; cursor: not-allowed; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) button.mdl-button.app-ui-button:focus-visible,
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .sb-dialog) .app-ui-navigation .hrefElem:focus-visible { outline: 2px solid var(--hubitat-link-color, #1565c0); outline-offset: 2px; }
+"""
+}
+
 private String tileSecondaryTextCss() {
-    "#formApp .hrefElem > .state-incomplete-text, #formApp .hrefElem > .state-complete-text { font-size: 14px !important; }"
+    legacyLightThemeCss() + "#formApp .hrefElem > .state-incomplete-text, #formApp .hrefElem > .state-complete-text { font-size: 14px !important; }"
 }
 
 private String tipsCardCss() {
     """
   button.hrefElem[name^='_action_href_tips'] {
-    position: relative; background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; box-shadow: none;
-    color: #333; height: 56px; font-family: inherit; font-size: 16px; font-weight: 500; line-height: 1.4;
+    position: relative; background: var(--surface-card, #fff); border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 4px; box-shadow: none;
+    color: var(--text-color, #333); height: 56px; font-family: inherit; font-size: 16px; font-weight: 500; line-height: 1.4;
     padding: 8px 28px 8px 46px;
   }
-  button.hrefElem[name^='_action_href_tips'] > span:first-child { color: #1565c0; font-weight: 600; font-size: 16px !important; }
-  button.hrefElem[name^='_action_href_tips'] > span.state-incomplete-text { color: #777; font-size: 14px; font-weight: 500; line-height: 1.4; }
+  button.hrefElem[name^='_action_href_tips'] > span:first-child { color: var(--hubitat-link-color, #1565c0); font-weight: 600; font-size: 16px !important; }
+  button.hrefElem[name^='_action_href_tips'] > span.state-incomplete-text { color: var(--text-color-secondary, #757575); font-size: 14px; font-weight: 500; line-height: 1.4; }
   button.hrefElem[name^='_action_href_tips'] i.pi {
-    position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: #1565c0; font-size: 20px;
+    position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--hubitat-link-color, #1565c0); font-size: 20px;
   }
-  button.hrefElem[name^='_action_href_tips']::before { color: #1565c0; }
+  button.hrefElem[name^='_action_href_tips']::before { color: var(--hubitat-link-color, #1565c0); }
 """
 }

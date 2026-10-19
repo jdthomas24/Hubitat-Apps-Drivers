@@ -31,7 +31,7 @@
 
 import groovy.transform.Field
 
-def version() { return "1.1.1" }
+def version() { return "1.1.2" }
 
 @Field static final Integer CONFIRM_TIMEOUT = 20
 
