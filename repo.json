@@ -6,7 +6,7 @@
         {
             "name": "Battery Monitor 2.0",
             "category": "Utility",
-            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps/refs/heads/main/Battery%20Monitor%202.0/packageManifest.json",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Battery%20Monitor%202.0/packageManifest.json",
             "description": "Advanced Hubitat battery monitoring with analytics, trends, and replacement tracking. Auto-discover devices, monitor battery health, track replacements, and receive daily reports.",
             "descriptive": "",
             "tags": [
@@ -85,8 +85,18 @@
                 "Audio & Video",
                 "Entertainment"
             ]
+        },
+        {
+            "name": "Apple TV Integration",
+            "category": "Integrations",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Apple%20TV%20Integration/packagemanifest.json",
+            "description": "Local control of Apple TVs, no bridge or cloud. Finds them on your network, pairs with the on-screen PIN, and creates one device each: on/off from scenes and rules, play/pause and playback state, Siri Remote buttons, volume, and app launching.",
+            "descriptive": "",
+            "tags": [
+                "Audio & Video",
+                "Entertainment",
+                "Remotes & Buttons"
+            ]
         }
     ]
 }
-
-
