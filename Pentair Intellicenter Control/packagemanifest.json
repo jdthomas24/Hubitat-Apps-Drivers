@@ -1,49 +1,58 @@
 {
-  "packageName": "Pentair IntelliCenter Controller",
-  "author": "jdthomas24",
-  "version": "1.6.4",
-  "category": "Utility",
-  "description": "Pentair IntelliCenter local integration for Hubitat",
-  "dateReleased": "4-10-26",
-  "minimumHEVersion": "2.3.0",
-  "communityLink": "https://community.hubitat.com/t/release-pentair-intellicenter-controller-beta/162876/31",
-  "releaseNotes": "v1.6.4: Main page UI refresh (status card, equipment tiles, Help & Support). No functional changes.",
-  "apps": [
-    {
-      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      "name": "Pentair IntelliCenter",
-      "namespace": "intellicenter",
-      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/ParentApp.groovy",
-      "required": true,
-      "oauth": false,
-      "primary": true,
-      "version": "1.6.0"
-    }
-  ],
-  "drivers": [
-    {
-      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
-      "name": "Pentair IntelliCenter Pump",
-      "namespace": "intellicenter",
-      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/PumpSpeedDriver.groovy",
-      "required": true,
-      "version": "1.6.0"
-    },
-    {
-      "id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
-      "name": "Pentair IntelliCenter Bridge",
-      "namespace": "intellicenter",
-      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/BridgeDeviceDriver.groovy",
-      "required": true,
-      "version": "1.6.0"
-    },
-    {
-      "id": "d4e5f6a7-b8c9-0123-defa-234567890123",
-      "name": "Pentair IntelliCenter Body",
-      "namespace": "intellicenter",
-      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/BodyDriver.groovy",
-      "required": true,
-      "version": "1.6.0"
-    }
-  ]
+    "packageName": "Pentair IntelliCenter Controller",
+    "releaseNotes": "v1.7.0: Choose which equipment Hubitat creates (Equipment page; deleted devices stay deleted). One Log level in the app for every device, with all logs under the app. Dark mode. Reconnects on its own if the controller goes quiet, and devices only change when a command was actually sent. Pump shows the running body's water temperature. Body devices get plain command names (old ones still work), and Heat Lock now covers every heat change. Salt cells reported by the controller get their own Chlorinator device. No Done needed: the Bridge switches over on its own within a minute.",
+    "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Pentair%20Intellicenter%20Control",
+    "communityLink": "https://community.hubitat.com/t/release-pentair-intellicenter-controller-beta/162876/31",
+    "author": "jdthomas24",
+    "version": "1.7.0",
+    "minimumHEVersion": "2.3.0",
+    "dateReleased": "2026-10-19",
+    "category": "Integrations",
+    "tags": "Pool & Spa",
+    "apps": [
+        {
+            "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "name": "Pentair IntelliCenter",
+            "namespace": "intellicenter",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/ParentApp.groovy",
+            "required": true,
+            "oauth": false,
+            "primary": true,
+            "description": "Connects to the IntelliCenter controller and lets you choose which equipment Hubitat creates."
+        }
+    ],
+    "drivers": [
+        {
+            "id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+            "name": "Pentair IntelliCenter Bridge",
+            "namespace": "intellicenter",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/BridgeDeviceDriver.groovy",
+            "required": true,
+            "description": "Internal: holds the connection to the controller and creates the equipment devices. Created by the app."
+        },
+        {
+            "id": "d4e5f6a7-b8c9-0123-defa-234567890123",
+            "name": "Pentair IntelliCenter Body",
+            "namespace": "intellicenter",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/BodyDriver.groovy",
+            "required": true,
+            "description": "Pool or spa: on/off, water temperature, set point, heat source and Heat Lock."
+        },
+        {
+            "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+            "name": "Pentair IntelliCenter Pump",
+            "namespace": "intellicenter",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/PumpSpeedDriver.groovy",
+            "required": true,
+            "description": "Variable speed pump: RPM, GPM and watts, plus speed control."
+        },
+        {
+            "id": "d1511446-0838-42ec-b373-9e4abb7d2183",
+            "name": "Pentair IntelliCenter Chlorinator",
+            "namespace": "intellicenter",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/ChlorinatorDriver.groovy",
+            "required": true,
+            "description": "IntelliChlor salt cell: salt level, pool and spa output and superchlorinate (read-only)."
+        }
+    ]
 }

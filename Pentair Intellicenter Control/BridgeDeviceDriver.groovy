@@ -1,17 +1,34 @@
-// ============================================================
-// Pentair IntelliCenter Bridge Driver
-// Version: 1.6.4
-// All files in this integration share this version number.
-// ============================================================
+/*
+    Pentair IntelliCenter - Bridge Driver
+    Copyright 2026 JDThomas. All Rights Reserved
+
+    Notes:
+     -Created by the app. Holds the WebSocket to the controller (ws://IP:6680, IC2 may use 6681) and
+      creates the equipment devices under itself: Body (pool/spa), Pump, Chlorinator, Generic Component
+      Switch (circuits, features, groups) and Generic Component Temperature Sensor (air, solar).
+     -Startup reads each type with GetParamList (circuits, bodies, heaters, pumps, sensors, chlorinator),
+      then RequestParamList subscribes to live NotifyList pushes. A light poll (default 30s) re-reads
+      state in case a push is missed.
+     -The controller answers a key it doesn't have with "": "<KEY>" (no WATTS on some pumps, no HTRLST),
+      so numbers are parsed safely and blank keys dropped. CIRCGRP queries return junk; groups already
+      arrive in the CIRCUIT list as GRPxx. Internal circuits (X00xx, _xxxx) and body circuits are skipped.
+     -Catalog (objnam -> kind, name, subtype, type) lives in state, written only when it changes. It feeds
+      the app's Equipment page and supplies OBJTYP for pushes that omit it.
+     -Excluded objnams are never created. A device created once and later deleted from the Devices page
+      is excluded automatically. On the first run after updating from 1.6.x, equipment with no device
+      counts as deleted, so devices users removed before stay removed.
+     -Health: every message stamps lastRx in memory. An open socket with no data for max(3 polls, 3 min)
+      reconnects (a half-open socket looks connected). Reconnect check every 2 min. Offline warns once,
+      back online logs once.
+     -Commands return true only when sent. Devices update only then, so a dropped command never shows a
+      state that didn't happen; the controller's push confirms it within about a second.
+     -Temperature units follow the hub's scale; values pass through as the controller reports them.
+     -Log level comes from the app (setLogLevel) and is passed to the Body, Pump and Chlorinator.
+      All log lines go up to the app's childLog().
+*/
 
 metadata {
-    definition(
-        name: "Pentair IntelliCenter Bridge",
-        namespace: "intellicenter",
-        author: "jdthomas24",
-        description: "Bridge driver for Pentair IntelliCenter TCP connection",
-        version: "1.6.2"
-    ) {
+    definition(name: "Pentair IntelliCenter Bridge", namespace: "intellicenter", author: "jdthomas24") {
         capability "Initialize"
         capability "Refresh"
 
@@ -24,27 +41,30 @@ metadata {
     }
 
     preferences {
-        input "ipAddress",    "text",   title: "IntelliCenter IP Address",                                                      required: true
-        input "portNumber",   "number", title: "Port (IntelliCenter 1 = 6680 / IC2 try 6681)",                                  defaultValue: 6680
-        input "pollInterval", "number", title: "State Poll Interval in seconds (default: 30) — syncs HE with changes made in the Pentair app or panel. Increase to reduce traffic.", defaultValue: 30
-        input "debugMode",    "bool",   title: "Debug Logging (auto-disables after 60 min)",                                    defaultValue: false
-        input "endpointBase", "text",   title: "App Endpoint Base (set automatically by app)",                                  required: false
+        input "ipAddress",    "text",   title: "IntelliCenter IP address", description: "Set by the Pentair IntelliCenter app", required: true
+        input "portNumber",   "number", title: "Port", description: "Set by the app. 6680, or 6681 on some IntelliCenter 2 systems", defaultValue: 6680
+        input "pollInterval", "number", title: "Poll interval (seconds)", description: "Backup re-read of all equipment. Live changes arrive instantly either way.", defaultValue: 30
         input name: "helpInfo", type: "hidden", title: fmtHelpInfo()
     }
 }
 
-// ============================================================
-// These must appear AFTER metadata for HPM compatibility
-// ============================================================
 import groovy.transform.Field
 
-@Field static final String VERSION     = "1.6.0"
+@Field static final String VERSION     = "1.7.0"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/t/release-pentair-intellicenter-controller-beta/162876/31"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
+@Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
+@Field static final Map PREFIX = [body: "intellicenter-body-", pump: "intellicenter-pump-", circuit: "intellicenter-circuit-",
+                                  sensor: "intellicenter-sensor-", chem: "intellicenter-chem-"]
+@Field static final Map HTMODE_NAMES = ["0": "Off", "1": "Heater", "2": "Solar Only", "3": "Solar Preferred",
+                                        "4": "Heat Pump", "5": "Heat Pump Preferred", "OFF": "Off"]
+@Field static final Map HTSRC_NAMES = ["00000": "Off", "H0001": "Heater", "S0001": "Solar Only",
+                                       "H0002": "Solar Preferred", "H0003": "Heat Pump", "H0004": "Heat Pump Preferred"]
+@Field static final Map HTSRC_IDS = ["Heater": "H0001", "Solar Only": "S0001", "Solar Preferred": "H0002",
+                                     "Heat Pump": "H0003", "Heat Pump Preferred": "H0004"]
+// Per-device working data (last message time, expected close). Lost on a driver save, which is safe.
+@Field static final java.util.concurrent.ConcurrentHashMap RUNTIME = new java.util.concurrent.ConcurrentHashMap()
 
-// ============================================================
-// ===================== HELP INFO ===========================
-// ============================================================
 String fmtHelpInfo() {
     String info     = "Pentair IntelliCenter v${VERSION}"
     String btnStyle = "style='font-size:14px;padding:4px 12px;border:2px solid Crimson;border-radius:6px;text-decoration:none;display:inline-block;margin:4px;'"
@@ -53,733 +73,612 @@ String fmtHelpInfo() {
     return "<div style='text-align:center;padding:8px 0;'>${commLink}${payLink}</div>"
 }
 
-// ============================================================
-// ===================== LIFECYCLE ===========================
-// ============================================================
-def installed() {
-    log.info "IntelliCenter Bridge installed"
-    initialize()
+private Map mem() {
+    String k = device.id.toString()
+    Map m = RUNTIME.get(k) as Map
+    if (m == null) { m = new java.util.concurrent.ConcurrentHashMap(); RUNTIME.put(k, m) }
+    return m
 }
 
+// ============================================================
+// Lifecycle
+// ============================================================
+
+def installed() { initialize() }
+
 def updated() {
-    log.info "IntelliCenter Bridge updated"
-    unschedule(disableDebugLogging)
+    ["debugMode", "endpointBase"].each { device.removeSetting(it) }
     initialize()
 }
 
 def initialize() {
-    state.msgBuffer    = ""
-    state.objectMap    = [:]
-    state.pendingCmds  = [:]
-    state.connected    = false
-    state.lastPollTime = now()
-
+    ["msgBuffer", "objectMap", "pendingCmds", "lastPollTime", "htsrcIds"].each { state.remove(it) }
+    migrate()
     unschedule()
-    schedule("0 0/2 * * * ?", reconnectIfNeeded)
-    schedule("0 0/1 * * * ?", pollWatchdog)
-
-    if (debugMode) {
-        log.info "Debug logging enabled — will auto-disable in 60 minutes"
-        runIn(3600, disableDebugLogging)
-    }
-
+    schedule("0 0/2 * * * ?", "reconnectIfNeeded")
+    schedule("30 * * * * ?", "healthCheck")
     connect()
 }
 
+// First run of 1.7.0. On an existing install, equipment with no device was deleted by the user.
+private void migrate() {
+    if (state.known != null) return
+    List kids = getChildDevices()*.deviceNetworkId
+    state.known = kids.collect { objnamFromDni(it) }.findAll { it }
+    if (kids) state.seeding = true
+    if (state.excluded == null) state.excluded = []
+}
+
+// Jobs scheduled by 1.6.x run until the next Done or reboot; these hand them to 1.7.0.
+def pollWatchdog() { initialize() }
+def requestGroups() { requestBodies() }
+def disableDebugLogging() { }
+
 def refresh() {
-    if (state.connected) {
-        requestEquipment()
-    } else {
-        connect()
-    }
+    if (state.connected) requestEquipment() else connect()
 }
 
 // ============================================================
-// ===================== CONNECTION ==========================
+// Connection
 // ============================================================
+
 def connect() {
     if (!ipAddress) {
-        log.warn "No IP address configured — open the Pentair IntelliCenter app and click Done"
-        sendEvent(name: "connectionStatus", value: "Not Configured — open app and click Done")
+        logE "No IP address. Open the Pentair IntelliCenter app, enter it and tap Done."
+        setStatus("Not Configured")
         return
     }
-
+    String uri = "ws://${ipAddress}:${portNumber ?: 6680}"
+    logF "connecting to ${uri}"
+    mem().closing = true   // the previous socket's close is expected
+    try { interfaces.webSocket.close() } catch (e) { }
     try {
-        def uri = "ws://${ipAddress}:${portNumber ?: 6680}"
-        if (debugMode) log.debug "Connecting via WebSocket to ${uri}"
         interfaces.webSocket.connect(uri)
     } catch (e) {
-        log.error "Connection failed: ${e.message}"
-        state.connected = false
-        sendEvent(name: "connectionStatus", value: "Disconnected")
+        markDown("connect failed: ${e.message}")
     }
 }
 
 def disconnect() {
-    unschedule(pollState)
+    mem().closing = true
+    unschedule("pollState")
     try { interfaces.webSocket.close() } catch (e) { }
     state.connected = false
-    sendEvent(name: "connectionStatus", value: "Disconnected")
-    log.info "IntelliCenter disconnected"
+    setStatus("Disconnected")
+    logN "disconnected (Disconnect command)"
 }
 
 def webSocketStatus(String message) {
-    if (debugMode) log.debug "WebSocket status: ${message}"
-    if (message.contains("open")) {
-        log.info "WebSocket open — IntelliCenter connected"
+    logF "WebSocket ${message}"
+    Map m = mem()
+    if (message.startsWith("status: open")) {
+        m.closing = false
+        m.lastRx = now()
         state.connected = true
-        state.msgBuffer = ""
-        sendEvent(name: "connectionStatus", value: "Connected")
-        runIn(1, requestEquipment)
-    } else if (message.contains("failure") || message.contains("error") || message.contains("clos")) {
-        log.warn "WebSocket disconnected: ${message}"
-        state.connected = false
-        sendEvent(name: "connectionStatus", value: "Disconnected")
-        unschedule(pollState)
+        setStatus("Connected")
+        if (state.downSince != null) {
+            int mins = ((now() - (state.downSince as long)) / 60000) as int
+            slog("info", "IntelliCenter back online after ${mins} min")
+            state.remove("downSince")
+        } else {
+            logN "connected to ${ipAddress}"
+        }
+        runIn(1, "requestEquipment")
+    } else if (message.contains("clos") || message.contains("failure") || message.contains("error")) {
+        if (m.closing && message.contains("clos")) { m.closing = false; return }
+        markDown(message)
+    }
+}
+
+private void markDown(String why) {
+    state.connected = false
+    unschedule("pollState")
+    setStatus("Disconnected")
+    if (state.downSince == null) {
+        state.downSince = now()
+        logE "IntelliCenter connection lost (${why}). Retrying every 2 minutes."
+    } else {
+        logF "still offline: ${why}"
     }
 }
 
 def reconnectIfNeeded() {
     if (!state.connected) {
-        log.info "Watchdog: reconnecting to IntelliCenter"
+        logF "reconnecting"
         connect()
     }
 }
 
-def disableDebugLogging() {
-    log.info "IntelliCenter Bridge: auto-disabling debug logging after 60 minutes"
-    device.updateSetting("debugMode", [value: false, type: "bool"])
-}
-
-// ============================================================
-// ===================== POLL WATCHDOG =======================
-// ============================================================
-def pollWatchdog() {
+// Every minute: reconnect a silent socket, and restart the poll chain if it stopped.
+def healthCheck() {
     if (!state.connected) return
-    def interval = (pollInterval ?: 30).toInteger()
-    def elapsed  = (now() - (state.lastPollTime ?: now())) / 1000
-
-    if (elapsed > (interval * 2)) {
-        log.warn "Poll watchdog: last poll was ${elapsed.toInteger()}s ago — restarting poll chain"
-        runIn(1, pollState)
+    Map m = mem()
+    if (m.lastRx == null) { m.lastRx = now(); return }   // memory cleared by a driver save
+    long quietMs = now() - (m.lastRx as long)
+    if (quietMs > Math.max(3 * pollSec(), 180) * 1000L) {
+        markDown("no data for ${(quietMs / 1000) as int}s")
+        connect()
+        return
+    }
+    if (now() - ((m.lastPoll ?: 0L) as long) > 2 * pollSec() * 1000L) {
+        logF "poll restarted"
+        runIn(1, "pollState")
     }
 }
 
+private int pollSec() {
+    Integer s = toInt(pollInterval)
+    return (s && s >= 10) ? s : 30
+}
+
+private void setStatus(String v) {
+    if (device.currentValue("connectionStatus") != v) sendEvent(name: "connectionStatus", value: v)
+}
+
 // ============================================================
-// ===================== POLL STATE ==========================
+// Poll
 // ============================================================
+
 def pollState() {
     if (!state.connected) return
-    try {
-        if (debugMode) log.debug "Polling state — circuits"
-        state.lastPollTime = now()
-        sendCommand([
-            command: "GetParamList",
-            condition: "OBJTYP=CIRCUIT",
-            objectList: [[objnam: "ALL", keys: ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "FEATR"]]]
-        ])
-        runIn(2, pollBodies)
-    } catch (e) {
-        log.error "pollState error: ${e.message}"
-    }
-    runIn((pollInterval ?: 30).toInteger(), pollState)
+    mem().lastPoll = now()
+    logF "poll"
+    sendCommand(query("CIRCUIT", ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "FEATR"]))
+    runIn(2, "pollBodies")
+    runIn(pollSec(), "pollState")
 }
 
 def pollBodies() {
     if (!state.connected) return
-    try {
-        if (debugMode) log.debug "Polling state — bodies"
-        sendCommand([
-            command: "GetParamList",
-            condition: "OBJTYP=BODY",
-            objectList: [[objnam: "ALL", keys: ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "TEMP", "LOTMP", "HITMP", "HTMODE", "HTSRC", "HTRLST"]]]
-        ])
-        runIn(2, pollPumps)
-    } catch (e) {
-        log.error "pollBodies error: ${e.message}"
-    }
+    sendCommand(query("BODY", ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "TEMP", "LOTMP", "HITMP", "HTMODE", "HTSRC"]))
+    runIn(2, "pollPumps")
 }
 
 def pollPumps() {
     if (!state.connected) return
-    try {
-        if (debugMode) log.debug "Polling state — pumps"
-        sendCommand([
-            command: "GetParamList",
-            condition: "OBJTYP=PUMP",
-            objectList: [[objnam: "ALL", keys: ["OBJTYP", "SNAME", "STATUS", "RPM", "GPM", "WATTS"]]]
-        ])
-        runIn(2, pollSensors)
-    } catch (e) {
-        log.error "pollPumps error: ${e.message}"
-    }
+    sendCommand(query("PUMP", ["OBJTYP", "SNAME", "STATUS", "RPM", "GPM", "WATTS"]))
+    runIn(2, "pollSensors")
 }
 
 def pollSensors() {
     if (!state.connected) return
-    try {
-        if (debugMode) log.debug "Polling state — sensors"
-        sendCommand([
-            command: "GetParamList",
-            condition: "OBJTYP=SENSE",
-            objectList: [[objnam: "ALL", keys: ["OBJTYP", "SUBTYP", "SNAME", "SOURCE"]]]
-        ])
-    } catch (e) {
-        log.error "pollSensors error: ${e.message}"
-    }
+    sendCommand(query("SENSE", ["OBJTYP", "SUBTYP", "SNAME", "SOURCE"]))
+    if (state.catalog?.any { k, v -> v.k == "chem" }) runIn(2, "pollChem")
+}
+
+def pollChem() {
+    if (!state.connected) return
+    sendCommand(query("CHEM", ["OBJTYP", "SUBTYP", "SNAME", "SALT", "PRIM", "SEC", "SUPER"]))
+}
+
+private Map query(String type, List keys, String objnam = "ALL") {
+    Map q = [command: "GetParamList", objectList: [[objnam: objnam, keys: keys]]]
+    if (type) q.condition = "OBJTYP=${type}"
+    return q
 }
 
 // ============================================================
-// ===================== INCOMING DATA =======================
+// Equipment scan
 // ============================================================
-def parse(String message) {
-    message = message.trim()
-    if (message.startsWith("{")) {
-        processMessage(message)
-    } else {
-        if (debugMode) log.debug "Non-JSON message: ${message}"
-    }
-}
 
-def processMessage(String raw) {
-    if (debugMode) log.debug "RX: ${raw}"
-
-    def json
-    try {
-        json = new groovy.json.JsonSlurper().parseText(raw)
-    } catch (e) {
-        log.warn "JSON parse error on: ${raw?.take(100)}"
-        return
-    }
-
-    switch (json?.command) {
-        case "SendParamList":    handleParamList(json);      break
-        case "WriteParamList":   handleWriteParamList(json); break
-        case "NotifyList":       handleNotifyList(json);     break
-        case "SetParamList":
-            if (debugMode) log.debug "SetParamList ack: response=${json?.response}"
-            break
-        case "Error":
-            log.warn "Controller error ${json.response}: ${json.description}"
-            break
-        default:
-            if (debugMode) log.debug "Unhandled command: ${json?.command}"
-    }
-}
-
-// ============================================================
-// ===================== REQUEST EQUIPMENT ===================
-// ============================================================
 def requestEquipment() {
-    if (debugMode) log.debug "Requesting equipment — circuits"
-    sendCommand([
-        command: "GetParamList",
-        condition: "OBJTYP=CIRCUIT",
-        objectList: [[objnam: "ALL", keys: ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "FEATR"]]]
-    ])
-    runIn(2, "requestGroups")
-}
-
-def requestGroups() {
-    if (debugMode) log.debug "Requesting equipment — circuit groups"
-    sendCommand([
-        command: "GetParamList",
-        condition: "OBJTYP=CIRCGRP",
-        objectList: [[objnam: "ALL", keys: ["OBJTYP", "SUBTYP", "SNAME", "STATUS"]]]
-    ])
+    logF "reading equipment"
+    sendCommand(query("CIRCUIT", ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "FEATR"]))
     runIn(2, "requestBodies")
 }
 
 def requestBodies() {
-    if (debugMode) log.debug "Requesting equipment — bodies"
-    sendCommand([
-        command: "GetParamList",
-        condition: "OBJTYP=BODY",
-        objectList: [[objnam: "ALL", keys: ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "TEMP", "LOTMP", "HITMP", "HTMODE", "HTSRC", "HTRLST"]]]
-    ])
+    sendCommand(query("BODY", ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "TEMP", "LOTMP", "HITMP", "HTMODE", "HTSRC"]))
     runIn(2, "requestHeaters")
 }
 
 def requestHeaters() {
-    if (debugMode) log.debug "Requesting equipment — heaters"
-    sendCommand([
-        command: "GetParamList",
-        condition: "OBJTYP=HEATER",
-        objectList: [[objnam: "ALL", keys: ["OBJTYP", "SNAME"]]]
-    ])
+    sendCommand(query("HEATER", ["OBJTYP", "SNAME"]))
     runIn(2, "requestPumps")
 }
 
 def requestPumps() {
-    if (debugMode) log.debug "Requesting equipment — pumps"
-    sendCommand([
-        command: "GetParamList",
-        condition: "OBJTYP=PUMP",
-        objectList: [[objnam: "ALL", keys: ["OBJTYP", "SNAME", "STATUS", "RPM", "GPM", "WATTS"]]]
-    ])
+    sendCommand(query("PUMP", ["OBJTYP", "SNAME", "STATUS", "RPM", "GPM", "WATTS"]))
     runIn(2, "requestSensors")
 }
 
 def requestSensors() {
-    if (debugMode) log.debug "Requesting equipment — sensors"
-    sendCommand([
-        command: "GetParamList",
-        condition: "OBJTYP=SENSE",
-        objectList: [[objnam: "ALL", keys: ["OBJTYP", "SUBTYP", "SNAME", "SOURCE"]]]
-    ])
+    sendCommand(query("SENSE", ["OBJTYP", "SUBTYP", "SNAME", "SOURCE"]))
     runIn(2, "requestChem")
 }
 
 def requestChem() {
-    if (debugMode) log.debug "Requesting equipment — chlorinator"
-    sendCommand([
-        command: "GetParamList",
-        condition: "OBJTYP=CHEM",
-        objectList: [[objnam: "ALL", keys: ["OBJTYP", "SNAME", "STATUS", "SALT", "LOTMP"]]]
-    ])
+    sendCommand(query("CHEM", ["OBJTYP", "SUBTYP", "SNAME", "SALT", "PRIM", "SEC", "SUPER"]))
     runIn(3, "subscribeToUpdates")
 }
 
 def subscribeToUpdates() {
-    if (debugMode) log.debug "Subscribing to live updates"
-    sendCommand([
-        command: "RequestParamList",
-        condition: "OBJTYP=CIRCUIT,BODY,PUMP,SENSE,CHEM",
-        objectList: [[objnam: "ALL", keys: ["STATUS", "TEMP", "RPM", "WATTS", "GPM", "SALT", "SOURCE", "LOTMP", "HITMP", "HTMODE", "HTSRC"]]]
-    ])
-    def interval = (pollInterval ?: 30).toInteger()
-    runIn(interval, pollState)
-    log.info "State polling scheduled — every ${interval} seconds"
+    sendCommand([command: "RequestParamList", condition: "OBJTYP=CIRCUIT,BODY,PUMP,SENSE,CHEM",
+                 objectList: [[objnam: "ALL", keys: ["STATUS", "TEMP", "RPM", "WATTS", "GPM", "SALT", "SOURCE",
+                                                     "LOTMP", "HITMP", "HTMODE", "HTSRC", "PRIM", "SEC", "SUPER"]]]])
+    if (state.seeding) {
+        state.remove("seeding")
+        logF "first equipment scan after update finished"
+    }
+    mem().lastPoll = now()
+    runIn(pollSec(), "pollState")
+    logN "equipment read, live updates on, backup poll every ${pollSec()}s"
 }
 
 // ============================================================
-// ===================== PROCESS RESPONSES ===================
+// Incoming data
 // ============================================================
-def handleParamList(json) {
-    json?.objectList?.each { obj ->
-        def name   = obj.objnam
-        def params = obj.params
-        if (!name || !params) return
-        if (!state.objectMap) state.objectMap = [:]
-        if (!state.objectMap[name]) state.objectMap[name] = [:]
-        params.each { k, v -> state.objectMap[name][k] = v }
-        state.objectMap[name].objnam = name
-        routeUpdate(name, params)
-    }
-}
 
-def handleNotifyList(json) {
-    json?.objectList?.each { obj ->
-        def name   = obj.objnam
-        def params = obj.params
-        if (!name || !params) return
-        if (!state.objectMap) state.objectMap = [:]
-        if (!state.objectMap[name]) state.objectMap[name] = [:]
-        params.each { k, v -> state.objectMap[name][k] = v }
-        routeUpdate(name, params)
-    }
-}
-
-// WriteParamList — full state push from controller after a SetParamList.
-// Guard changes as a List — some IC2 firmware versions send a single object.
-def handleWriteParamList(json) {
-    json?.objectList?.each { obj ->
-        def name       = obj.objnam
-        def rawChanges = obj.changes
-        if (!name || rawChanges == null) return
-        def changeList = rawChanges instanceof List ? rawChanges : [rawChanges]
-        changeList.each { change ->
-            def params = change.params
-            if (!params) return
-            if (!state.objectMap) state.objectMap = [:]
-            if (!state.objectMap[name]) state.objectMap[name] = [:]
-            params.each { k, v -> state.objectMap[name][k] = v }
-            routeUpdate(name, params)
-        }
-    }
-}
-
-def routeUpdate(String objnam, Map params) {
-    def objType = params.OBJTYP ?: state.objectMap?.get(objnam)?.OBJTYP
-    if (!objType) return
-    switch (objType) {
-        case "CIRCUIT":  processCircuit(objnam, params); break
-        case "CIRCGRP":  processCircuit(objnam, params); break
-        case "BODY":     processBody(objnam, params);    break
-        case "PUMP":     processPump(objnam, params);    break
-        case "SENSE":    processSensor(objnam, params);  break
-        case "CHEM":     processChem(objnam, params);    break
-        case "HEATER":   processHeater(objnam, params);  break
-    }
-}
-
-// ============================================================
-// ===================== DEVICE UPDATES ======================
-// ============================================================
-def processCircuit(String objnam, Map params) {
-    def subtyp = params.SUBTYP ?: state.objectMap?.get(objnam)?.SUBTYP ?: ""
-
-    def isUserCircuit = objnam.matches("C\\d+")
-    def isGroup       = objnam.matches("GRP\\d+") || objnam.matches("CIRCGRP\\d+")
-    def isFeature     = objnam.matches("FTR\\d+")
-    if (!isUserCircuit && !isGroup && !isFeature) {
-        if (debugMode) log.debug "Skipping internal circuit: ${objnam}"
+def parse(String message) {
+    mem().lastRx = now()
+    message = message?.trim()
+    if (!message?.startsWith("{")) { logF "non-JSON message: ${message?.take(100)}"; return }
+    logF "RX: ${message}"
+    def json
+    try {
+        json = new groovy.json.JsonSlurper().parseText(message)
+    } catch (e) {
+        logE "unreadable message from IntelliCenter: ${message.take(100)}"
         return
     }
-    if (subtyp == "POOL" || subtyp == "SPA") {
-        if (debugMode) log.debug "Skipping body circuit (subtyp): ${objnam} (${subtyp})"
-        return
-    }
-    if (state.bodyObjnams?.contains(objnam)) {
-        if (debugMode) log.debug "Skipping body circuit (bodyObjnams): ${objnam}"
-        return
-    }
-    if (getChildDevice("intellicenter-body-${objnam}")) {
-        if (debugMode) log.debug "Skipping body circuit (body device exists): ${objnam}"
-        if (!state.bodyObjnams) state.bodyObjnams = []
-        if (!state.bodyObjnams.contains(objnam)) state.bodyObjnams << objnam
-        return
-    }
-
-    def label  = params.SNAME ?: state.objectMap?.get(objnam)?.SNAME ?: objnam
-    def status = params.STATUS
-    if (status == null) return
-
-    def dni   = "intellicenter-circuit-${objnam}"
-    def child = getOrCreateChild("Generic Component Switch", dni, label, false)
-    if (!child) return
-
-    child.sendEvent(name: "switch", value: (status == "ON" ? "on" : "off"))
-    if (debugMode) log.debug "Circuit [${label}] (${subtyp}): ${status}"
-}
-
-def processBody(String objnam, Map params) {
-    def subtyp = params.SUBTYP ?: state.objectMap?.get(objnam)?.SUBTYP ?: ""
-    def label  = params.SNAME  ?: state.objectMap?.get(objnam)?.SNAME  ?: objnam
-    def status = params.STATUS
-    def temp   = params.TEMP
-    def lotmp  = params.LOTMP
-    def hitmp  = params.HITMP
-    def htmode = params.HTMODE
-    def htsrc  = params.HTSRC
-
-    if (!state.bodyObjnams) state.bodyObjnams = []
-    if (!state.bodyObjnams.contains(objnam)) state.bodyObjnams << objnam
-
-    def dni  = "intellicenter-body-${objnam}"
-    def body = getOrCreateChild("Pentair IntelliCenter Body", dni, label, false)
-    if (!body) {
-        log.warn "processBody: could not get/create body device ${label} (${dni})"
-        return
-    }
-
-    if (endpointBase && body.getSetting("endpointBase") != endpointBase) {
-        body.updateSetting("endpointBase", [value: endpointBase, type: "text"])
-    }
-
-    if (status != null) {
-        body.sendEvent(name: "switch",     value: (status == "ON" ? "on" : "off"))
-        body.sendEvent(name: "bodyStatus", value: (status == "ON" ? "On" : "Off"))
-    }
-    if (temp  != null) body.sendEvent(name: "temperature",     value: temp.toInteger(),  unit: "°F")
-    if (lotmp != null) body.sendEvent(name: "heatingSetpoint", value: lotmp.toInteger(), unit: "°F")
-    if (hitmp != null) body.sendEvent(name: "maxSetTemp",      value: hitmp.toInteger(), unit: "°F")
-
-    if (htmode != null) {
-        def modeMap = ["0":"Off","1":"Heater","2":"Solar Only","3":"Solar Preferred",
-                       "4":"Heat Pump","5":"Heat Pump Preferred","OFF":"Off"]
-        def modeFriendly = modeMap[htmode.toString()] ?: htmode
-        body.sendEvent(name: "heaterMode", value: modeFriendly)
-        if (modeFriendly == "Off" && htsrc == null) {
-            body.sendEvent(name: "heatSource", value: "Off")
-        }
-    }
-
-    if (htsrc != null) {
-        def staticSrcMap = ["00000":"Off","H0001":"Heater","S0001":"Solar Only",
-                            "H0002":"Solar Preferred","H0003":"Heat Pump","H0004":"Heat Pump Preferred"]
-        def friendlyName = staticSrcMap[htsrc] ?: htsrc
-        if (!state.htsrcIds) state.htsrcIds = [:]
-        if (!state.htsrcIds[objnam]) state.htsrcIds[objnam] = [:]
-        state.htsrcIds[objnam][friendlyName] = htsrc
-        body.sendEvent(name: "heatSource", value: friendlyName)
-    }
-
-    if (debugMode) log.debug "Body [${label}] (${subtyp}): status=${status} temp=${temp} setpt=${lotmp} htmode=${htmode} htsrc=${htsrc}"
-
-    if (temp != null) {
-        getChildDevices()
-            .findAll { it.deviceNetworkId.startsWith("intellicenter-pump-") }
-            .each { pump ->
-                pump.sendEvent(name: "temperature", value: temp.toInteger(), unit: "°F")
-                pump.debounceTile()
+    switch (json?.command) {
+        case "SendParamList":
+        case "NotifyList":
+            json.objectList?.each { obj -> apply(obj.objnam as String, obj.params as Map) }
+            break
+        case "WriteParamList":
+            // Some IC2 firmware sends a single object instead of a list.
+            json.objectList?.each { obj ->
+                def changes = obj.changes
+                if (changes == null) return
+                (changes instanceof List ? changes : [changes]).each { c -> apply(obj.objnam as String, c?.params as Map) }
             }
+            break
+        case "SetParamList":
+            logF "command accepted (response ${json.response})"
+            break
+        case "Error":
+            logE "IntelliCenter error ${json.response}: ${json.description}"
+            break
+        default:
+            logF "unhandled message: ${json?.command}"
     }
+}
 
+private void apply(String objnam, Map params) {
+    if (!objnam || !params) return
+    Map p = params.findAll { k, v -> k && !(v instanceof String && v == k) }   // drop unknown-key echoes
+    if (!p) return
+    String type = p.OBJTYP ?: state.catalog?.get(objnam)?.t
+    try {
+        switch (type) {
+            case "CIRCUIT": processCircuit(objnam, p); break
+            case "BODY":    processBody(objnam, p);    break
+            case "PUMP":    processPump(objnam, p);    break
+            case "SENSE":   processSensor(objnam, p);  break
+            case "CHEM":    processChem(objnam, p);    break
+            case "HEATER":  processHeater(objnam, p);  break
+        }
+    } catch (e) {
+        logE "could not process ${objnam}: ${e.message}"
+    }
+}
+
+// ============================================================
+// Equipment
+// ============================================================
+
+private void processCircuit(String objnam, Map p) {
+    if (!(objnam ==~ /C\d+|GRP\d+|CIRCGRP\d+|FTR\d+/)) return   // internal (X00xx, _xxxx, lowercase)
+    String sub = p.SUBTYP ?: cat(objnam)?.s ?: ""
+    if (sub in ["POOL", "SPA"]) return                            // body circuits; the Body device covers them
+    String label = ((p.SNAME ?: cat(objnam)?.n ?: objnam) as String).trim()
+    catalogPut(objnam, "circuit", label, sub, "CIRCUIT")
+    if (p.STATUS == null) return
+    def child = childFor("Generic Component Switch", "circuit", objnam, label, false)
+    if (!child) return
+    String sw = p.STATUS == "ON" ? "on" : "off"
+    if (sendIf(child, "switch", sw)) logN "${label} turned ${sw}"
+}
+
+private void processBody(String objnam, Map p) {
+    String sub = p.SUBTYP ?: cat(objnam)?.s ?: ""
+    String label = ((p.SNAME ?: cat(objnam)?.n ?: objnam) as String).trim()
+    catalogPut(objnam, "body", label, sub, "BODY")
+    def body = childFor("Pentair IntelliCenter Body", "body", objnam, label, false)
+    if (!body) return
+    String u = tempUnit()
+    if (p.STATUS != null) {
+        boolean on = p.STATUS == "ON"
+        if (sendIf(body, "switch", on ? "on" : "off")) logN "${label} turned ${on ? 'on' : 'off'}"
+        sendIf(body, "bodyStatus", on ? "On" : "Off")
+    }
+    Integer temp = toInt(p.TEMP)
+    if (temp != null) sendIf(body, "temperature", temp, u)
+    Integer lo = toInt(p.LOTMP)
+    if (lo != null && sendIf(body, "heatingSetpoint", lo, u)) logN "${label} set point ${lo}${u}"
+    Integer hi = toInt(p.HITMP)
+    if (hi != null) sendIf(body, "maxSetTemp", hi, u)
+    if (p.HTMODE != null) {
+        String mode = HTMODE_NAMES[p.HTMODE.toString()] ?: p.HTMODE.toString()
+        sendIf(body, "heaterMode", mode)
+        if (mode == "Off" && p.HTSRC == null) sendIf(body, "heatSource", "Off")
+    }
+    if (p.HTSRC != null) {
+        String src = HTSRC_NAMES[p.HTSRC] ?: state.heaterNames?.get(p.HTSRC) ?: p.HTSRC
+        if (sendIf(body, "heatSource", src)) logN "${label} heat source ${src}"
+        Map ids = (state.srcIds ?: [:]) as Map
+        if (ids[src] != p.HTSRC) { ids[src] = p.HTSRC; state.srcIds = ids }
+    }
+    // Pool and spa share the pump, so the pump shows the running body's water temperature.
+    String status = p.STATUS ?: (body.currentValue("switch") == "on" ? "ON" : "OFF")
+    if (temp != null && status == "ON") {
+        getChildDevices().findAll { it.deviceNetworkId.startsWith(PREFIX.pump) }.each { pump ->
+            if (sendIf(pump, "temperature", temp, u)) pump.debounceTile()
+        }
+    }
+    logF "body ${label}: status=${p.STATUS} temp=${p.TEMP} setpoint=${p.LOTMP} mode=${p.HTMODE} source=${p.HTSRC}"
     body.debounceTile()
 }
 
-def processPump(String objnam, Map params) {
-    def label = params.SNAME ?: state.objectMap?.get(objnam)?.SNAME ?: objnam
-    def rpm   = params.RPM
-    def watts = (params.WATTS && params.WATTS != "WATTS") ? params.WATTS : null
-    def gpm   = params.GPM
-
-    def pumpDni = "intellicenter-pump-${objnam}"
-    def pump    = getOrCreateChild("Pentair IntelliCenter Pump", pumpDni, label, false)
-    if (pump) {
-        if (rpm   != null)                        pump.sendEvent(name: "rpm",   value: rpm.toInteger(),   unit: "RPM")
-        if (watts != null)                        pump.sendEvent(name: "watts", value: watts.toInteger(), unit: "W")
-        if (gpm   != null && gpm.toInteger() > 0) pump.sendEvent(name: "gpm",   value: gpm.toInteger(),   unit: "GPM")
+private void processPump(String objnam, Map p) {
+    String label = ((p.SNAME ?: cat(objnam)?.n ?: objnam) as String).trim()
+    catalogPut(objnam, "pump", label, "", "PUMP")
+    def pump = childFor("Pentair IntelliCenter Pump", "pump", objnam, label, false)
+    if (!pump) return
+    Integer rpm = toInt(p.RPM), watts = toInt(p.WATTS), gpm = toInt(p.GPM)
+    boolean changed = false
+    if (pump.currentValue("temperature") == null) {   // new pump: bodies were read before it existed
+        def running = getChildDevices().find { it.deviceNetworkId.startsWith(PREFIX.body) && it.currentValue("switch") == "on" }
+        Integer t = toInt(running?.currentValue("temperature"))
+        if (t != null) changed |= sendIf(pump, "temperature", t, tempUnit())
     }
-    if (debugMode) log.debug "Pump [${label}]: rpm=${rpm} watts=${watts} gpm=${gpm}"
-    if (pump) pump.debounceTile()
+    if (rpm != null) changed |= sendIf(pump, "rpm", rpm, "RPM")
+    if (watts != null) { changed |= sendIf(pump, "watts", watts, "W"); sendIf(pump, "power", watts, "W") }
+    if (gpm != null && gpm > 0) changed |= sendIf(pump, "gpm", gpm, "GPM")
+    logF "pump ${label}: rpm=${p.RPM} watts=${p.WATTS} gpm=${p.GPM}"
+    if (changed) pump.debounceTile()
 }
 
-def processSensor(String objnam, Map params) {
-    def subtyp = params.SUBTYP ?: state.objectMap?.get(objnam)?.SUBTYP ?: ""
-    if (subtyp == "POOL" || subtyp == "SPA") { return }
-
-    def label  = params.SNAME ?: state.objectMap?.get(objnam)?.SNAME ?: objnam
-    def source = params.SOURCE
-    if (source == null) return
-
-    def c = getOrCreateChild("Generic Component Temperature Sensor", "intellicenter-sensor-${objnam}", label, true)
-    c?.sendEvent(name: "temperature", value: source.toInteger(), unit: "°F")
-    if (debugMode) log.debug "Sensor [${label}]: ${source}°F"
+private void processSensor(String objnam, Map p) {
+    String sub = p.SUBTYP ?: cat(objnam)?.s ?: ""
+    if (sub in ["POOL", "SPA"]) return   // water temperature is on the Body device
+    String label = ((p.SNAME ?: cat(objnam)?.n ?: objnam) as String).trim()
+    catalogPut(objnam, "sensor", label, sub, "SENSE")
+    Integer t = toInt(p.SOURCE)
+    if (t == null) return
+    def c = childFor("Generic Component Temperature Sensor", "sensor", objnam, label, true)
+    if (c) sendIf(c, "temperature", t, tempUnit())
 }
 
-def processChem(String objnam, Map params) {
-    def label  = params.SNAME ?: state.objectMap?.get(objnam)?.SNAME ?: "Chlorinator"
-    def status = params.STATUS
-    def salt   = params.SALT
-
-    def c = getOrCreateChild("Generic Component Switch", "intellicenter-chem-${objnam}", label, true)
+private void processChem(String objnam, Map p) {
+    String sub = p.SUBTYP ?: cat(objnam)?.s ?: ""
+    String label = ((p.SNAME ?: cat(objnam)?.n ?: "Chlorinator") as String).trim()
+    catalogPut(objnam, "chem", label, sub, "CHEM")
+    def c = childFor("Pentair IntelliCenter Chlorinator", "chem", objnam, label, false)
     if (!c) return
-
-    if (status != null) c.sendEvent(name: "switch",    value: (status == "ON" ? "on" : "off"))
-    if (salt   != null) c.sendEvent(name: "saltLevel", value: salt.toInteger(), unit: "PPM")
-    if (debugMode) log.debug "Chem [${label}]: status=${status} salt=${salt}"
+    Integer salt = toInt(p.SALT), prim = toInt(p.PRIM), sec = toInt(p.SEC)
+    if (salt != null) sendIf(c, "saltLevel", salt, "ppm")
+    if (prim != null) sendIf(c, "poolOutput", prim, "%")
+    if (sec != null) sendIf(c, "spaOutput", sec, "%")
+    if (p.SUPER != null) sendIf(c, "superChlorinate", p.SUPER == "ON" ? "on" : "off")
+    logF "chlorinator ${label}: salt=${p.SALT} pool=${p.PRIM}% spa=${p.SEC}% super=${p.SUPER}"
 }
 
-def processHeater(String objnam, Map params) {
-    def label = params.SNAME ?: state.objectMap?.get(objnam)?.SNAME
+private void processHeater(String objnam, Map p) {
+    String label = p.SNAME
     if (!label) return
-    if (!state.heaterNames) state.heaterNames = [:]
-    state.heaterNames[objnam] = label
-    if (debugMode) log.debug "Heater registered: ${objnam} = '${label}'"
+    Map names = (state.heaterNames ?: [:]) as Map
+    if (names[objnam] != label) { names[objnam] = label; state.heaterNames = names }
+    logF "heater ${objnam} = ${label}"
 }
 
 // ============================================================
-// ===================== BODY COMMANDS =======================
+// Devices, catalog and exclusions
 // ============================================================
-def setBodyStatus(String childDni, String status) {
-    def objnam = objnamFromDni(childDni)
-    if (!objnam) { log.warn "setBodyStatus: no objnam for DNI ${childDni}"; return }
-    if (debugMode) log.debug "setBodyStatus: ${objnam} STATUS=${status}"
-    sendCommand([
-        command: "SetParamList",
-        objectList: [[objnam: objnam, params: [STATUS: status]]]
-    ])
+
+private Map cat(String objnam) { state.catalog?.get(objnam) as Map }
+
+private void catalogPut(String objnam, String kind, String name, String sub, String type) {
+    Map c = (state.catalog ?: [:]) as Map
+    Map e = [k: kind, n: name, s: sub ?: "", t: type]
+    if (c[objnam] != e) { c[objnam] = e; state.catalog = c }
 }
 
-def setBodySetPoint(String childDni, Integer temp) {
-    def objnam = objnamFromDni(childDni)
-    if (!objnam) { log.warn "setBodySetPoint: no objnam for DNI ${childDni}"; return }
-    if (debugMode) log.debug "setBodySetPoint: ${objnam} LOTMP=${temp}"
-    sendCommand([
-        command: "SetParamList",
-        objectList: [[objnam: objnam, params: [LOTMP: temp.toString()]]]
-    ])
-}
-
-def setBodyHeatSource(String childDni, String source) {
-    def objnam = objnamFromDni(childDni)
-    if (!objnam) { log.warn "setBodyHeatSource: no objnam for DNI ${childDni}"; return }
-
-    if (source == "Off") {
-        if (debugMode) log.debug "setBodyHeatSource: ${objnam} — heat off (HTSRC=00000)"
-        sendCommand([
-            command: "SetParamList",
-            objectList: [[objnam: objnam, params: [HTSRC: "00000"]]]
-        ])
-        return
+// Existing device, a new one, or null when excluded (by the user, or deleted from the Devices page).
+private childFor(String driver, String kind, String objnam, String label, boolean isComponent) {
+    migrate()   // first, so devices found below don't look like an already-migrated install
+    String dni = PREFIX[kind] + objnam
+    def child = getChildDevice(dni)
+    if (child) { addKnown(objnam); return child }
+    if ((state.excluded ?: []).contains(objnam)) return null
+    if (state.seeding || (state.known ?: []).contains(objnam)) {
+        exclude(objnam)
+        logN "${label} was deleted from the Devices page, so it won't be recreated. Turn it back on in the app's Equipment page."
+        return null
     }
-
-    def htsrcId = state.htsrcIds?.get(objnam)?.get(source)
-
-    if (!htsrcId) {
-        htsrcId = state.heaterNames?.find { k, v -> v?.equalsIgnoreCase(source) }?.key
+    Map m = mem()
+    Set failed = (m.failed ?: (m.failed = java.util.concurrent.ConcurrentHashMap.newKeySet())) as Set
+    if (failed.contains(dni)) return null
+    try {
+        String ns = driver.startsWith("Pentair") ? "intellicenter" : "hubitat"
+        child = addChildDevice(ns, driver, dni, [label: label, isComponent: isComponent])
+        addKnown(objnam)
+        logN "created ${label}"
+        try { child.setLogLevel(state.logLevel ?: "Errors Only") } catch (e) { }
+    } catch (e) {
+        failed.add(dni)
+        String why = "${e}".contains("UnknownDeviceType") ? "the ${driver} driver isn't installed (update with HPM)" : e.message
+        logE "could not create ${label}: ${why}"
     }
+    return child
+}
 
-    if (!htsrcId) {
-        def staticSrcMap = ["Heater":"H0001","Solar Only":"S0001","Solar Preferred":"H0002",
-                            "Heat Pump":"H0003","Heat Pump Preferred":"H0004"]
-        htsrcId = staticSrcMap[source]
-        if (htsrcId) log.warn "setBodyHeatSource: using static fallback '${htsrcId}' for '${source}'"
+private void addKnown(String objnam) {
+    List k = (state.known ?: []) as List
+    if (!k.contains(objnam)) state.known = k + objnam
+}
+
+private void exclude(String objnam) {
+    List x = (state.excluded ?: []) as List
+    if (!x.contains(objnam)) state.excluded = x + objnam
+    state.known = ((state.known ?: []) as List) - objnam
+}
+
+// For the app's Equipment page.
+Map getCatalog() { (state.catalog ?: [:]) as Map }
+List getExcluded() { (state.excluded ?: []) as List }
+
+// From the app's Equipment page: removes newly excluded devices, re-reads equipment to create re-included ones.
+void setExcluded(List list) {
+    List old = (state.excluded ?: []) as List
+    List want = (list ?: []).collect { it.toString() }.unique()
+    state.excluded = want
+    state.known = ((state.known ?: []) as List) - (old - want) - (want - old)
+    (want - old).each { objnam ->
+        def child = getChildDevices().find { objnamFromDni(it.deviceNetworkId) == objnam }
+        if (child) {
+            String label = child.displayName
+            try { deleteChildDevice(child.deviceNetworkId); logN "removed ${label} (turned off in Equipment)" }
+            catch (e) { logE "could not remove ${label}: ${e.message}" }
+        }
     }
-
-    if (!htsrcId) { log.warn "setBodyHeatSource: unknown source '${source}' for ${objnam}"; return }
-
-    if (debugMode) log.debug "setBodyHeatSource: ${objnam} HTSRC=${htsrcId} (${source})"
-    sendCommand([
-        command: "SetParamList",
-        objectList: [[objnam: objnam, params: [HTSRC: htsrcId]]]
-    ])
+    if ((old - want) && state.connected) runIn(1, "requestEquipment")
 }
 
 // ============================================================
-// ===================== PUMP SPEED COMMAND ==================
+// Commands (return true when sent)
 // ============================================================
-def setPumpSpeed(String childDni, Integer rpm) {
-    def objnam = objnamFromDni(childDni)
-    if (!objnam) { log.warn "setPumpSpeed: no objnam for DNI ${childDni}"; return }
-    if (debugMode) log.debug "setPumpSpeed: ${objnam} RPM=${rpm}"
-    sendCommand([
-        command: "SetParamList",
-        objectList: [[objnam: objnam, params: [RPM: rpm.toString()]]]
-    ])
+
+boolean setBodyStatus(String childDni, String status) {
+    setParam(childDni, [STATUS: status], "status ${status}")
 }
 
-// ============================================================
-// ===================== CIRCUIT COMMANDS ====================
-// ============================================================
-def circuitOn(String childDni) {
-    def objnam = objnamFromDni(childDni)
-    if (!objnam) { log.warn "No objnam for DNI: ${childDni}"; return }
-    if (debugMode) log.debug "Circuit ON: ${objnam}"
-    sendCommand([
-        command: "SetParamList",
-        objectList: [[objnam: objnam, params: [STATUS: "ON"]]]
-    ])
-    getChildDevice(childDni)?.sendEvent(name: "switch", value: "on")
+boolean setBodySetPoint(String childDni, Integer temp) {
+    setParam(childDni, [LOTMP: temp.toString()], "set point ${temp}")
 }
 
-def circuitOff(String childDni) {
-    def objnam = objnamFromDni(childDni)
-    if (!objnam) { log.warn "No objnam for DNI: ${childDni}"; return }
-    if (debugMode) log.debug "Circuit OFF: ${objnam}"
-    sendCommand([
-        command: "SetParamList",
-        objectList: [[objnam: objnam, params: [STATUS: "OFF"]]]
-    ])
-    getChildDevice(childDni)?.sendEvent(name: "switch", value: "off")
+boolean setBodyHeatSource(String childDni, String source) {
+    String objnam = objnamFromDni(childDni)
+    String id = source == "Off" ? "00000" : (state.srcIds?.get(source) ?: state.heaterNames?.find { k, v -> v?.equalsIgnoreCase(source) }?.key ?: HTSRC_IDS[source])
+    if (!id) { logE "unknown heat source '${source}' for ${objnam}"; return false }
+    setParam(childDni, [HTSRC: id], "heat source ${source} (${id})")
+}
+
+boolean setPumpSpeed(String childDni, Integer rpm) {
+    setParam(childDni, [RPM: rpm.toString()], "speed ${rpm} RPM")
+}
+
+boolean circuitOn(String childDni) { setCircuit(childDni, "ON") }
+boolean circuitOff(String childDni) { setCircuit(childDni, "OFF") }
+
+private boolean setCircuit(String childDni, String status) {
+    if (childDni?.startsWith(PREFIX.chem)) {
+        logE "turning the chlorinator on or off from Hubitat isn't supported"
+        return false
+    }
+    boolean ok = setParam(childDni, [STATUS: status], status)
+    if (ok) getChildDevice(childDni)?.sendEvent(name: "switch", value: status == "ON" ? "on" : "off")
+    return ok
+}
+
+private boolean setParam(String childDni, Map params, String what) {
+    String objnam = objnamFromDni(childDni)
+    if (!objnam) { logE "no equipment for ${childDni}"; return false }
+    String name = getChildDevice(childDni)?.displayName ?: objnam
+    boolean ok = sendCommand([command: "SetParamList", objectList: [[objnam: objnam, params: params]]])
+    if (ok) logN "${name}: ${what}"
+    return ok
 }
 
 def componentOn(child)  { circuitOn(child.deviceNetworkId) }
 def componentOff(child) { circuitOff(child.deviceNetworkId) }
 
-// ============================================================
-// ===================== SEND COMMAND ========================
-// ============================================================
-def sendCommand(Map payload) {
+def componentRefresh(child) {
+    String dni = child?.deviceNetworkId
+    String objnam = dni ? objnamFromDni(dni) : null
+    if (!objnam) return
+    Map keys = [(PREFIX.sensor): ["SENSE", ["OBJTYP", "SUBTYP", "SNAME", "SOURCE"]],
+                (PREFIX.body): ["BODY", ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "TEMP", "LOTMP", "HITMP", "HTMODE", "HTSRC"]],
+                (PREFIX.pump): ["PUMP", ["OBJTYP", "SNAME", "STATUS", "RPM", "GPM", "WATTS"]],
+                (PREFIX.circuit): ["CIRCUIT", ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "FEATR"]],
+                (PREFIX.chem): ["CHEM", ["OBJTYP", "SUBTYP", "SNAME", "SALT", "PRIM", "SEC", "SUPER"]]]
+    def k = keys.find { pre, v -> dni.startsWith(pre) }?.value
+    if (k) sendCommand(query(k[0] as String, k[1] as List, objnam))
+}
+
+private boolean sendCommand(Map payload) {
     if (!state.connected) {
-        log.warn "Not connected — cannot send command"
-        return
+        logE "not connected to IntelliCenter, command not sent"
+        return false
     }
-    payload.messageID = java.util.UUID.randomUUID().toString()
-    def json = groovy.json.JsonOutput.toJson(payload)
-    if (debugMode) log.debug "TX: ${json}"
+    payload.messageID = UUID.randomUUID().toString()
+    String json = groovy.json.JsonOutput.toJson(payload)
+    logF "TX: ${json}"
     try {
         interfaces.webSocket.sendMessage(json)
+        return true
     } catch (e) {
-        log.error "Send failed: ${e.message}"
-        state.connected = false
-        sendEvent(name: "connectionStatus", value: "Disconnected")
+        markDown("send failed: ${e.message}")
+        return false
     }
 }
 
 // ============================================================
-// ===================== COMPONENT CALLBACKS =================
+// Helpers
 // ============================================================
-def componentRefresh(child) {
-    if (!child?.deviceNetworkId) {
-        if (debugMode) log.debug "componentRefresh: child or DNI not yet available — skipping"
-        return
-    }
-    def dni = child.deviceNetworkId
-    if (debugMode) log.debug "componentRefresh: ${child.displayName} (${dni})"
 
-    if (dni.startsWith("intellicenter-sensor-")) {
-        def objnam = objnamFromDni(dni)
-        if (!objnam) return
-        sendCommand([
-            command: "GetParamList",
-            condition: "OBJTYP=SENSE",
-            objectList: [[objnam: objnam, keys: ["OBJTYP", "SUBTYP", "SNAME", "SOURCE"]]]
-        ])
-    } else if (dni.startsWith("intellicenter-body-")) {
-        refreshBody(dni)
-    } else if (dni.startsWith("intellicenter-pump-")) {
-        def objnam = objnamFromDni(dni)
-        if (!objnam) return
-        sendCommand([
-            command: "GetParamList",
-            condition: "OBJTYP=PUMP",
-            objectList: [[objnam: objnam, keys: ["OBJTYP", "SNAME", "STATUS", "RPM", "GPM", "WATTS"]]]
-        ])
-    } else if (dni.startsWith("intellicenter-circuit-")) {
-        def objnam = objnamFromDni(dni)
-        if (!objnam) return
-        sendCommand([
-            command: "GetParamList",
-            condition: "OBJTYP=CIRCUIT",
-            objectList: [[objnam: objnam, keys: ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "FEATR"]]]
-        ])
-    } else if (dni.startsWith("intellicenter-chem-")) {
-        def objnam = objnamFromDni(dni)
-        if (!objnam) return
-        sendCommand([
-            command: "GetParamList",
-            condition: "OBJTYP=CHEM",
-            objectList: [[objnam: objnam, keys: ["OBJTYP", "SNAME", "STATUS", "SALT", "LOTMP"]]]
-        ])
-    } else {
-        def objnam = objnamFromDni(dni)
-        if (!objnam) return
-        sendCommand([
-            command: "GetParamList",
-            objectList: [[objnam: objnam, keys: ["STATUS","TEMP","RPM","WATTS","GPM","SALT","SOURCE","LOTMP","HITMP","HTMODE","HTSRC"]]]
-        ])
-    }
+String objnamFromDni(String dni) {
+    String pre = PREFIX.values().find { dni?.startsWith(it) }
+    if (pre) return dni.substring(pre.length())
+    int i = dni?.lastIndexOf("-") ?: -1
+    return i > 0 ? dni.substring(i + 1) : null
 }
 
-def refreshBody(String dni) {
-    def objnam = objnamFromDni(dni)
-    if (!objnam) return
-    sendCommand([
-        command: "GetParamList",
-        condition: "OBJTYP=BODY",
-        objectList: [[objnam: objnam, keys: ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "TEMP", "LOTMP", "HITMP", "HTMODE", "HTSRC"]]]
-    ])
+private Integer toInt(v) {
+    if (v == null) return null
+    try { return new BigDecimal(v.toString().trim()).setScale(0, java.math.RoundingMode.HALF_UP).intValue() } catch (e) { return null }
+}
+
+private String tempUnit() { "°${location?.temperatureScale ?: 'F'}" }
+
+// Sends only real changes; returns true when the value changed.
+private boolean sendIf(dev, String name, value, String unit = null) {
+    if (dev.currentValue(name)?.toString() == value?.toString()) return false
+    Map e = [name: name, value: value]
+    if (unit) e.unit = unit
+    dev.sendEvent(e)
+    return true
 }
 
 // ============================================================
-// ===================== HELPERS =============================
+// Logging (level comes from the app)
 // ============================================================
-def objnamFromDni(String dni) {
-    for (prefix in ["intellicenter-body-", "intellicenter-circuit-", "intellicenter-pump-",
-                     "intellicenter-sensor-", "intellicenter-chem-"]) {
-        if (dni.startsWith(prefix)) return dni.substring(prefix.length())
-    }
-    def idx = dni.lastIndexOf("-")
-    return idx > 0 ? dni.substring(idx + 1) : null
+
+void setLogLevel(String level) {
+    state.logLevel = LOG_LEVELS.contains(level) ? level : "Errors Only"
+    getChildDevices().each { try { it.setLogLevel(state.logLevel) } catch (e) { } }
 }
 
-def getOrCreateChild(String driver, String dni, String label, Boolean isComponent = false) {
-    def child = getChildDevice(dni)
-    if (!child) {
-        def namespace = driver.startsWith("Pentair") ? "intellicenter" : "hubitat"
-        try {
-            child = addChildDevice(namespace, driver, dni, [label: label, isComponent: isComponent])
-            if (debugMode) log.debug "Created child: ${label} (${dni}) [${namespace}] isComponent=${isComponent}"
-        } catch (e) {
-            log.warn "Could not create ${label}: ${e.message}"
-        }
-    }
-    return child
+// Body, Pump and Chlorinator log through here up to the app.
+void childLog(String level, String source, String msg) {
+    try { parent.childLog(level, source, msg) } catch (e) { localLog(level, "${source}: ${msg}") }
 }
 
+private int lvl() { LOG_LEVELS.indexOf(state.logLevel ?: "Errors Only") }
+private void logE(String s) { slog("warn", s) }
+private void logN(String s) { if (lvl() >= 1) slog("info", s) }
+private void logF(String s) { if (lvl() >= 2) slog("debug", s) }
 
+private void slog(String level, String msg) {
+    try { parent.childLog(level, device.displayName, msg) } catch (e) { localLog(level, "${device.displayName}: ${msg}") }
+}
 
-
+private void localLog(String level, String line) {
+    switch (level) {
+        case "error": log.error line; break
+        case "warn": log.warn line; break
+        case "info": log.info line; break
+        default: log.debug line
+    }
+}
