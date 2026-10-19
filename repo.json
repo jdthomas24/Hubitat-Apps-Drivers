@@ -21,20 +21,18 @@
             "description": "Custom Hubitat driver for SmartThings Zigbee motion sensors with local processing and battery reporting.",
             "descriptive": "",
             "tags": [
-                "zigbee",
-                "motion",
-                "sensor",
-                "smartthings"
+                "Zigbee",
+                "Sensors"
             ]
         },
         {
-            "name": "Pentair Intellicenter Controller",
-            "category": "Utility",
+            "name": "Pentair IntelliCenter Controller",
+            "category": "Integrations",
             "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Pentair%20Intellicenter%20Control/packagemanifest.json",
-            "description": "Pentair Intellicenter Controller ",
+            "description": "Local control of a Pentair IntelliCenter pool controller: pool and spa, heat, pumps, circuits, sensors and salt cell, with an equipment picker. No cloud.",
             "descriptive": "",
             "tags": [
-                "Pools & Spas"
+                "Pool & Spa"
             ]
         },
         {
