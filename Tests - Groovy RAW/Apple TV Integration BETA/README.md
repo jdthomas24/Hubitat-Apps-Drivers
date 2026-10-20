@@ -1,4 +1,4 @@
-# Apple TV Now Playing (Beta) 1.2.0.8
+# Apple TV Now Playing (Beta) 1.2.0.9
 
 Lets Hubitat see what your Apple TV is doing: **which app** is playing (Netflix, Plex, YouTube...) and whether it's **playing or paused**. Some apps also share the title.
 
@@ -43,9 +43,7 @@ Pairing adds "Hubitat" to the Apple TV's list of remotes and devices. This pairi
 | `tvState` | `awake` or `asleep` |
 | `connection` | `connected`, `connecting`, `reconnecting`, `offline`, `disconnected` |
 
-The device also creates a hidden helper device, "(link)", that holds the Now Playing connection. Leave it alone. Removing the TV in the app removes it too.
-
-**Helpers setting (testing in 1.2.0.7):** **One** (the default) uses a single helper per Apple TV. **Two** adds a second one, "(setup link)", the way earlier betas worked. If an Apple TV keeps dropping or going offline on One, set **Two** in the app and tell me. Changing it reconnects every Apple TV.
+The device also creates two hidden helper devices, "(link)" and "(setup link)", that hold its extra connections. Each device on the hub can hold only one connection, and the Apple TV needs all three open at once. Leave them alone. Removing the TV in the app removes them too.
 
 ## Writing rules
 
@@ -73,7 +71,6 @@ Good to know:
 - Your hub model (C-5, C-7, C-8, C-8 Pro), Apple TV model and tvOS version
 - Which apps worked, and which reported something odd
 - Whether it reconnects on its own after the TV sleeps overnight, and after a hub reboot
-- With Helpers on **One**: whether it stays connected for a day or more
 - Anything that looks off. Set **Log level** to **Full** in the app, reproduce it, and send the logs (Full turns itself off after 30 minutes)
 
 ## Updating

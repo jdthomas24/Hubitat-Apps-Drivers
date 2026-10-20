@@ -7,8 +7,8 @@
     Notes:
      -Standalone beta, separate from Apple TV Integration. One device per Apple TV, created by the app.
       The same driver runs hidden helper devices, since a device holds one raw socket. Role comes from the
-      DNI ("-data" = link, "-event" = setup link). Helpers setting in the app: One (default) runs the event
-      channel on the link during setup, then swaps it to the data channel; Two keeps a separate setup link.
+      DNI ("-data" = link, "-event" = setup link). Both stay open for the whole session: the Apple TV ends it
+      if the event channel closes (one-helper test, 1.2.0.7).
      -Pairing: AirPlay pair-setup on port 7000 (PIN on screen). Keys go to the app, memory only here.
      -Session: pair-verify, encrypted RTSP control channel, remote-control SETUP, event channel, RECORD,
       data channel, then Media Remote (MRP). Keepalive POST /feedback, default 120s (2-120s tested).
@@ -26,7 +26,7 @@
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { "1.2.0.8" }
+def version() { "1.2.0.9" }
 
 metadata {
     definition(name: "Apple TV Now Playing (Beta)", namespace: "jdthomas24", author: "jdthomas24",
@@ -326,8 +326,7 @@ private void scheduleRetry(String reason) {
     runIn(delay, "connect")   // first, so nothing below can leave the device without a retry
     if (n == OFFLINE_AFTER) {
         sendIfChanged("connection", "offline")
-        logE("offline (${reason}). Retrying every 5 minutes. Check that the Apple TV has power and is on the network." +
-            (oneHelper() ? " If it stays online in the Apple TV Integration app, try Helpers: Two in this app." : ""))
+        logE("offline (${reason}). Retrying every 5 minutes. Check that the Apple TV has power and is on the network.")
     } else if (n < OFFLINE_AFTER) sendIfChanged("connection", "reconnecting")
     if (n >= 2) refreshAddress()
     logF("retry ${n} in ${delay}s (${reason})")
@@ -347,13 +346,9 @@ private void teardown() {
     closeCtl()
 }
 
-private boolean oneHelper() { (parent?.componentHelperMode() ?: "one") != "two" }
-
 private boolean ensureHelpers() {
     try {
-        boolean one = oneHelper()
-        if (one && helper("event")) { deleteChildDevice(helperDni("event")); logN("removed the setup link (Helpers: One)") }
-        (one ? ["data"] : ["event", "data"]).each { k ->
+        ["event", "data"].each { k ->
             String lbl = "${device.displayName} (${HELPER_LABEL[k]})"
             def h = helper(k)
             if (!h) addChildDevice("jdthomas24", "Apple TV Now Playing (Beta)", helperDni(k),
@@ -367,8 +362,7 @@ private boolean ensureHelpers() {
     }
 }
 
-// Helpers: One runs the event channel on the link helper, then swaps it to data.
-private evHelper() { oneHelper() ? helper("data") : helper("event") }
+
 
 private String helperDni(String k) { "ATVNP-H${device.id}-${k}" }
 private helper(String k) { getChildDevice(helperDni(k)) }
@@ -561,8 +555,7 @@ private void handle(Map m, int status, byte[] body) {
             Map ss = m.ss as Map
             m.step = "EVENTCH"
             // Read/Write reversed for the event channel, as in pyatv (the receiver originates its messages).
-            m.helpers = oneHelper() ? 1 : 2
-            evHelper().chOpen([kind: "event", ip: state.ip, port: port as int,
+            helper("event").chOpen([kind: "event", ip: state.ip, port: port as int,
                 outKey: toHex(hkdfSha512("Events-Salt", "Events-Read-Encryption-Key", ss.shared as byte[])),
                 inKey: toHex(hkdfSha512("Events-Salt", "Events-Write-Encryption-Key", ss.shared as byte[]))])
             break
@@ -581,7 +574,6 @@ private void handle(Map m, int status, byte[] body) {
             Map ss = m.ss as Map
             String salt = "DataStream-Salt${m.seed}"
             m.step = "DATACH"
-            if (m.helpers == 1) logF("closing the setup channel, opening the data channel on the link")
             helper("data").chOpen([kind: "data", ip: state.ip, port: dport as int,
                 outKey: toHex(hkdfSha512(salt, "DataStream-Output-Encryption-Key", ss.shared as byte[])),
                 inKey: toHex(hkdfSha512(salt, "DataStream-Input-Encryption-Key", ss.shared as byte[]))])
@@ -711,7 +703,7 @@ private void mrpNext(Map m) {
             m.remove("pairResult"); m.remove("pairStatus")
             sendIfChanged("connection", "connected")
             if (wasOffline) logE("back online")
-            logN("connected to ${getDataValue('appleTvName') ?: state.ip} (${m.helpers == 1 ? 'one helper' : 'two helpers'}), keepalive every ${kaSec()}s")
+            logN("connected to ${getDataValue('appleTvName') ?: state.ip}, keepalive every ${kaSec()}s")
             schedulePublish()
             break
     }
