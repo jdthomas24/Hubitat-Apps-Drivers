@@ -12,7 +12,10 @@
       and are loaded into memory only, so they never show in State Variables.
      -Reconnects with backoff (5s to 5 min). "offline" only after 4 failed attempts, then
       "back online" logs at every level. Follows IP changes through the app's Bonjour list.
-     -Health check every 5 min (FetchAttentionState, 20s timeout) catches half-open sockets.
+     -Health check every 5 min (FetchAttentionState, 20s timeout) catches half-open sockets, and a connect
+      stuck over 60s (a timeout lost to an interrupted thread or a firmware boot), logged as a warning.
+     -socketStatus is handled on a scheduled thread (the hub may interrupt the socket's own thread), and
+      retries and the connect timeout are scheduled before anything else that could fail.
       on/off with no reply in 5s reconnects and retries once. Initialize reconnects after reboots.
      -Playback: play/pause/next/previous/skip via _mcc (MediaControl), buttons via HID press+release.
       transportStatus comes from the allowed-controls flags (_iMC _mcF or MediaControlStatus
@@ -56,7 +59,7 @@
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { return "1.1.4" }
+def version() { return "1.1.5" }
 
 metadata {
     definition(name: "Apple TV", namespace: "jdthomas24", author: "Jason Thomas", importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/AppleTVDriver.groovy") {
@@ -581,6 +584,8 @@ def connect() {
     m.rx = ""
     m.mode = "session"
     m.stage = "OPEN"
+    m.connectAt = now()
+    runIn(15, "connectTimeout")
     m.ss = [:]
     m.waiting = [:]
     sendIfChanged("connection", (m.failCount ?: 0) ? (device.currentValue("connection") == "offline" ? "offline" : "reconnecting") : "connecting")
@@ -588,7 +593,6 @@ def connect() {
     m.stage = "PV2"
     send(pvStart(m.ss as Map))
     logF("connecting to ${state.ip}:${state.port}")
-    runIn(15, "connectTimeout")
 }
 
 def connectTimeout() {
@@ -604,14 +608,14 @@ private void scheduleRetry(String reason) {
     Map m = mem()
     int n = ((m.failCount ?: 0) as int) + 1
     m.failCount = n
+    int delay = RETRY_SEC[Math.min(n - 1, RETRY_SEC.size() - 1)] as int
+    runIn(delay, "connect")
     if (n == OFFLINE_AFTER) {
         sendIfChanged("connection", "offline")
         logE("offline (${reason}). Retrying every 5 minutes. Check that the Apple TV has power and is on the network.")
     } else if (n < OFFLINE_AFTER) sendIfChanged("connection", "reconnecting")
     if (n >= 2) refreshAddress()
-    int delay = RETRY_SEC[Math.min(n - 1, RETRY_SEC.size() - 1)] as int
     logF("retry ${n} in ${delay}s (${reason})")
-    runIn(delay, "connect")
 }
 
 private void forceReconnect() {
@@ -637,7 +641,15 @@ def healthCheck() {
             m.probeAt = now()
             request("FetchAttentionState", [:], "health")
             runIn(20, "healthTimeout")
-        } else if (!(m.stage in CONNECTING)) connect()
+        } else if (m.stage in CONNECTING) {
+            if (!m.connectAt || now() - (m.connectAt as long) > 60000) {
+                String at = m.stage
+                logE("stuck connecting for over a minute (at ${at}), retrying")
+                closeSocket()
+                m.stage = "CLOSED"
+                scheduleRetry("stuck at ${at}")
+            }
+        } else connect()
     } catch (e) {
         logE("health check failed: ${e.message}")
     }
@@ -652,7 +664,10 @@ def healthTimeout() {
     }
 }
 
-def socketStatus(String s) {
+def socketStatus(String s) { runInMillis(50, "socketStatusLater", [data: [s: s], overwrite: false]) }
+
+def socketStatusLater(Map d) {
+    String s = d?.s as String
     Map m = mem()
     logF("socket status: ${s}")
     String l = s?.toLowerCase() ?: ""
