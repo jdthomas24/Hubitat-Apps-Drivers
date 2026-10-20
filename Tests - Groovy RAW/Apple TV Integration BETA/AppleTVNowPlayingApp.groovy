@@ -16,6 +16,7 @@
      -PIN box submits on change and is sent at the top of mainPage (text boxes aren't always saved when a
       button is clicked right after typing). Buttons pause so the page redraws after the TV replies.
      -Cards update live from the hub's /eventsocket feed (no page reload, so typing is never interrupted).
+     -Helpers (one/two) is read by each device at connect; changing it reconnects every paired device.
      -Log level is pushed to every device; their lines appear under this app. Full turns off after 30 minutes.
      -UI follows HubitatAppUiTemplate (as Apple TV Integration 1.1.1).
 */
@@ -23,9 +24,10 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Apple TV Now Playing (Beta)"
-@Field static final String APP_VERSION = "1.2.0.6"
+@Field static final String APP_VERSION = "1.2.0.7"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/166801"
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
+@Field static final Map HELPER_MODES = [one: "One (testing)", two: "Two"]
 @Field static final String RAOP = "_raop._tcp"
 @Field static final String DRIVER = "Apple TV Now Playing (Beta)"
 @Field static final Map MODELS = ["AppleTV5,3": "Apple TV HD", "AppleTV6,2": "Apple TV 4K (1st gen)",
@@ -213,6 +215,19 @@ private void addByIp() {
 // Device interface
 // ============================================================================
 
+String componentHelperMode() { helperMode == "two" ? "two" : "one" }
+
+private void pushHelperMode() {
+    String mode = componentHelperMode()
+    if (state.pushedHelperMode == mode) return
+    boolean first = state.pushedHelperMode == null
+    state.pushedHelperMode = mode
+    if (first) return   // devices pick it up on their next connect (a code update reconnects them)
+    logInfo "Helpers set to ${HELPER_MODES[mode]}, reconnecting"
+    Map creds = state.creds ?: [:]
+    getChildDevices().findAll { creds[it.deviceNetworkId] }.each { try { it.reconnect() } catch (e) { } }
+}
+
 Map componentGetCredentials(String dni) { (state.creds ?: [:])[dni] as Map }
 
 void componentPairingComplete(String dni, Map c) {
@@ -259,6 +274,7 @@ def mainPage(params = null) {
     startListener(false)
     armLogRevert()
     if (state.pushedLogLevel != currentLogLevel()) pushLogLevel()
+    pushHelperMode()
     Map creds = state.creds ?: [:]
     List paired = getChildDevices().findAll { creds[it.deviceNetworkId] }.sort { it.displayName }
     List pairedIps = paired.collect { it.getDataValue("ip") }.findAll { it }
@@ -302,6 +318,10 @@ def mainPage(params = null) {
                 style: "margin-left: 0.5em; margin-right: 0.5em; margin-top: 0; padding-right:0;"
             paragraph "<span class='text-color-secondary' style='font-size:14px;'><b>Normal</b> logs every app change and connection. " +
                 "<b>Full</b> adds protocol detail for troubleshooting and turns itself off after 30 minutes.</span>"
+            input "helperMode", "enum", title: "Helpers", options: HELPER_MODES, defaultValue: "one", submitOnChange: true, width: 12,
+                style: "margin-left: 0.5em; margin-right: 0.5em; margin-top: 0; padding-right:0;"
+            paragraph "<span class='text-color-secondary' style='font-size:14px;'>Hidden devices that hold the extra connections. " +
+                "<b>One</b> is being tested for 1.2.0. If an Apple TV keeps dropping, set <b>Two</b>; changing it reconnects every Apple TV.</span>"
             paragraph rawHtml: true, supportLinkHtml(COMMUNITY_URL, "pi pi-comments", "Hubitat Community", "Apple TV Integration thread")
         }
         section(sectionClass: "app-main-footer") {

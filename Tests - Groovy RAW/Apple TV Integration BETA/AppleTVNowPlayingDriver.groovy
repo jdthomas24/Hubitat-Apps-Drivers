@@ -6,8 +6,9 @@
 
     Notes:
      -Standalone beta, separate from Apple TV Integration. One device per Apple TV, created by the app.
-      The same driver runs two hidden helper devices (event and data channels), since a device holds one
-      raw socket. Role comes from the DNI: helpers end in "-event" / "-data", keyed by the main device id.
+      The same driver runs hidden helper devices, since a device holds one raw socket. Role comes from the
+      DNI ("-data" = link, "-event" = setup link). Helpers setting in the app: One (default) runs the event
+      channel on the link during setup, then swaps it to the data channel; Two keeps a separate setup link.
      -Pairing: AirPlay pair-setup on port 7000 (PIN on screen). Keys go to the app, memory only here.
      -Session: pair-verify, encrypted RTSP control channel, remote-control SETUP, event channel, RECORD,
       data channel, then Media Remote (MRP). Keepalive POST /feedback, default 120s (2-120s tested).
@@ -18,14 +19,14 @@
       (applied after 4s, wake flickers 1-0-1), else awake.
      -Now playing tracked per app like pyatv: clients by bundle ID, players by ID, active client from
       SET_NOW_PLAYING_CLIENT. Attributes publish 1s after the last change, so an app switch lands once.
-      Leaving an app or sleeping pauses it; the home screen shows the last app, paused.
+      Leaving an app pauses it; the home screen shows the last app, paused. Asleep clears it (none, stopped).
      -Session map is a ConcurrentHashMap: remove(), never "= null".
 */
 
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { "1.2.0.6" }
+def version() { "1.2.0.7" }
 
 metadata {
     definition(name: "Apple TV Now Playing (Beta)", namespace: "jdthomas24", author: "jdthomas24",
@@ -59,6 +60,7 @@ metadata {
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 @Field static final List PAIR_STEPS = ["PINSTART", "M2", "PIN", "M4", "M6"]
 @Field static final List SESSION_STEPS = ["PV2", "PV4", "SETUP", "EVENTCH", "RECORD", "SETUP2", "DATACH", "READY"]
+@Field static final Map HELPER_LABEL = [data: "link", event: "setup link"]
 @Field static final List KEEP = ["failCount", "creds", "disabled", "pub", "pairResult", "pairStatus"]
 @Field static final Map STATES = [Playing: "playing", Paused: "paused", Stopped: "stopped", Interrupted: "paused", Seeking: "playing"]
 @Field static final Map KNOWN_APPS = ["com.netflix.Netflix": "Netflix", "com.plexapp.plex": "Plex", "com.google.ios.youtube": "YouTube",
@@ -313,7 +315,8 @@ private void scheduleRetry(String reason) {
     m.failCount = n
     if (n == OFFLINE_AFTER) {
         sendIfChanged("connection", "offline")
-        logE("offline (${reason}). Retrying every 5 minutes. Check that the Apple TV has power and is on the network.")
+        logE("offline (${reason}). Retrying every 5 minutes. Check that the Apple TV has power and is on the network." +
+            (oneHelper() ? " If it stays online in the Apple TV Integration app, try Helpers: Two in this app." : ""))
     } else if (n < OFFLINE_AFTER) sendIfChanged("connection", "reconnecting")
     if (n >= 2) refreshAddress()
     int delay = RETRY_SEC[Math.min(n - 1, RETRY_SEC.size() - 1)] as int
@@ -335,11 +338,18 @@ private void teardown() {
     closeCtl()
 }
 
+private boolean oneHelper() { (parent?.componentHelperMode() ?: "one") != "two" }
+
 private boolean ensureHelpers() {
     try {
-        ["event", "data"].each { k ->
-            if (!helper(k)) addChildDevice("jdthomas24", "Apple TV Now Playing (Beta)", helperDni(k),
-                [name: "Apple TV Now Playing ${k} channel", label: "${device.displayName} (${k} channel)", isComponent: true])
+        boolean one = oneHelper()
+        if (one && helper("event")) { deleteChildDevice(helperDni("event")); logN("removed the setup link (Helpers: One)") }
+        (one ? ["data"] : ["event", "data"]).each { k ->
+            String lbl = "${device.displayName} (${HELPER_LABEL[k]})"
+            def h = helper(k)
+            if (!h) addChildDevice("jdthomas24", "Apple TV Now Playing (Beta)", helperDni(k),
+                [name: "Apple TV Now Playing ${HELPER_LABEL[k]}", label: lbl, isComponent: true])
+            else if (h.label == "${device.displayName} (${k} channel)".toString()) { h.setLabel(lbl); h.setName("Apple TV Now Playing ${HELPER_LABEL[k]}") }
         }
         return true
     } catch (e) {
@@ -347,6 +357,9 @@ private boolean ensureHelpers() {
         return false
     }
 }
+
+// Helpers: One runs the event channel on the link helper, then swaps it to data.
+private evHelper() { oneHelper() ? helper("data") : helper("event") }
 
 private String helperDni(String k) { "ATVNP-H${device.id}-${k}" }
 private helper(String k) { getChildDevice(helperDni(k)) }
@@ -535,7 +548,8 @@ private void handle(Map m, int status, byte[] body) {
             Map ss = m.ss as Map
             m.step = "EVENTCH"
             // Read/Write reversed for the event channel, as in pyatv (the receiver originates its messages).
-            helper("event").chOpen([kind: "event", ip: state.ip, port: port as int,
+            m.helpers = oneHelper() ? 1 : 2
+            evHelper().chOpen([kind: "event", ip: state.ip, port: port as int,
                 outKey: toHex(hkdfSha512("Events-Salt", "Events-Read-Encryption-Key", ss.shared as byte[])),
                 inKey: toHex(hkdfSha512("Events-Salt", "Events-Write-Encryption-Key", ss.shared as byte[]))])
             break
@@ -554,6 +568,7 @@ private void handle(Map m, int status, byte[] body) {
             Map ss = m.ss as Map
             String salt = "DataStream-Salt${m.seed}"
             m.step = "DATACH"
+            if (m.helpers == 1) logF("closing the setup channel, opening the data channel on the link")
             helper("data").chOpen([kind: "data", ip: state.ip, port: dport as int,
                 outKey: toHex(hkdfSha512(salt, "DataStream-Output-Encryption-Key", ss.shared as byte[])),
                 inKey: toHex(hkdfSha512(salt, "DataStream-Input-Encryption-Key", ss.shared as byte[]))])
@@ -683,7 +698,7 @@ private void mrpNext(Map m) {
             m.remove("pairResult"); m.remove("pairStatus")
             sendIfChanged("connection", "connected")
             if (wasOffline) logE("back online")
-            logN("connected to ${getDataValue('appleTvName') ?: state.ip}, keepalive every ${kaSec()}s")
+            logN("connected to ${getDataValue('appleTvName') ?: state.ip} (${m.helpers == 1 ? 'one helper' : 'two helpers'}), keepalive every ${kaSec()}s")
             schedulePublish()
             break
     }
@@ -747,8 +762,10 @@ private void tvCount(int n) {
 def tvAsleep() { setTv("asleep") }
 
 private void setTv(String v) {
-    if (device.currentValue("tvState") != v) logN("Apple TV is ${v}")
+    if (device.currentValue("tvState") == v) return
+    logN("Apple TV is ${v}")
     sendIfChanged("tvState", v)
+    schedulePublish()
 }
 
 // ---------- now playing ----------
@@ -773,6 +790,7 @@ def publish() {
     String artist = (np.artist ?: np.series ?: "").toString().trim()
     int dur = 0
     if (np.duration != null) { double d = np.duration as double; if (!d.isNaN() && !d.isInfinite() && d > 0) dur = Math.round(d) as int }
+    if (device.currentValue("tvState") == "asleep") { app = "none"; bundle = ""; st = "stopped"; title = ""; artist = ""; dur = 0 }
     String sig = "${app}|${bundle}|${st}|${title}|${artist}|${dur}"
     if (sig == m.pub) return
     m.pub = sig
@@ -890,7 +908,10 @@ private String render(v) {
 // protobuf to the main device, sends its protobuf as "sync"/"comm" with one fixed seqno, like pyatv.
 
 void chOpen(Map cfg) {
-    Map m = mem(); m.clear()
+    Map m = mem()
+    boolean wasOpen = m.open
+    m.clear()
+    if (wasOpen) m.closingAt = now()   // swap: ignore the old socket's close status
     m.kind = cfg.kind
     m.ss = [outKey: fromHex(cfg.outKey as String), inKey: fromHex(cfg.inKey as String), outCount: 0L, inCount: 0L]
     m.rx = ""; m.plain = ""
@@ -923,6 +944,7 @@ void chSendSync(String payloadHex) {
 void chClose() {
     Map m = mem()
     m.remove("open")
+    m.closingAt = now()
     try { interfaces.rawSocket.close() } catch (e) { }
 }
 
@@ -931,6 +953,7 @@ private void chSocketStatus(String s) {
     if (!m.open) return
     String l = s?.toLowerCase() ?: ""
     if (!(l.contains("error") || l.contains("closed") || l.contains("disconnect"))) return
+    if (m.closingAt && now() - (m.closingAt as long) < 3000) return
     m.remove("open")
     parent?.channelDown(m.kind as String, s)
 }
@@ -945,6 +968,7 @@ private void chParse(String hex) {
         m.plain = (m.plain ?: "") + toHex(d[0] as byte[])
         if (m.kind == "event") chEvents(m) else chData(m)
     } catch (e) {
+        if (m.closingAt && now() - (m.closingAt as long) < 3000) { m.rx = ""; m.plain = ""; return }   // tail of the swapped-out socket
         m.remove("open")
         parent?.channelDown(m.kind as String, "could not read a message: ${e.message}")
     }

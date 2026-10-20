@@ -1,4 +1,4 @@
-# Apple TV Now Playing (Beta) 1.2.0.6
+# Apple TV Now Playing (Beta) 1.2.0.7
 
 Lets Hubitat see what your Apple TV is doing: **which app** is playing (Netflix, Plex, YouTube...) and whether it's **playing or paused**. Some apps also share the title.
 
@@ -43,7 +43,9 @@ Pairing adds "Hubitat" to the Apple TV's list of remotes and devices. This pairi
 | `tvState` | `awake` or `asleep` |
 | `connection` | `connected`, `connecting`, `reconnecting`, `offline`, `disconnected` |
 
-The device also creates two hidden helper devices (event and data channels). Leave them alone. Removing the TV in the app removes them too.
+The device also creates a hidden helper device, "(link)", that holds the Now Playing connection. Leave it alone. Removing the TV in the app removes it too.
+
+**Helpers setting (testing in 1.2.0.7):** **One** (the default) uses a single helper per Apple TV. **Two** adds a second one, "(setup link)", the way earlier betas worked. If an Apple TV keeps dropping or going offline on One, set **Two** in the app and tell me. Changing it reconnects every Apple TV.
 
 ## Writing rules
 
@@ -54,8 +56,8 @@ Use **app and playback state together**, for example:
 
 Good to know:
 
-- **Leaving an app pauses it**, and **sleeping the TV pauses it**. "Paused" covers both.
-- **The home screen shows the last app as paused**, not "none".
+- **Leaving an app pauses it.** The home screen shows the last app as paused, not "none".
+- **Sleeping the TV clears it:** `currentApp` goes to `none`, `playbackState` to `stopped`, and title, artist and duration clear. Waking it shows the last app again, paused.
 - **`currentApp` is the last app that actually played.** When an app closes or the TV turns off, the Apple TV sometimes falls back to an older paused app. The device ignores that and keeps showing the app you were watching (as `stopped` if it closed completely). Another app only takes over once it starts playing.
 - **YouTube ads** show up as short items with the video's title.
 
@@ -63,13 +65,14 @@ Good to know:
 
 - **Pausing inside Plex may still show `playing`.** Plex doesn't always tell the Apple TV it paused. Leaving Plex or sleeping the TV shows `paused` correctly.
 - **The banner at the top of the app page** (counts like "1 connected") only updates when the page reloads. The Apple TV cards update live.
-- **Not tested yet:** what happens when an Apple TV gets a new IP address, and a hub reboot. Both should recover on their own. Please tell me if they don't.
+- **Not tested yet:** what happens when an Apple TV gets a new IP address. It should recover on its own. Please tell me if it doesn't.
 
 ## What I'd like to hear back
 
 - Your hub model (C-5, C-7, C-8, C-8 Pro), Apple TV model and tvOS version
 - Which apps worked, and which reported something odd
 - Whether it reconnects on its own after the TV sleeps overnight, and after a hub reboot
+- With Helpers on **One**: whether it stays connected for a day or more
 - Anything that looks off. Set **Log level** to **Full** in the app, reproduce it, and send the logs (Full turns itself off after 30 minutes)
 
 ## Updating
