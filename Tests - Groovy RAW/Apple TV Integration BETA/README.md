@@ -65,6 +65,7 @@ Good to know:
 
 - **Pausing inside Plex may still show `playing`.** Plex doesn't always tell the Apple TV it paused. Leaving Plex or sleeping the TV shows `paused` correctly.
 - **The banner at the top of the app page** (counts like "1 connected") only updates when the page reloads. The Apple TV cards update live.
+- **After a hub restart** each Apple TV reconnects on its own. If one didn't, the app reconnects it about a minute later.
 - **Not tested yet:** what happens when an Apple TV gets a new IP address. It should recover on its own. Please tell me if it doesn't.
 
 ## What I'd like to hear back

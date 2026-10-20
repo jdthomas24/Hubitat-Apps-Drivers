@@ -16,6 +16,7 @@
      -PIN box submits on change and is sent at the top of mainPage (text boxes aren't always saved when a
       button is clicked right after typing). Buttons pause so the page redraws after the TV replies.
      -Cards update live from the hub's /eventsocket feed (no page reload, so typing is never interrupted).
+     -Hub restart: devices reconnect from Initialize; 60s later the app asks each one to reconnect if it still isn't.
      -Helpers (one/two) is read by each device at connect; changing it reconnects every paired device.
      -Log level is pushed to every device; their lines appear under this app. Full turns off after 30 minutes.
      -UI follows HubitatAppUiTemplate (as Apple TV Integration 1.1.1).
@@ -68,7 +69,15 @@ def initialize() {
     pushLogLevel()
 }
 
-def systemStartHandler(evt) { startListener(true) }
+def systemStartHandler(evt) {
+    startListener(true)
+    runIn(60, "ensureConnected")   // backup for devices whose Initialize at boot didn't connect
+}
+
+def ensureConnected() {
+    Map creds = state.creds ?: [:]
+    getChildDevices().findAll { creds[it.deviceNetworkId] }.each { try { it.componentEnsureConnected() } catch (e) { } }
+}
 
 private void startListener(boolean force) {
     if (!force && state.listening) return

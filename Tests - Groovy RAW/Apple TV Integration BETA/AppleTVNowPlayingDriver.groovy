@@ -288,6 +288,15 @@ def healthCheck() {
     runIn(1, "connect")
 }
 
+// From the app, about a minute after a hub restart: reconnect if Initialize at boot didn't get a session going.
+void componentEnsureConnected() {
+    if (role() != "main") return
+    Map m = mem()
+    if (m.disabled || m.step in PAIR_STEPS || m.mrpStage == "READY" || m.step in SESSION_STEPS) return
+    logN("not connected after the hub restart, reconnecting")
+    reconnect()
+}
+
 void channelOrphan() { if (!(mem().step in SESSION_STEPS)) runIn(1, "healthCheck") }
 
 def connectTimeout() {
