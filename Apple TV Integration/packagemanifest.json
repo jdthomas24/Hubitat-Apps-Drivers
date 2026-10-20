@@ -1,10 +1,10 @@
 {
   "packageName": "Apple TV Integration",
-  "releaseNotes": "v1.1.5: Fixes an Apple TV that could stay stuck on \"connecting\" after a hub reboot or firmware update until Initialize was pressed. A stuck connect now retries on its own within 5 minutes, and logs a warning when it does. No Done needed. v1.1.4: Dark mode. The app follows the hub's light or dark theme (Hubitat 2.5.3+) and keeps its current look on older firmware. No Done needed. Coming in 1.2.0, after more testing: which app is playing on each Apple TV.",
+  "releaseNotes": "v1.1.6: Fixes the connection status staying on \"connecting\" after a hub reboot while the Apple TV was actually connected and working. The status is now corrected on the next health check (within 5 minutes). No Done needed. v1.1.5: Fixes an Apple TV that could stay stuck on \"connecting\" after a hub reboot or firmware update until Initialize was pressed. A stuck connect now retries on its own within 5 minutes, and logs a warning when it does. No Done needed. v1.1.4: Dark mode. The app follows the hub's light or dark theme (Hubitat 2.5.3+) and keeps its current look on older firmware. No Done needed. Coming in 1.2.0, after more testing: which app is playing on each Apple TV.",
   "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Apple%20TV%20Integration",
   "communityLink": "https://community.hubitat.com/t/166801",
   "author": "jdthomas24",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "minimumHEVersion": "2.3.0",
   "dateReleased": "2026-10-20",
   "category": "Integrations",

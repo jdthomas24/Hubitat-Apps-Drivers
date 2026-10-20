@@ -16,6 +16,8 @@
       stuck over 60s (a timeout lost to an interrupted thread or a firmware boot), logged as a warning.
      -socketStatus is handled on a scheduled thread (the hub may interrupt the socket's own thread), and
       retries and the connect timeout are scheduled before anything else that could fail.
+     -connection = "connected" is posted after the session is fully set up, and re-posted on every answered
+      health check, so a status update lost at boot can't leave it stuck on "connecting".
       on/off with no reply in 5s reconnects and retries once. Initialize reconnects after reboots.
      -Playback: play/pause/next/previous/skip via _mcc (MediaControl), buttons via HID press+release.
       transportStatus comes from the allowed-controls flags (_iMC _mcF or MediaControlStatus
@@ -59,7 +61,7 @@
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { return "1.1.5" }
+def version() { return "1.1.6" }
 
 metadata {
     definition(name: "Apple TV", namespace: "jdthomas24", author: "Jason Thomas", importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/AppleTVDriver.groovy") {
@@ -790,7 +792,7 @@ private void handleSessionFrame(Map m, byte[] header, byte[] payload) {
                 break
             case "attention":
             case "health":
-                if (label == "health") { m.remove("probeAt"); unschedule("healthTimeout") }
+                if (label == "health") { m.remove("probeAt"); unschedule("healthTimeout"); markConnected() }
                 if (msg._c instanceof Map && msg._c.state != null) setPower(msg._c.state as int, label == "health" ? "check" : "query")
                 break
             case "apps":
@@ -824,15 +826,22 @@ private void finishSetup(Map m) {
     unschedule("connectTimeout")
     boolean wasOffline = device.currentValue("connection") == "offline"
     m.failCount = 0
-    sendIfChanged("connection", "connected")
-    state.lastConnected = fmtNow()
-    if (wasOffline) slog("info", "back online")
-    else logN("connected")
     request("FetchAttentionState", [:], "attention")
     request("FetchLaunchableApplicationsEvent", [:], "apps")
     List q = (m.after ?: []) as List
     m.after = []
     q.each { runAction(it as String) }
+    markConnected()
+    state.lastConnected = fmtNow()
+    if (wasOffline) slog("info", "back online")
+    else logN("connected")
+}
+
+// Also called on each answered health check; if the first update was lost, this corrects it.
+private void markConnected() {
+    if (device.currentValue("connection") == "connected") return
+    if (mem().readyAt && now() - (mem().readyAt as long) > 10000) logE("connection status was out of date, corrected to connected")
+    sendIfChanged("connection", "connected")
 }
 
 private void request(String id, Map content, String label) {
