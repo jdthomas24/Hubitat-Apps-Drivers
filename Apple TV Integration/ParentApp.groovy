@@ -44,7 +44,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Apple TV Integration"
-@Field static final String APP_VERSION = "1.1.6"
+@Field static final String APP_VERSION = "1.1.7"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/166801"
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
@@ -94,7 +94,15 @@ def initialize() {
     pushLogLevel()
 }
 
-def systemStartHandler(evt) { startListener(true) }
+def systemStartHandler(evt) {
+    startListener(true)
+    runIn(60, "checkAfterRestart")   // boot connects can stall or lose their status; check each TV a minute in
+}
+
+def checkAfterRestart() {
+    Map creds = state.creds ?: [:]
+    getChildDevices().findAll { creds[it.deviceNetworkId] }.each { try { it.healthCheck() } catch (e) { } }
+}
 
 private void startListener(boolean force) {
     if (!force && state.listening && state.listeningRaop) return

@@ -16,6 +16,8 @@
       stuck over 60s (a timeout lost to an interrupted thread or a firmware boot), logged as a warning.
      -socketStatus is handled on a scheduled thread (the hub may interrupt the socket's own thread), and
       retries and the connect timeout are scheduled before anything else that could fail.
+     -The app runs healthCheck on every TV a minute after a hub restart, so a stalled boot connect or a lost
+      status update is fixed in about a minute instead of up to 5.
      -connection = "connected" is posted after the session is fully set up, and re-posted on every answered
       health check, so a status update lost at boot can't leave it stuck on "connecting".
       on/off with no reply in 5s reconnects and retries once. Initialize reconnects after reboots.
@@ -61,7 +63,7 @@
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { return "1.1.6" }
+def version() { return "1.1.7" }
 
 metadata {
     definition(name: "Apple TV", namespace: "jdthomas24", author: "Jason Thomas", importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/AppleTVDriver.groovy") {
