@@ -20,13 +20,18 @@
      -Now playing tracked per app like pyatv: clients by bundle ID, players by ID, active client from
       SET_NOW_PLAYING_CLIENT. Attributes publish 1s after the last change, so an app switch lands once.
       Leaving an app pauses it; the home screen shows the last app, paused. Asleep clears it (none, stopped).
+      After waking, and after every new connection, it stays none (idle) until an app actually plays: on connect
+      the Apple TV can report an old paused app (YouTube after Infuse had played, re-pair test 1.2.0.10).
+     -Hub load: no volume or keyboard updates are requested. Artwork updates stay on: with them off the Apple TV
+      sends no now-playing at all (tested 1.2.0.10). Output-device updates stay on (may carry awake/asleep). Once connected, only the message types in MRP_USED are decoded;
+      Full logging decodes everything. Connects start 3s + up to 12s by device id, so TVs don't all connect at once.
      -Session map is a ConcurrentHashMap: remove(), never "= null".
 */
 
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { "1.2.0.9" }
+def version() { "1.2.0.10" }
 
 metadata {
     definition(name: "Apple TV Now Playing (Beta)", namespace: "jdthomas24", author: "jdthomas24",
@@ -60,6 +65,10 @@ metadata {
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 @Field static final List PAIR_STEPS = ["PINSTART", "M2", "PIN", "M4", "M6"]
 @Field static final List SESSION_STEPS = ["PV2", "PV4", "SETUP", "EVENTCH", "RECORD", "SETUP2", "DATACH", "READY"]
+// ProtocolMessage types the driver uses once connected (SET_STATE, DEVICE_INFO, DEVICE_INFO_UPDATE,
+// SET_NOW_PLAYING_CLIENT/PLAYER, REMOVE_CLIENT, UPDATE_CLIENT, UPDATE_CONTENT_ITEM, PLAYER_CLIENT_PROPERTIES)
+@Field static final List MRP_USED = [4, 15, 37, 46, 47, 53, 55, 56, 104]
+@Field static final java.util.concurrent.ConcurrentHashMap<String, Object> ED_CACHE = new java.util.concurrent.ConcurrentHashMap()
 @Field static final Map HELPER_LABEL = [data: "link", event: "setup link"]
 @Field static final List KEEP = ["failCount", "creds", "disabled", "pub", "pairResult", "pairStatus"]
 @Field static final Map STATES = [Playing: "playing", Paused: "paused", Stopped: "stopped", Interrupted: "paused", Seeking: "playing"]
@@ -100,7 +109,7 @@ def initialize() {
     ["disabled", "mode", "pairResult", "pairStatus"].each { m.remove(it) }
     m.failCount = 0
     teardown()
-    runIn(3, "connect")
+    runIn(3 + (((device.id ?: "0").toString().replaceAll("[^0-9]", "") ?: "0").toLong() % 5) * 3, "connect")
 }
 
 def uninstalled() {
@@ -687,7 +696,7 @@ private void mrpNext(Map m) {
             mrpSend(m, "SET_CONNECTION_STATE_MESSAGE", null, ["setConnectionStateMessage": ["state": "Connected"]])
             m.mrpStage = "CONFIG"; m.mrpWait = id
             mrpSend(m, "CLIENT_UPDATES_CONFIG_MESSAGE", id, ["clientUpdatesConfigMessage": ["artworkUpdates": true,
-                "nowPlayingUpdates": false, "volumeUpdates": true, "keyboardUpdates": true, "outputDeviceUpdates": true]])
+                "nowPlayingUpdates": false, "volumeUpdates": false, "keyboardUpdates": false, "outputDeviceUpdates": true]])
             runIn(8, "mrpStageTimeout")
             break
         case "CONFIG":
@@ -701,6 +710,7 @@ private void mrpNext(Map m) {
             boolean wasOffline = device.currentValue("connection") == "offline"
             m.failCount = 0
             m.remove("pairResult"); m.remove("pairStatus")
+            m.waitPlay = true   // the Apple TV's reported app at connect can be stale; wait for one that plays
             sendIfChanged("connection", "connected")
             if (wasOffline) logE("back online")
             logN("connected to ${getDataValue('appleTvName') ?: state.ip}, keepalive every ${kaSec()}s")
@@ -735,6 +745,10 @@ void channelProtobuf(String hex) {
             p = r[1] as int
             one = cdSlice(data, p, Math.min(p + len, data.length)); p += len
         }
+        if (m.mrpStage == "READY" && lvl() < 2 && one.length > 1 && (one[0] & 0xFF) == 0x08) {
+            int t = (pbVarintRead(one, 1)[0] as long) as int
+            if (!(t in MRP_USED)) continue   // not needed: skip before decoding
+        }
         Map msg
         try { msg = pbDecode(one, "ProtocolMessage") } catch (e) { logF("Media Remote: couldn't decode a message: ${e.message}"); continue }
         mrpHandle(m, msg)
@@ -768,6 +782,7 @@ def tvAsleep() { setTv("asleep") }
 
 private void setTv(String v) {
     if (device.currentValue("tvState") == v) return
+    if (v == "asleep") mem().waitPlay = true   // after waking, show nothing until an app plays
     logN("Apple TV is ${v}")
     sendIfChanged("tvState", v)
     schedulePublish()
@@ -796,6 +811,7 @@ def publish() {
     int dur = 0
     if (np.duration != null) { double d = np.duration as double; if (!d.isNaN() && !d.isInfinite() && d > 0) dur = Math.round(d) as int }
     if (device.currentValue("tvState") == "asleep") { app = "none"; bundle = ""; st = "stopped"; title = ""; artist = ""; dur = 0 }
+    else if (m.waitPlay) { app = "none"; bundle = ""; st = "idle"; title = ""; artist = ""; dur = 0 }
     String sig = "${app}|${bundle}|${st}|${title}|${artist}|${dur}"
     if (sig == m.pub) return
     m.pub = sig
@@ -873,7 +889,7 @@ private void npUpdate(Map m, Map msg) {
     m.np = npShown(m)
 }
 
-private void npTake(Map m, String b) { m.owner = b; m.remove("ownerGone") }
+private void npTake(Map m, String b) { m.owner = b; m.remove("ownerGone"); m.remove("waitPlay") }
 
 private Map npShown(Map m) {
     if (m.owner) {
@@ -1394,15 +1410,15 @@ private long bpUInt(byte[] d, int p, int size) {
 /** Public key (32 bytes) for a 32-byte private seed. */
 byte[] ed25519PublicKey(byte[] seed) {
     def (BigInteger a, byte[] prefix) = edExpand(seed)
-    return edCompress(edMul(a, edBase()))
+    return edCompress(edBaseMul(a))
 }
 
 /** 64-byte signature of msg with a 32-byte private seed. */
 byte[] ed25519Sign(byte[] seed, byte[] msg) {
     def (BigInteger a, byte[] prefix) = edExpand(seed)
-    byte[] pub = edCompress(edMul(a, edBase()))
+    byte[] pub = edCompress(edBaseMul(a))
     BigInteger r = edLe(edSha512([prefix, msg])).mod(ED_L)
-    byte[] rs = edCompress(edMul(r, edBase()))
+    byte[] rs = edCompress(edBaseMul(r))
     BigInteger h = edLe(edSha512([rs, pub, msg])).mod(ED_L)
     BigInteger s = r.add(h.multiply(a)).mod(ED_L)
     return edConcat(rs, edToLe(s, 32))
@@ -1419,13 +1435,44 @@ boolean ed25519Verify(byte[] pub, byte[] msg, byte[] sig) {
     BigInteger s = edLe(edSlice(sig, 32, 64))
     if (s >= ED_L) return false
     BigInteger h = edLe(edSha512([rs, pub, msg])).mod(ED_L)
-    return edEqual(edMul(s, edBase()), edAdd(R, edMul(h, A)))
+    // s*B == R + h*A, as s*B + h*(-A) == R in one pass (Shamir)
+    List<BigInteger> negA = [ED_P.subtract(A[0]).mod(ED_P), A[1], A[2], ED_P.subtract(A[3]).mod(ED_P)]
+    return edEqual(edShamir(s, h, negA), R)
 }
 
 // Points are extended coordinates [X, Y, Z, T] with x = X/Z, y = Y/Z, x*y = T/Z.
 private List<BigInteger> edBase() {
+    List<BigInteger> b = (List) ED_CACHE.get("B")
+    if (b) return b
     BigInteger x = edRecoverX(ED_GY, 0)
-    return [x, ED_GY, BigInteger.ONE, x.multiply(ED_GY).mod(ED_P)]
+    b = [x, ED_GY, BigInteger.ONE, x.multiply(ED_GY).mod(ED_P)]
+    ED_CACHE.put("B", b)
+    return b
+}
+
+// s*B from a table of B*2^i, built once (additions only, no doublings). About 3x faster per connect.
+private List<BigInteger> edBaseMul(BigInteger s) {
+    List<List<BigInteger>> t = (List) ED_CACHE.get("T")
+    if (!t) {
+        t = []
+        List<BigInteger> R = edBase()
+        256.times { t << R; R = edAdd(R, R) }
+        ED_CACHE.put("T", t)
+    }
+    List<BigInteger> Q = [BigInteger.ZERO, BigInteger.ONE, BigInteger.ONE, BigInteger.ZERO]
+    for (int i = 0; i < 256; i++) if (s.testBit(i)) Q = edAdd(Q, t[i])
+    return Q
+}
+
+private List<BigInteger> edShamir(BigInteger s, BigInteger h, List<BigInteger> A) {
+    List<BigInteger> B = edBase(), BA = edAdd(B, A)
+    List<BigInteger> Q = [BigInteger.ZERO, BigInteger.ONE, BigInteger.ONE, BigInteger.ZERO]
+    for (int i = Math.max(s.bitLength(), h.bitLength()) - 1; i >= 0; i--) {
+        Q = edAdd(Q, Q)
+        boolean x = s.testBit(i), y = h.testBit(i)
+        if (x && y) Q = edAdd(Q, BA) else if (x) Q = edAdd(Q, B) else if (y) Q = edAdd(Q, A)
+    }
+    return Q
 }
 
 private List<BigInteger> edAdd(List<BigInteger> P, List<BigInteger> Q) {
