@@ -320,8 +320,8 @@ def mainPage(params = null) {
                 "<b>Full</b> adds protocol detail for troubleshooting and turns itself off after 30 minutes.</span>"
             input "helperMode", "enum", title: "Helpers", options: HELPER_MODES, defaultValue: "one", submitOnChange: true, width: 12,
                 style: "margin-left: 0.5em; margin-right: 0.5em; margin-top: 0; padding-right:0;"
-            paragraph "<span class='text-color-secondary' style='font-size:14px;'>Hidden devices that hold the extra connections. " +
-                "<b>One</b> is being tested for 1.2.0. If an Apple TV keeps dropping, set <b>Two</b>; changing it reconnects every Apple TV.</span>"
+            paragraph rawHtml: true, warningMessageHtml("<b>Beta testing only. Leave this on One.</b> Switch to <b>Two</b> only if an Apple TV " +
+                "keeps dropping or going offline, and let me know when you do. Changing it reconnects every Apple TV.")
             paragraph rawHtml: true, supportLinkHtml(COMMUNITY_URL, "pi pi-comments", "Hubitat Community", "Apple TV Integration thread")
         }
         section(sectionClass: "app-main-footer") {
