@@ -26,7 +26,7 @@
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { "1.2.0.7" }
+def version() { "1.2.0.8" }
 
 metadata {
     definition(name: "Apple TV Now Playing (Beta)", namespace: "jdthomas24", author: "jdthomas24",
@@ -322,15 +322,15 @@ private void scheduleRetry(String reason) {
     Map m = mem()
     int n = ((m.failCount ?: 0) as int) + 1
     m.failCount = n
+    int delay = RETRY_SEC[Math.min(n - 1, RETRY_SEC.size() - 1)] as int
+    runIn(delay, "connect")   // first, so nothing below can leave the device without a retry
     if (n == OFFLINE_AFTER) {
         sendIfChanged("connection", "offline")
         logE("offline (${reason}). Retrying every 5 minutes. Check that the Apple TV has power and is on the network." +
             (oneHelper() ? " If it stays online in the Apple TV Integration app, try Helpers: Two in this app." : ""))
     } else if (n < OFFLINE_AFTER) sendIfChanged("connection", "reconnecting")
     if (n >= 2) refreshAddress()
-    int delay = RETRY_SEC[Math.min(n - 1, RETRY_SEC.size() - 1)] as int
     logF("retry ${n} in ${delay}s (${reason})")
-    runIn(delay, "connect")
 }
 
 private void refreshAddress() {
@@ -433,7 +433,11 @@ private void sendCtl(byte[] b) {
     }
 }
 
-def socketStatus(String s) {
+// Handled on a scheduled thread: the hub may interrupt the socket's own thread while it closes.
+def socketStatus(String s) { runInMillis(50, "socketStatusLater", [data: [s: s], overwrite: false]) }
+
+def socketStatusLater(Map d) {
+    String s = d?.s as String
     if (role() != "main") { chSocketStatus(s); return }
     Map m = mem()
     logF("socket status: ${s}")
