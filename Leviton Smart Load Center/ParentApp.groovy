@@ -37,7 +37,7 @@ import groovy.json.JsonOutput
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Leviton Smart Load Center"
-@Field static final String APP_VERSION   = "2.0.0"
+@Field static final String APP_VERSION   = "2.0.1"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/release-leviton-smart-load-center/163950"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String API           = "https://my.leviton.com/api"

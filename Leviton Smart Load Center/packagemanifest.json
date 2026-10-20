@@ -1,50 +1,50 @@
 {
-    "packageName": "Leviton Smart Load Center",
-    "releaseNotes": "v2.0.0: Now an integration under Integrations. Sign in once in the app (your password stays in the app, not on a device page), then pick your panels and choose which breakers and CT clamps Hubitat creates. One device per panel, with its own voltage, frequency and total power. Signs itself back in when Leviton's 60-day sign-in expires, backs off when the Leviton cloud is down, and LDATA (1st gen) panels now get the backup refresh too. Far lighter on the hub: live values stay in memory and small power changes are skipped. One Log level for everything, and dark mode. Coming from 1.2.x: see the community thread before installing.",
-    "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Leviton%20Smart%20Load%20Center",
-    "communityLink": "https://community.hubitat.com/t/release-leviton-smart-load-center/163950",
-    "author": "jdthomas24",
-    "version": "2.0.0",
-    "minimumHEVersion": "2.3.0",
-    "dateReleased": "2026-10-19",
-    "category": "Integrations",
-    "tags": "Energy Monitoring",
-    "apps": [
-        {
-            "id": "ec1e14ef-9b21-40e4-8c19-b7dc234a7e80",
-            "name": "Leviton Smart Load Center",
-            "namespace": "jdthomas24",
-            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Leviton%20Smart%20Load%20Center/ParentApp.groovy",
-            "required": true,
-            "oauth": false,
-            "primary": true,
-            "description": "Signs in to My Leviton, finds your panels and lets you choose which breakers and CT clamps Hubitat creates."
-        }
-    ],
-    "drivers": [
-        {
-            "id": "869bddb0-e1f8-4ab8-a43a-f48e1ed7a380",
-            "name": "Leviton Smart Load Center Panel",
-            "namespace": "jdthomas24",
-            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Leviton%20Smart%20Load%20Center/PanelDriver.groovy",
-            "required": true,
-            "description": "One per panel: the Leviton cloud connection, plus panel voltage, frequency and total power. Created by the app."
-        },
-        {
-            "id": "0a03eaaa-bb6c-4bd1-9623-6ee9f5b67391",
-            "name": "Leviton Smart Load Center Breaker",
-            "namespace": "jdthomas24",
-            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Leviton%20Smart%20Load%20Center/BreakerDriver.groovy",
-            "required": true,
-            "description": "Smart breaker: power, current, voltage, energy and state, with optional trip and reset."
-        },
-        {
-            "id": "b9ad5f84-6da4-4647-a667-35396daf907a",
-            "name": "Leviton Smart Load Center CT",
-            "namespace": "jdthomas24",
-            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Leviton%20Smart%20Load%20Center/CTDriver.groovy",
-            "required": true,
-            "description": "CT clamp (Grid, Solar, Generator and so on): power, current and energy. LWHEM panels only."
-        }
-    ]
+  "packageName": "Leviton Smart Load Center",
+  "releaseNotes": "v2.0.1: Much lighter on the hub. The Panel now sends a breaker or CT only the values that actually changed, instead of every value on every update, so devices no longer re-read their own values. Whole-panel updates (after a reboot, and the regular refresh) go out in small batches, which stops the \"excessive hub load\" errors some hubs logged right after a reboot. Values and events are unchanged. No Done needed. v2.0.0: Now an integration under Integrations. Sign in once in the app (your password stays in the app, not on a device page), then pick your panels and choose which breakers and CT clamps Hubitat creates. One device per panel, with its own voltage, frequency and total power. Signs itself back in when Leviton's 60-day sign-in expires, backs off when the Leviton cloud is down, and LDATA (1st gen) panels now get the backup refresh too. Far lighter on the hub: live values stay in memory and small power changes are skipped. One Log level for everything, and dark mode. Coming from 1.2.x: see the community thread before installing.",
+  "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Leviton%20Smart%20Load%20Center",
+  "communityLink": "https://community.hubitat.com/t/release-leviton-smart-load-center/163950",
+  "author": "jdthomas24",
+  "version": "2.0.1",
+  "minimumHEVersion": "2.3.0",
+  "dateReleased": "2026-10-20",
+  "category": "Integrations",
+  "tags": "Energy Monitoring",
+  "apps": [
+    {
+      "id": "ec1e14ef-9b21-40e4-8c19-b7dc234a7e80",
+      "name": "Leviton Smart Load Center",
+      "namespace": "jdthomas24",
+      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Leviton%20Smart%20Load%20Center/ParentApp.groovy",
+      "required": true,
+      "oauth": false,
+      "primary": true,
+      "description": "Signs in to My Leviton, finds your panels and lets you choose which breakers and CT clamps Hubitat creates."
+    }
+  ],
+  "drivers": [
+    {
+      "id": "869bddb0-e1f8-4ab8-a43a-f48e1ed7a380",
+      "name": "Leviton Smart Load Center Panel",
+      "namespace": "jdthomas24",
+      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Leviton%20Smart%20Load%20Center/PanelDriver.groovy",
+      "required": true,
+      "description": "One per panel: the Leviton cloud connection, plus panel voltage, frequency and total power. Created by the app."
+    },
+    {
+      "id": "0a03eaaa-bb6c-4bd1-9623-6ee9f5b67391",
+      "name": "Leviton Smart Load Center Breaker",
+      "namespace": "jdthomas24",
+      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Leviton%20Smart%20Load%20Center/BreakerDriver.groovy",
+      "required": true,
+      "description": "Smart breaker: power, current, voltage, energy and state, with optional trip and reset."
+    },
+    {
+      "id": "b9ad5f84-6da4-4647-a667-35396daf907a",
+      "name": "Leviton Smart Load Center CT",
+      "namespace": "jdthomas24",
+      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Leviton%20Smart%20Load%20Center/CTDriver.groovy",
+      "required": true,
+      "description": "CT clamp (Grid, Solar, Generator and so on): power, current and energy. LWHEM panels only."
+    }
+  ]
 }

@@ -5,7 +5,8 @@
     Notes:
      -One device per CT clamp in use (Grid, Solar, Generator and so on), created by the Panel device (LWHEM only).
       Values come from the Panel through parse(). Power is negative while the source is generating.
-     -Events carry an optional delta: smaller changes are skipped (power threshold from the app).
+     -The Panel sends only values that changed past their threshold (2.0.1), so parse() posts them without
+      reading values back. Hubitat drops an event whose value didn't change.
      -Log level comes from the app through the Panel.
 */
 
@@ -27,7 +28,7 @@ metadata {
 
 import groovy.transform.Field
 
-@Field static final String VERSION     = "2.0.0"
+@Field static final String VERSION     = "2.0.1"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/t/release-leviton-smart-load-center/163950"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -47,26 +48,12 @@ def refresh() { parent?.restRefresh() }
 
 def parse(List<Map> events) {
     events.each { e ->
-        if (moved(device.currentValue(e.name as String), e.value, e.delta)) {
-            Map out = [name: e.name, value: e.value]
-            if (e.unit) out.unit = e.unit
-            sendEvent(out)
-        }
+        Map out = [name: e.name, value: e.value]
+        if (e.unit) out.unit = e.unit
+        sendEvent(out)
     }
 }
 
-private boolean moved(cur, val, delta) {
-    if (cur == null) return true
-    if (val instanceof Number) {
-        BigDecimal c
-        try { c = new BigDecimal(cur.toString()) } catch (e) { return true }
-        BigDecimal v = val as BigDecimal
-        if (v == c) return false
-        if (v == 0) return true
-        return (v - c).abs() >= ((delta ?: 0) as BigDecimal)
-    }
-    return cur.toString() != val.toString()
-}
 
 void setLogLevel(String level) {
     state.logLevel = LOG_LEVELS.contains(level) ? level : "Errors Only"

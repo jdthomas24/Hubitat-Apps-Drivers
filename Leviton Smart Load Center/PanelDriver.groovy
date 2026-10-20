@@ -18,6 +18,10 @@
       options and connection status.
      -Leg 2 positions swap power/power2 (and current, voltage). 2-pole current is the leg average, voltage the sum.
      -Small changes are not reported (power threshold from the app), which keeps event volume down.
+     -Hub load (2.0.1): the Panel remembers what it last sent each device (mem().sent, its own values in mem().pv)
+      and only calls a device with a real change, so devices never read their values back. Whole-panel messages
+      and the REST poll store values at once and send device updates 8 every 250 ms (a full panel at once tripped
+      the hub's load protection after a reboot).
      -Exclusions as in IntelliCenter: deleting a device from the Devices page excludes it; the app's Equipment
       page turns it back on.
      -Reconnect backoff 5 s to 5 min. A drop logs at Normal; still down after 4 tries warns once; recovery logs.
@@ -49,7 +53,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "2.0.0"
+@Field static final String VERSION     = "2.0.1"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/t/release-leviton-smart-load-center/163950"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -79,6 +83,9 @@ private Map mem() {
         m.br = new java.util.concurrent.ConcurrentHashMap()
         m.ct = new java.util.concurrent.ConcurrentHashMap()
         m.panel = new java.util.concurrent.ConcurrentHashMap()
+        m.sent = new java.util.concurrent.ConcurrentHashMap()
+        m.pv = new java.util.concurrent.ConcurrentHashMap()
+        m.pending = java.util.concurrent.ConcurrentHashMap.newKeySet()
         RUNTIME.put(k, m)
     }
     return m
@@ -327,9 +334,9 @@ private void handleNotification(Map n) {
         case "IotWhem":
         case "ResidentialBreakerPanel":
             def brs = d.ResidentialBreaker ?: d.residentialBreakers
-            if (brs instanceof List) { brs.each { if (it instanceof Map) breakerUpdate(it as Map, it.id) }; pushTotal() }
+            if (brs instanceof List) brs.each { if (it instanceof Map) breakerUpdate(it as Map, it.id, true) }
             def cts = d.IotCt ?: d.iotCts
-            if (cts instanceof List) cts.each { if (it instanceof Map) ctUpdate(it as Map, it.id) }
+            if (cts instanceof List) cts.each { if (it instanceof Map) ctUpdate(it as Map, it.id, true) }
             panelUpdate(d)
             break
         default:
@@ -454,7 +461,7 @@ def restRefresh() {
         def cts = apiGet("/IotWhems/${p.id}/iotCts", [filter: "{}"])
         if (cts instanceof List) ctsSnapshot(cts as List)
     }
-    pushTotal()
+    if (!mem().draining) pushTotal()
     stampUpdate()
     mem().polled = true
 }
@@ -510,7 +517,7 @@ private void breakersSnapshot(List list) {
         catalogPut(id, [k: "breaker", n: (raw.name ?: "Breaker ${pos}").toString(), pos: pos, leg: LEG1.contains(pos) ? 1 : 2,
                         poles: toInt(raw.poles) ?: 1, rating: raw.currentRating, model: model,
                         canOn: raw.canRemoteOn ? true : false])
-        breakerUpdate(raw as Map, id)
+        breakerUpdate(raw as Map, id, true)
     }
 }
 
@@ -521,11 +528,11 @@ private void ctsSnapshot(List list) {
         String id = raw.id?.toString()
         if (!id) return
         catalogPut(id, [k: "ct", n: prettyUsage(raw.usageType.toString()), ch: raw.channel?.toString() ?: "?"])
-        ctUpdate(raw as Map, id)
+        ctUpdate(raw as Map, id, true)
     }
 }
 
-private void breakerUpdate(Map d, modelId) {
+private void breakerUpdate(Map d, modelId, boolean defer = false) {
     String id = (d.id ?: modelId)?.toString()
     Map c = catalog()[id] as Map
     if (!c || c.k != "breaker") return
@@ -533,8 +540,7 @@ private void breakerUpdate(Map d, modelId) {
     Map lb = br[id] as Map
     if (lb == null) { lb = new java.util.concurrent.ConcurrentHashMap(); br[id] = lb }
     applyBreaker(lb, d, (c.leg ?: 1) as int, (c.poles ?: 1) as int)
-    def child = childFor("breaker", id, c)
-    if (child) child.parse(breakerEvents(lb))
+    if (defer) queue("breaker", id) else dispatch("breaker", id, c, breakerEvents(lb))
 }
 
 // Leg 2 positions report power/power2 (and current, voltage) the other way round.
@@ -593,7 +599,7 @@ private List breakerEvents(Map lb) {
     return ev
 }
 
-private void ctUpdate(Map d, modelId) {
+private void ctUpdate(Map d, modelId, boolean defer = false) {
     String id = (d.id ?: modelId)?.toString()
     Map c = catalog()[id] as Map
     if (!c || c.k != "ct") return
@@ -620,15 +626,57 @@ private void ctUpdate(Map d, modelId) {
         if (d.containsKey("energyImport2")) lc.i2 = num(d.energyImport2)
         lc.importEnergy = (lc.i1 ?: 0) + (lc.i2 ?: 0)
     }
-    def child = childFor("ct", id, c)
-    if (!child) return
+    if (defer) queue("ct", id) else dispatch("ct", id, c, ctEvents(lc))
+}
+
+private List ctEvents(Map lc) {
     BigDecimal pd = powerDelta()
     List ev = []
     if (lc.power != null)        ev << [name: "power", value: rnd(lc.power, 1), unit: "W", delta: pd]
     if (lc.current != null)      ev << [name: "amperage", value: rnd(lc.current, 2), unit: "A", delta: ampDelta(pd)]
     if (lc.energy != null)       ev << [name: "energy", value: rnd(lc.energy, 3), unit: "kWh"]
     if (lc.importEnergy != null) ev << [name: "energyImport", value: rnd(lc.importEnergy, 3), unit: "kWh"]
-    if (ev) child.parse(ev)
+    return ev
+}
+
+// Only values that moved past their threshold since the last send reach the device; unchanged devices aren't called.
+private void dispatch(String kind, String id, Map c, List ev) {
+    Map sent = mem().sent as Map
+    Map last = sent[id] as Map
+    if (last == null) { last = new java.util.concurrent.ConcurrentHashMap(); sent[id] = last }
+    List out = ev.findAll { e -> moved(last[e.name], e.value, e.delta) }
+    if (!out) return
+    def child = childFor(kind, id, c)
+    if (!child) return
+    child.parse(out.collect { e -> Map x = [name: e.name, value: e.value]; if (e.unit) x.unit = e.unit; x })
+    out.each { e -> last[e.name] = e.value }
+}
+
+// Whole-panel and REST updates: values are already stored; device updates go out 8 every 250 ms.
+private void queue(String kind, String id) {
+    Map m = mem()
+    (m.pending as Set).add("${kind}:${id}".toString())
+    if (!m.draining) { m.draining = true; runInMillis(250, "drainPending") }
+}
+
+def drainPending() {
+    Map m = mem()
+    Set p = m.pending as Set
+    List batch = []
+    for (k in p) { if (batch.size() >= 8) break; batch << k }
+    batch.each { String key ->
+        p.remove(key)
+        String kind = key.startsWith("ct:") ? "ct" : "breaker"
+        String id = key.substring(kind.length() + 1)
+        Map c = catalog()[id] as Map
+        Map live = ((kind == "ct" ? m.ct : m.br) as Map)[id] as Map
+        if (c && live) {
+            try { dispatch(kind, id, c, kind == "ct" ? ctEvents(live) : breakerEvents(live)) }
+            catch (e) { logF "update for ${id} failed: ${e.message}" }
+        }
+    }
+    if (p) runInMillis(250, "drainPending")
+    else { m.draining = false; pushTotal() }
 }
 
 private BigDecimal powerDelta() { (opt("powerDelta") ?: 0) as BigDecimal }
@@ -721,6 +769,7 @@ void setExcluded(List list) {
     state.excluded = want
     state.known = ((state.known ?: []) as List) - (old - want) - (want - old)
     mem().remove("skip")
+    (old - want).each { id -> (mem().sent as Map).remove(id) }
     (want - old).each { id ->
         def child = getChildDevices().find { it.deviceNetworkId.endsWith("-${id}") }
         if (child) {
@@ -764,10 +813,12 @@ boolean breakerCommand(String id, boolean on) {
 // ============================================================
 
 private void report(String name, value, String unit = null, BigDecimal delta = 0) {
-    if (!moved(device.currentValue(name), value, delta)) return
+    Map pv = mem().pv as Map
+    if (!moved(pv[name], value, delta)) return
     Map e = [name: name, value: value]
     if (unit) e.unit = unit
     sendEvent(e)
+    pv[name] = value
 }
 
 private boolean moved(cur, val, delta) {
