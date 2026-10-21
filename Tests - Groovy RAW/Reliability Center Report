@@ -1,0 +1,2128 @@
+{
+  "reportFormatVersion": 1,
+  "exportedAt": "2026-10-21T13:02:41.312Z",
+  "generatedAt": "2026-10-21T12:33:02+0000",
+  "thresholdHours": 24,
+  "monitoredDeviceCount": 106,
+  "findings": [
+    {
+      "findingType": "silentDevice",
+      "deviceId": 255,
+      "deviceName": "Back Porch Upper Plug ",
+      "deviceType": "Generic Zigbee Outlet",
+      "protocol": "Zigbee",
+      "lastCommunicationAt": "2024-11-02T23:03:19+0000",
+      "hoursSilent": 17221,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 178,
+      "deviceName": "LEDs Eave - Garage Side ",
+      "deviceType": "Generic Z-Wave Outlet",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-03-12T12:56:26+0000",
+      "hoursSilent": 5351,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 183,
+          "label": "Hubitat Z-Wave Mesh Details",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 256,
+      "deviceName": "Alarm Plug",
+      "deviceType": "Generic Z-Wave Switch",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-03-16T00:02:18+0000",
+      "hoursSilent": 5268,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 183,
+          "label": "Hubitat Z-Wave Mesh Details",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 182,
+      "deviceName": "Christmas LTs 2 Channel Plug - Attic",
+      "deviceType": "EVA LOGIK Smart Plug",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-08-16T20:00:54+0000",
+      "hoursSilent": 1576,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 183,
+          "label": "Hubitat Z-Wave Mesh Details",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 271,
+      "deviceName": "Jason's Button",
+      "deviceType": "Samsung Zigbee Button",
+      "protocol": "Zigbee",
+      "lastCommunicationAt": "2026-09-29T03:09:48+0000",
+      "hoursSilent": 537,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 499,
+          "label": "Battery",
+          "disabled": false
+        },
+        {
+          "id": 184,
+          "label": "Battery Alert <span style='color:orange'> Disarmed</span>",
+          "disabled": false
+        },
+        {
+          "id": 954,
+          "label": "Battery Monitor",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 283,
+          "label": "Garage Door Button",
+          "disabled": false
+        },
+        {
+          "id": 286,
+          "label": "Jason's Button: button 1 doubleTapped",
+          "disabled": false
+        },
+        {
+          "id": 287,
+          "label": "Jason's Button: button 1 held",
+          "disabled": false
+        },
+        {
+          "id": 284,
+          "label": "Jason's Button: button 1 pushed",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Wake the device manually and verify or replace its battery.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 73,
+      "deviceName": "Front Door Motion",
+      "deviceType": "SmartThings Motion Sensor Enhanced",
+      "protocol": "Zigbee",
+      "lastCommunicationAt": "2026-10-06T02:21:27+0000",
+      "hoursSilent": 370,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 314,
+          "label": "Alarm - Battery Devices <span class='text-hubitat-danger'>(Required Expression false)</span>",
+          "disabled": false
+        },
+        {
+          "id": 499,
+          "label": "Battery",
+          "disabled": false
+        },
+        {
+          "id": 184,
+          "label": "Battery Alert <span style='color:orange'> Disarmed</span>",
+          "disabled": false
+        },
+        {
+          "id": 954,
+          "label": "Battery Monitor",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        },
+        {
+          "id": 240,
+          "label": "Locks - FRONT DOOR",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Wake the device manually and verify or replace its battery.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 65,
+      "deviceName": "Office Fan",
+      "deviceType": "Generic Z-Wave DT Binary Switch",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-09T18:10:41+0000",
+      "hoursSilent": 282,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 391,
+          "label": "Fans -  Office Fan",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        },
+        {
+          "id": 183,
+          "label": "Hubitat Z-Wave Mesh Details",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 300,
+      "deviceName": "Guest Room Fan",
+      "deviceType": "Generic Z-Wave Plus Switch",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-14T00:00:05+0000",
+      "hoursSilent": 180,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 775,
+          "label": "Fans - Guest Room Auto Off",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 78,
+      "deviceName": "Foyer Shelf",
+      "deviceType": "Generic Z-Wave Smart Switch",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-15T23:00:14+0000",
+      "hoursSilent": 133,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        },
+        {
+          "id": 183,
+          "label": "Hubitat Z-Wave Mesh Details",
+          "disabled": false
+        },
+        {
+          "id": 215,
+          "label": "Lights - Exterior Night ",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 321,
+      "deviceName": "Living Room Fan",
+      "deviceType": "Leviton ZW4SF Fan Controller",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-16T02:00:08+0000",
+      "hoursSilent": 130,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 777,
+          "label": "Fans - Living Room Auto Off",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 319,
+      "deviceName": "Guest Room Light ",
+      "deviceType": "Leviton Z-Wave Plus Dimmer",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-16T03:58:50+0000",
+      "hoursSilent": 128,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        },
+        {
+          "id": 596,
+          "label": "Lights - Guest Room Auto Off",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 79,
+      "deviceName": "Foyer Light ",
+      "deviceType": "Generic Z-Wave Smart Switch",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-16T18:28:22+0000",
+      "hoursSilent": 114,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        },
+        {
+          "id": 183,
+          "label": "Hubitat Z-Wave Mesh Details",
+          "disabled": false
+        },
+        {
+          "id": 33,
+          "label": "Hubitat® Safety Monitor<span style='color:orange'> All Monitoring Disarmed</span>",
+          "disabled": true
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 68,
+      "deviceName": "Study ",
+      "deviceType": "Generic Z-Wave Smart Switch",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-17T04:47:48+0000",
+      "hoursSilent": 103,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        },
+        {
+          "id": 183,
+          "label": "Hubitat Z-Wave Mesh Details",
+          "disabled": false
+        },
+        {
+          "id": 33,
+          "label": "Hubitat® Safety Monitor<span style='color:orange'> All Monitoring Disarmed</span>",
+          "disabled": true
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 331,
+      "deviceName": "Kids Hall",
+      "deviceType": "Generic Z-Wave Smart Switch",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-17T14:39:36+0000",
+      "hoursSilent": 93,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 328,
+          "label": "Away Rule - Izzy Away",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 306,
+      "deviceName": "Bella Fan",
+      "deviceType": "Generic Z-Wave Plus Switch",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-17T22:34:56+0000",
+      "hoursSilent": 85,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 328,
+          "label": "Away Rule - Izzy Away",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 897,
+          "label": "Fans - Bella Room Auto Off <span class='text-hubitat-danger'>(Off Disabled)</span>",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        },
+        {
+          "id": 456,
+          "label": "Wake Up Rule - Bella <span class='text-hubitat-danger'>(Paused)</span>",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 192,
+      "deviceName": "Master Fan Light ",
+      "deviceType": "Leviton Z-Wave Plus Dimmer",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-17T23:52:05+0000",
+      "hoursSilent": 84,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        },
+        {
+          "id": 183,
+          "label": "Hubitat Z-Wave Mesh Details",
+          "disabled": false
+        },
+        {
+          "id": 595,
+          "label": "Lights - Master Auto Off <span class='text-hubitat-success'>(Active)</span>",
+          "disabled": false
+        },
+        {
+          "id": 405,
+          "label": "Scene Control - Master TV Evening ",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 501,
+      "deviceName": "Office Bathroom Fan",
+      "deviceType": "Generic Z-Wave Smart Switch",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-18T02:00:13+0000",
+      "hoursSilent": 82,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 404,
+          "label": "Fans - Bath Fans Auto Off",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 66,
+      "deviceName": "Den Light",
+      "deviceType": "Generic Z-Wave Smart Switch",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-18T05:00:11+0000",
+      "hoursSilent": 79,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        },
+        {
+          "id": 183,
+          "label": "Hubitat Z-Wave Mesh Details",
+          "disabled": false
+        },
+        {
+          "id": 33,
+          "label": "Hubitat® Safety Monitor<span style='color:orange'> All Monitoring Disarmed</span>",
+          "disabled": true
+        },
+        {
+          "id": 865,
+          "label": "Lights - Den Auto Off",
+          "disabled": false
+        },
+        {
+          "id": 868,
+          "label": "Scene Control - Sauna Scene",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 87,
+      "deviceName": "Back Porch Fans",
+      "deviceType": "Generic Z-Wave Smart Switch",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-18T05:00:16+0000",
+      "hoursSilent": 79,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 207,
+          "label": "Fans - Back Porch Fans",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        },
+        {
+          "id": 183,
+          "label": "Hubitat Z-Wave Mesh Details",
+          "disabled": false
+        },
+        {
+          "id": 880,
+          "label": "Kitchen",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 189,
+      "deviceName": "Master Hall",
+      "deviceType": "Generic Z-Wave Smart Switch",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-18T05:00:17+0000",
+      "hoursSilent": 79,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 896,
+          "label": "** Jennifer Curling Iron 3 <span class='text-hubitat-danger'>(Required Expression false)</span>",
+          "disabled": false
+        },
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        },
+        {
+          "id": 183,
+          "label": "Hubitat Z-Wave Mesh Details",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 327,
+      "deviceName": "Office Hall",
+      "deviceType": "Generic Z-Wave Smart Switch",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-18T05:00:14+0000",
+      "hoursSilent": 79,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 816,
+      "deviceName": "Printer",
+      "deviceType": "Generic Z-Wave Outlet",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-18T05:00:07+0000",
+      "hoursSilent": 79,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 323,
+      "deviceName": "Fan Light",
+      "deviceType": "Leviton Z-Wave Plus Dimmer",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-18T05:44:03+0000",
+      "hoursSilent": 78,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 177,
+      "deviceName": "Attic Fan",
+      "deviceType": "Generic Z-Wave Outlet",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-18T23:00:12+0000",
+      "hoursSilent": 61,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 806,
+          "label": "Fans - Attic",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        },
+        {
+          "id": 183,
+          "label": "Hubitat Z-Wave Mesh Details",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 320,
+      "deviceName": "Laundry Light",
+      "deviceType": "Generic Z-Wave Smart Switch",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-19T01:00:15+0000",
+      "hoursSilent": 59,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        },
+        {
+          "id": 571,
+          "label": "Lights - Laundry Auto Off",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 129,
+      "deviceName": "Master Bath Fan ",
+      "deviceType": "Generic Z-Wave Smart Switch",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-19T02:15:28+0000",
+      "hoursSilent": 58,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 404,
+          "label": "Fans - Bath Fans Auto Off",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        },
+        {
+          "id": 183,
+          "label": "Hubitat Z-Wave Mesh Details",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 304,
+      "deviceName": "Kids Bath Fan",
+      "deviceType": "Generic Z-Wave Smart Switch",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-19T08:00:05+0000",
+      "hoursSilent": 52,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 404,
+          "label": "Fans - Bath Fans Auto Off",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 414,
+      "deviceName": "Master Bath Cabinet Lights ",
+      "deviceType": "Generic Z-Wave Outlet",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-19T11:00:00+0000",
+      "hoursSilent": 49,
+      "thresholdHours": 24,
+      "severity": "critical",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        },
+        {
+          "id": 417,
+          "label": "Lights - Cabinet LT Charging",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 190,
+      "deviceName": "Mantle Light ",
+      "deviceType": "Generic Z-Wave Smart Switch",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-19T22:17:49+0000",
+      "hoursSilent": 38,
+      "thresholdHours": 24,
+      "severity": "warning",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        },
+        {
+          "id": 183,
+          "label": "Hubitat Z-Wave Mesh Details",
+          "disabled": false
+        },
+        {
+          "id": 332,
+          "label": "Tesla - Charge Warning ",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 330,
+      "deviceName": "Office Light ",
+      "deviceType": "Leviton Z-Wave Plus Dimmer",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-20T05:00:05+0000",
+      "hoursSilent": 31,
+      "thresholdHours": 24,
+      "severity": "warning",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 370,
+          "label": "Air - Office",
+          "disabled": false
+        },
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 637,
+          "label": "Bedtime Scene (HE) <span class='text-hubitat-warning'>(Not Set)</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 391,
+          "label": "Fans -  Office Fan",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        },
+        {
+          "id": 572,
+          "label": "Lights - Office Desks",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    },
+    {
+      "findingType": "silentDevice",
+      "deviceId": 76,
+      "deviceName": "Front Porch Light",
+      "deviceType": "Generic Z-Wave Smart Switch",
+      "protocol": "Z-Wave",
+      "lastCommunicationAt": "2026-10-20T09:13:48+0000",
+      "hoursSilent": 27,
+      "thresholdHours": 24,
+      "severity": "warning",
+      "evidenceSource": "Last device activity",
+      "expectedWakeupIntervalSeconds": null,
+      "missedWakeups": null,
+      "affectedApps": [
+        {
+          "id": 1062,
+          "label": "Alarm - Window after bedtime <span class='text-hubitat-danger'>(Required Expression false)</span>",
+          "disabled": false
+        },
+        {
+          "id": 114,
+          "label": "Amazon Echo Skill",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 228,
+          "label": "HomeKit Bridge",
+          "disabled": false
+        },
+        {
+          "id": 183,
+          "label": "Hubitat Z-Wave Mesh Details",
+          "disabled": false
+        },
+        {
+          "id": 1097,
+          "label": "Lights - Front Door Motion",
+          "disabled": false
+        }
+      ],
+      "recommendations": [
+        "Verify that the device has power before changing its hub configuration.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ]
+    }
+  ],
+  "appFindings": [
+    {
+      "findingType": "missingSubscriptions",
+      "title": "Alarm - Smoke Detected <span class='text-hubitat-danger'>(Required Expression false)</span> has no automatic trigger evidence",
+      "appId": 220,
+      "appName": "Alarm - Smoke Detected <span class='text-hubitat-danger'>(Required Expression false)</span>",
+      "appType": "Rule-5.1",
+      "severity": "warning",
+      "explanation": "This enabled rule has no event subscriptions or pending schedules. This can be normal for a rule run manually or by another app.",
+      "recommendations": [
+        "Review whether the rule should have an automatic trigger.",
+        "If an automatic trigger is expected, review the rule definition and its status page."
+      ],
+      "metrics": [
+        {
+          "label": "Event subscriptions",
+          "value": "None"
+        },
+        {
+          "label": "Pending schedules",
+          "value": "None"
+        }
+      ]
+    },
+    {
+      "findingType": "missingSubscriptions",
+      "title": "Ricky - Needs Filter Cleaned has no automatic trigger evidence",
+      "appId": 1026,
+      "appName": "Ricky - Needs Filter Cleaned",
+      "appType": "Rule-5.1",
+      "severity": "warning",
+      "explanation": "This enabled rule has no event subscriptions or pending schedules. This can be normal for a rule run manually or by another app.",
+      "recommendations": [
+        "Review whether the rule should have an automatic trigger.",
+        "If an automatic trigger is expected, review the rule definition and its status page."
+      ],
+      "metrics": [
+        {
+          "label": "Event subscriptions",
+          "value": "None"
+        },
+        {
+          "label": "Pending schedules",
+          "value": "None"
+        }
+      ]
+    }
+  ],
+  "generalFindings": [
+    {
+      "id": "device:offline:447",
+      "findingType": "offline",
+      "deviceId": 447,
+      "title": "Garage Motion Test (LARGE SIDE) is reporting offline",
+      "severity": "critical",
+      "explanation": "The driver has reported a communications failure or offline health state.",
+      "subtitle": "Tuya Zigbee mmWave Sensor · Zigbee",
+      "observedAt": "2026-10-20T17:02:37+0000",
+      "metrics": [
+        {
+          "label": "Health status",
+          "value": "offline"
+        },
+        {
+          "label": "Network status",
+          "value": "Unknown"
+        },
+        {
+          "label": "Communications error",
+          "value": "Unknown"
+        }
+      ],
+      "recommendations": [
+        "Wake the device manually and verify or replace its battery.",
+        "Review the device's radio route, signal, and recent communication history.",
+        "Open each affected automation and confirm it behaves safely while the device is unavailable."
+      ],
+      "affectedApps": [
+        {
+          "id": 184,
+          "label": "Battery Alert <span style='color:orange'> Disarmed</span>",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "id": "device:network:1454",
+      "findingType": "missingIp",
+      "deviceId": 1454,
+      "title": "Generic Matter Switch has no known IP address",
+      "severity": "critical",
+      "explanation": "The integration currently has no address for this device. Discovery or reconnection may be needed. The Matter controller also requires subscription recovery. The driver also reports a communications failure or offline state.",
+      "subtitle": "Generic Matter Switch · Matter",
+      "observedAt": "2026-10-21T12:33:02+0000",
+      "metrics": [
+        {
+          "label": "IP address",
+          "value": "Not available"
+        },
+        {
+          "label": "Matter service",
+          "value": "Online"
+        },
+        {
+          "label": "Matter subscription",
+          "value": "Recovery required"
+        },
+        {
+          "label": "Driver reports offline",
+          "value": "Yes"
+        }
+      ],
+      "recommendations": [
+        "Check device power and network connectivity.",
+        "Review Matter Details and hub logs. Scan again to see whether subscription recovery clears."
+      ],
+      "affectedApps": []
+    },
+    {
+      "id": "device:lowBattery:271",
+      "findingType": "lowBattery",
+      "deviceId": 271,
+      "title": "Jason's Button battery is 0%",
+      "severity": "critical",
+      "explanation": "The latest battery report is below the configured Reliability Center threshold.",
+      "subtitle": "Samsung Zigbee Button · Zigbee",
+      "observedAt": "2026-09-29T03:09:48+0000",
+      "metrics": [
+        {
+          "label": "Battery",
+          "value": "0%"
+        },
+        {
+          "label": "Warning threshold",
+          "value": "20%"
+        }
+      ],
+      "recommendations": [
+        "Wake the device and verify the battery report.",
+        "Replace the battery if the reading remains low."
+      ],
+      "affectedApps": [
+        {
+          "id": 499,
+          "label": "Battery",
+          "disabled": false
+        },
+        {
+          "id": 184,
+          "label": "Battery Alert <span style='color:orange'> Disarmed</span>",
+          "disabled": false
+        },
+        {
+          "id": 954,
+          "label": "Battery Monitor",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 283,
+          "label": "Garage Door Button",
+          "disabled": false
+        },
+        {
+          "id": 286,
+          "label": "Jason's Button: button 1 doubleTapped",
+          "disabled": false
+        },
+        {
+          "id": 287,
+          "label": "Jason's Button: button 1 held",
+          "disabled": false
+        },
+        {
+          "id": 284,
+          "label": "Jason's Button: button 1 pushed",
+          "disabled": false
+        }
+      ]
+    },
+    {
+      "id": "device:zigbeeWeakLink:451",
+      "findingType": "zigbeeWeakLink",
+      "deviceId": 451,
+      "title": "Office Motion MMW has weak Zigbee link quality",
+      "severity": "warning",
+      "explanation": "Both cached final-hop RSSI and LQI crossed the configured warning thresholds.",
+      "subtitle": "Tuya Zigbee mmWave Sensor · Zigbee",
+      "observedAt": "2026-10-21T12:31:58+0000",
+      "metrics": [
+        {
+          "label": "Last-hop RSSI",
+          "value": "-85 dBm"
+        },
+        {
+          "label": "Last-hop LQI",
+          "value": "60 / 255"
+        }
+      ],
+      "recommendations": [
+        "Collect additional samples before moving hardware.",
+        "Check powered Zigbee repeaters and nearby 2.4 GHz interference."
+      ],
+      "affectedApps": [
+        {
+          "id": 370,
+          "label": "Air - Office",
+          "disabled": false
+        },
+        {
+          "id": 184,
+          "label": "Battery Alert <span style='color:orange'> Disarmed</span>",
+          "disabled": false
+        },
+        {
+          "id": 1015,
+          "label": "Device Health Monitor",
+          "disabled": false
+        },
+        {
+          "id": 572,
+          "label": "Lights - Office Desks",
+          "disabled": false
+        }
+      ]
+    }
+  ],
+  "history": [
+    {
+      "id": "device:silentDevice:255:1792505220047",
+      "findingId": "device:silentDevice:255",
+      "findingType": "silentDevice",
+      "title": "Back Porch Upper Plug  stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:178:1792505220047",
+      "findingId": "device:silentDevice:178",
+      "findingType": "silentDevice",
+      "title": "LEDs Eave - Garage Side  stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:256:1792505220047",
+      "findingId": "device:silentDevice:256",
+      "findingType": "silentDevice",
+      "title": "Alarm Plug stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:182:1792505220047",
+      "findingId": "device:silentDevice:182",
+      "findingType": "silentDevice",
+      "title": "Christmas LTs 2 Channel Plug - Attic stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:271:1792505220047",
+      "findingId": "device:silentDevice:271",
+      "findingType": "silentDevice",
+      "title": "Jason's Button stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:73:1792505220047",
+      "findingId": "device:silentDevice:73",
+      "findingType": "silentDevice",
+      "title": "Front Door Motion stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:65:1792505220047",
+      "findingId": "device:silentDevice:65",
+      "findingType": "silentDevice",
+      "title": "Office Fan stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:300:1792505220047",
+      "findingId": "device:silentDevice:300",
+      "findingType": "silentDevice",
+      "title": "Guest Room Fan stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:78:1792505220047",
+      "findingId": "device:silentDevice:78",
+      "findingType": "silentDevice",
+      "title": "Foyer Shelf stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:321:1792505220047",
+      "findingId": "device:silentDevice:321",
+      "findingType": "silentDevice",
+      "title": "Living Room Fan stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:319:1792505220047",
+      "findingId": "device:silentDevice:319",
+      "findingType": "silentDevice",
+      "title": "Guest Room Light  stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:79:1792505220047",
+      "findingId": "device:silentDevice:79",
+      "findingType": "silentDevice",
+      "title": "Foyer Light  stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:68:1792505220047",
+      "findingId": "device:silentDevice:68",
+      "findingType": "silentDevice",
+      "title": "Study  stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:331:1792505220047",
+      "findingId": "device:silentDevice:331",
+      "findingType": "silentDevice",
+      "title": "Kids Hall stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:306:1792505220047",
+      "findingId": "device:silentDevice:306",
+      "findingType": "silentDevice",
+      "title": "Bella Fan stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:192:1792505220047",
+      "findingId": "device:silentDevice:192",
+      "findingType": "silentDevice",
+      "title": "Master Fan Light  stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:501:1792505220047",
+      "findingId": "device:silentDevice:501",
+      "findingType": "silentDevice",
+      "title": "Office Bathroom Fan stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:66:1792505220047",
+      "findingId": "device:silentDevice:66",
+      "findingType": "silentDevice",
+      "title": "Den Light stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:87:1792505220047",
+      "findingId": "device:silentDevice:87",
+      "findingType": "silentDevice",
+      "title": "Back Porch Fans stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:189:1792505220047",
+      "findingId": "device:silentDevice:189",
+      "findingType": "silentDevice",
+      "title": "Master Hall stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:327:1792505220047",
+      "findingId": "device:silentDevice:327",
+      "findingType": "silentDevice",
+      "title": "Office Hall stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:816:1792505220047",
+      "findingId": "device:silentDevice:816",
+      "findingType": "silentDevice",
+      "title": "Printer stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:323:1792505220047",
+      "findingId": "device:silentDevice:323",
+      "findingType": "silentDevice",
+      "title": "Fan Light stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:177:1792505220047",
+      "findingId": "device:silentDevice:177",
+      "findingType": "silentDevice",
+      "title": "Attic Fan stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:320:1792505220047",
+      "findingId": "device:silentDevice:320",
+      "findingType": "silentDevice",
+      "title": "Laundry Light stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:129:1792505220047",
+      "findingId": "device:silentDevice:129",
+      "findingType": "silentDevice",
+      "title": "Master Bath Fan  stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:304:1792505220047",
+      "findingId": "device:silentDevice:304",
+      "findingType": "silentDevice",
+      "title": "Kids Bath Fan stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:414:1792505220047",
+      "findingId": "device:silentDevice:414",
+      "findingType": "silentDevice",
+      "title": "Master Bath Cabinet Lights  stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:network:1454:1792505220047",
+      "findingId": "device:network:1454",
+      "findingType": "missingIp",
+      "title": "Generic Matter Switch has no known IP address",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:lowBattery:271:1792505220047",
+      "findingId": "device:lowBattery:271",
+      "findingType": "lowBattery",
+      "title": "Jason's Button battery is 0%",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:offline:447:1792516020058",
+      "findingId": "device:offline:447",
+      "findingType": "offline",
+      "title": "Garage Motion Test (LARGE SIDE) is reporting offline",
+      "firstSeenAt": 1792516020058,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:190:1792537620083",
+      "findingId": "device:silentDevice:190",
+      "findingType": "silentDevice",
+      "title": "Mantle Light  stopped communicating",
+      "firstSeenAt": 1792537620083,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "app:missingSubscriptions:220:1792541220050",
+      "findingId": "app:missingSubscriptions:220",
+      "findingType": "missingSubscriptions",
+      "title": "Alarm - Smoke Detected <span class='text-hubitat-danger'>(Required Expression false)</span> has no automatic trigger evidence",
+      "firstSeenAt": 1792541220050,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "app:missingSubscriptions:1026:1792541220050",
+      "findingId": "app:missingSubscriptions:1026",
+      "findingType": "missingSubscriptions",
+      "title": "Ricky - Needs Filter Cleaned has no automatic trigger evidence",
+      "firstSeenAt": 1792541220050,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:330:1792559220052",
+      "findingId": "device:silentDevice:330",
+      "findingType": "silentDevice",
+      "title": "Office Light  stopped communicating",
+      "firstSeenAt": 1792559220052,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:76:1792577220061",
+      "findingId": "device:silentDevice:76",
+      "findingType": "silentDevice",
+      "title": "Front Porch Light stopped communicating",
+      "firstSeenAt": 1792577220061,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:zigbeeWeakLink:451:1792585982024",
+      "findingId": "device:zigbeeWeakLink:451",
+      "findingType": "zigbeeWeakLink",
+      "title": "Office Motion MMW has weak Zigbee link quality",
+      "firstSeenAt": 1792585982024,
+      "lastSeenAt": 1792585982024,
+      "resolvedAt": null
+    },
+    {
+      "id": "device:silentDevice:696:1792505220047",
+      "findingId": "device:silentDevice:696",
+      "findingType": "silentDevice",
+      "title": "Kitchen sink LTS stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585541166,
+      "resolvedAt": 1792585982024
+    },
+    {
+      "id": "device:silentDevice:433:1792505220047",
+      "findingId": "device:silentDevice:433",
+      "findingType": "silentDevice",
+      "title": "Heat Trace for Water stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792585541166,
+      "resolvedAt": 1792585982024
+    },
+    {
+      "id": "device:zigbeeWeakLink:250:1792584420039",
+      "findingId": "device:zigbeeWeakLink:250",
+      "findingType": "zigbeeWeakLink",
+      "title": "Master Bath Sink 2 has weak Zigbee link quality",
+      "firstSeenAt": 1792584420039,
+      "lastSeenAt": 1792584420039,
+      "resolvedAt": 1792585541166
+    },
+    {
+      "id": "device:zigbeeWeakLink:691:1792548420062",
+      "findingId": "device:zigbeeWeakLink:691",
+      "findingType": "zigbeeWeakLink",
+      "title": "Back Porch Motion 3 has weak Zigbee link quality",
+      "firstSeenAt": 1792548420062,
+      "lastSeenAt": 1792555620067,
+      "resolvedAt": 1792559220052
+    },
+    {
+      "id": "device:zigbeeWeakLink:763:1792552020080",
+      "findingId": "device:zigbeeWeakLink:763",
+      "findingType": "zigbeeWeakLink",
+      "title": "Kids Bath Motion has weak Zigbee link quality",
+      "firstSeenAt": 1792552020080,
+      "lastSeenAt": 1792552020080,
+      "resolvedAt": 1792555620067
+    },
+    {
+      "id": "device:silentDevice:388:1792505220047",
+      "findingId": "device:silentDevice:388",
+      "findingType": "silentDevice",
+      "title": "Garage Hall  stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792541220050,
+      "resolvedAt": 1792544820062
+    },
+    {
+      "id": "app:missingSubscriptions:220:1792505220047",
+      "findingId": "app:missingSubscriptions:220",
+      "findingType": "missingSubscriptions",
+      "title": "Alarm - Smoke Detected <span class='text-hubitat-danger'>(Required Expression false)</span> has no automatic trigger evidence",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792534020076,
+      "resolvedAt": 1792537620083
+    },
+    {
+      "id": "app:missingSubscriptions:1026:1792505220047",
+      "findingId": "app:missingSubscriptions:1026",
+      "findingType": "missingSubscriptions",
+      "title": "Ricky - Needs Filter Cleaned has no automatic trigger evidence",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792534020076,
+      "resolvedAt": 1792537620083
+    },
+    {
+      "id": "device:silentDevice:447:1792505220047",
+      "findingId": "device:silentDevice:447",
+      "findingType": "silentDevice",
+      "title": "Garage Motion Test (LARGE SIDE) stopped communicating",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792512420076,
+      "resolvedAt": 1792516020058
+    },
+    {
+      "id": "device:zigbeeWeakLink:445:1792505220047",
+      "findingId": "device:zigbeeWeakLink:445",
+      "findingType": "zigbeeWeakLink",
+      "title": "Garage Test Motion (SMALL SIDE) has weak Zigbee link quality",
+      "firstSeenAt": 1792505220047,
+      "lastSeenAt": 1792505220047,
+      "resolvedAt": 1792508820073
+    }
+  ],
+  "settings": {
+    "backgroundMonitoringEnabled": true,
+    "checkinThresholdHours": 24,
+    "lowBatteryWarningPercent": 20,
+    "lowBatteryCriticalPercent": 10,
+    "zWaveWeakRssiThreshold": -90,
+    "zWaveRouteChangesThreshold": 10,
+    "zigbeeWeakRssiThreshold": -85,
+    "zigbeeWeakLqiThreshold": 80,
+    "excludedDeviceIds": [],
+    "snoozedUntil": {}
+  },
+  "backgroundMonitoringEnabled": true,
+  "backgroundScanIntervalHours": 1,
+  "lastBackgroundScanAt": "2026-10-21T12:07:01+0000",
+  "scanDurationMillis": 887,
+  "manualDeviceTests": []
+}
