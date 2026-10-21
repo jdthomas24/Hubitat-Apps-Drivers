@@ -1,10 +1,11 @@
 /**
  * Reolink Camera (Component Driver)
- * Version: 1.6.13
+ * Version: 1.6.14
  *
  * No HTTP of its own: everything goes through parent.componentX(this, ...), using the sourceId
  * and channel data values.
  *
+ * v1.6.14 -- parseReolinkState and markAsleep return true so the app can tell when the hub turns a call away.
  * v1.6.13 -- Version sync (dark mode is in the app).
  * v1.6.12 -- Version sync.
  * v1.6.11 -- spotlight changes only when the camera accepts (receiveSpotlight()).
@@ -529,6 +530,7 @@ def parseReolinkState(aiState, mdState, String source = "poll") {
     if (pkgActive) activeTypes << "package"
 
     updateLastMotion(wasActive, activeTypes)
+    return true
 }
 
 private boolean anyMotionActive() {
@@ -562,6 +564,7 @@ private void sendIfChanged(String name, value) {
  */
 def markAsleep() {
     sendIfChanged("sleepStatus", "asleep")
+    return true
 }
 
 def receiveSnapshotUrl(url) {

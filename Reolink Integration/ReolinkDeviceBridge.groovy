@@ -1,11 +1,12 @@
 /**
  * Reolink Device Bridge (Internal Parent Driver)
- * Version: 1.6.13
+ * Version: 1.6.14
  *
  * Not user-facing. One per source, managed by the app. Holds the Baichuan TCP event subscription
  * (cmd_id 31) and is the parent of that source's Camera/Doorbell devices (Hubitat only nests
  * device-owned children). componentX() calls from children pass straight up to the app.
  *
+ * v1.6.14 -- Version sync (hub load changes are in the app).
  * v1.6.13 -- Version sync (dark mode is in the app).
  * v1.6.12 -- Version sync (the app splits event status/AItype lists).
  * v1.6.11 -- Events stopped decoding if the in-memory AES key was cleared on a live connection

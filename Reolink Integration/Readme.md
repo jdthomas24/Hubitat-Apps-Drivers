@@ -48,7 +48,7 @@ The Device Bridge has Recording (the master record switch, same as On/Off), Push
 - **Sources.** A source is anything with its own IP and login: a standalone camera, an NVR or a Home Hub. A Hub or NVR has one channel per paired camera; a standalone camera has one channel.
 - **Reolink Device Bridge.** Each source gets a bridge device that holds its live event connection and is the parent of its camera and doorbell devices, so they group together in the Devices list. Standalone cameras' bridges group under a single "Reolink Standalone Devices" device.
 - **The app** (ParentApp.groovy) handles login, discovery, polling and every camera command. The camera and doorbell drivers are thin and pass everything to the app.
-- **Hub health.** One central scheduler times all polling and skips any source with a healthy event connection. Battery devices poll slowly by default, since polling harder doesn't get fresher data and only costs battery.
+- **Hub health.** One central scheduler times all polling and skips any source with a healthy event connection. While a source falls back to polling, each device polls at most every 30 seconds and refreshes its snapshot at most every 5 minutes; a source with event mode turned off uses its own intervals. Event connections start one at a time, and if the hub limits the app for load, it pauses polling for a few minutes instead of retrying into it. Battery devices poll slowly by default, since polling harder doesn't get fresher data and only costs battery.
 
 ## Installation
 

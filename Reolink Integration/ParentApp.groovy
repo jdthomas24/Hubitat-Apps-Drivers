@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.6.13
+ * Version: 1.6.14
  *
  * A "source" is anything answering the Reolink HTTP/JSON API (standalone camera, NVR or Home Hub),
  * each with its own IP and login; NVR/Hub channels are 0..N-1, a standalone camera is channel 0.
@@ -11,6 +11,11 @@
  * device (wired 2-5s, battery loose). Device quirks live in the README and Tips page. TODO markers
  * flag API names still to verify against firmware. Full history is in GitHub commit history.
  *
+ * v1.6.14 -- Hub load: backs off for a few minutes when the hub limits the app instead
+ *    of retrying into it; event connections start one at a time, and a source isn't polled while its
+ *    connection is starting; while falling back to polling, polls are at least 30s apart and
+ *    snapshots 5 minutes; at most 2 fallback jobs per 2s tick (events-off sources keep their pace); only a real drop marks devices due now; a
+ *    failed snapshot no longer forces a re-login; a locked login (-506) waits out its unlock time; timing at Full.
  * v1.6.13 -- Dark mode (thanks @vurvantsev): hub theme classes, with a scoped light fallback
  *    (legacyLightThemeCss) for pre-2.5.3 firmware. Also fixed Find changed IP status box, Apply
  *    device changes button, Reconnecting status and the Advanced schedule warning pill.
@@ -89,7 +94,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.6.13"
+@Field static final String APP_VERSION = "1.6.14"
 
 // v1.6.5: power mode migration key; changing it re-runs migrateBatteryModes().
 @Field static final String POWER_MIGRATION_KEY = "batteryWired"
@@ -133,6 +138,14 @@ definition(
 
 // v1.6.2: scheduler tick rate while every source is event-connected (nothing to poll).
 @Field static final int IDLE_TICK_SEC = 30
+@Field static final int POLL_TICK_SEC = 2
+@Field static final int MAX_JOBS_PER_TICK = 2
+@Field static final long TICK_BUDGET_MS = 4000L
+@Field static final int FALLBACK_POLL_FLOOR_SEC = 30
+@Field static final int FALLBACK_SNAPSHOT_FLOOR_SEC = 300
+@Field static final int BRIDGE_START_GAP_SEC = 2
+@Field static final long BRIDGE_START_GRACE_MS = 30000L
+@Field static final List<Integer> LOAD_BACKOFF_MINUTES = [3, 5, 10, 15]
 
 // v1.6.4: minimum gap between app-driven retries of a source that isn't connected.
 @Field static final long EVENT_RETRY_INTERVAL_MS = 3600000L
@@ -718,7 +731,11 @@ private List tipsTopics() {
                 "get fresher data, it just drains the battery. This still holds behind a Hub, since you're " +
                 "asking the Hub for its last-known state, not the device directly.") + "</p>",
                 "<p>" + ("When a source's event connection is active/healthy, its children update in real time " +
-                "and polling is skipped entirely -- polling only resumes automatically if that connection drops.") + "</p>"
+                "and polling is skipped entirely -- polling only resumes automatically if that connection drops.") + "</p>",
+                "<p>" + ("<b>While falling back to polling,</b> each device is polled at most every 30 seconds and " +
+                "its snapshot refreshed at most every 5 minutes, whatever its own settings, to keep hub load down. " +
+                "A source with event mode turned off uses the device's own intervals. If the hub ever limits the " +
+                "app for load, it pauses polling for a few minutes and logs one warning.") + "</p>"
             ].join("")],
         [id: "events", label: "Event-driven updates", title: "Event-driven updates", group: "Devices & connections", icon: "pi-wifi",
             body: [
@@ -2405,6 +2422,12 @@ private String reolinkLogin(sourceId) {
         return src.token
     }
 
+    // v1.6.14: the camera locked its login; wait out its unlock time instead of retrying into it.
+    Long lockedUntil = ((state.loginLockUntil ?: [:])[sourceId.toString()] ?: 0) as Long
+    if (now() < lockedUntil) {
+        logFull "Reolink source ${sourceId}: login locked by the camera, ${(lockedUntil - now()).intdiv(1000)}s left"
+        return null
+    }
     logFull "Reolink source ${sourceId}: cached token missing/expired, logging in fresh"
     // The "action: 0" field some other commands send was never confirmed
     // against real hardware for Login specifically -- it was added purely
@@ -2457,6 +2480,11 @@ private String reolinkLogin(sourceId) {
             state.sources = (state.sources ?: []).collect { it.id == src.id ? src : it }
         }
         logNormal "Reolink source ${sourceId}: new token acquired, leaseTime=${leaseSec}s"
+        if (state.loginLockUntil?.containsKey(sourceId.toString())) {
+            def locks = state.loginLockUntil
+            locks.remove(sourceId.toString())
+            state.loginLockUntil = locks
+        }
         markSourceReachable(sourceId)
         recordLoginResult(sourceId, true)
     } else {
@@ -2464,8 +2492,31 @@ private String reolinkLogin(sourceId) {
         log.warn "Reolink source ${sourceId}: Login response parsed but no Token.name found (check " +
             "credentials) -- raw: ${resp?.toString()?.take(500)}"
         recordLoginResult(sourceId, false, loginFailureReason(resp))
+        noteLoginLock(sourceId, resp)
     }
     return token
+}
+
+/** v1.6.14: on "Login has been locked" (-506), no login attempts until the camera's unlock_time passes. */
+private void noteLoginLock(sourceId, resp) {
+    String raw = resp?.toString() ?: ""
+    if (!raw.contains("-506") && !raw.toLowerCase().contains("has been locked")) return
+    int sec = 300
+    int at = raw.indexOf("unlock_time")
+    if (at >= 0) {
+        String digits = ""
+        for (int i = at + 11; i < raw.length() && i < at + 24; i++) {
+            String c = raw.substring(i, i + 1)
+            if ("0123456789".contains(c)) digits += c
+            else if (digits) break
+        }
+        if (digits) sec = digits as Integer
+    }
+    def locks = state.loginLockUntil ?: [:]
+    locks[sourceId.toString()] = now() + (sec + 5) * 1000L
+    state.loginLockUntil = locks
+    log.warn "Reolink source ${sourceId}: the camera locked its login for ${sec}s after failed attempts. " +
+        "The app will wait that long before logging in again."
 }
 
 // ---------- Login status and password display (v1.6.6) ----------
@@ -2984,6 +3035,7 @@ def ensureSourceBridge(sourceId) {
     // v1.6.6: a live event connection logged in with the same credentials, so the login is good.
     if (alive == true) recordLoginResult(sourceId, true)
     if (wantEvent && !alive) {
+        noteBridgeStart(sourceId)
         bridge.startEventSubscription()
         logNormal(currentlyRunning ?
             "Reolink source ${sourceId}: event connection wasn't running (saved status '${currentStatus}'), starting it" :
@@ -3006,14 +3058,72 @@ def componentEventConnectionStatus(child, sourceId, String status) {
     if (prev != status) {
         logFull "Reolink source ${sourceId}: event connection ${status}"
     }
-    if (status != "connected") {
-        // Falling back to polling -- mark this source's children due
-        // immediately instead of waiting out whatever interval they were on,
-        // so there's no extra gap on top of the drop itself.
+    // v1.6.14: only a real drop (was connected) marks devices due now; a reconnect loop used to
+    // re-mark them on every attempt, so a wired camera polled every few seconds.
+    if (status != "connected" && prev == "connected") {
         childrenForSource(sourceId as Integer).each { markPollDueNow(it.deviceNetworkId) }
-        // v1.6.2: the scheduler may be idling at IDLE_TICK_SEC; resume 1s ticks now.
         runIn(1, "schedulerTick", [overwrite: true])
     }
+}
+
+/** v1.6.14: a source isn't polled for BRIDGE_START_GRACE_MS after its event connection starts. */
+private void noteBridgeStart(sourceId, Long at = null) {
+    def starts = state.bridgeStartAt ?: [:]
+    starts[sourceId.toString()] = at ?: now()
+    state.bridgeStartAt = starts
+}
+
+private boolean bridgeStarting(sourceId, long nowMs) {
+    def at = (state.bridgeStartAt ?: [:])[sourceId.toString()]
+    return at != null && nowMs < (at as Long) + BRIDGE_START_GRACE_MS
+}
+
+/** v1.6.14: starts one source's event connection per run, BRIDGE_START_GAP_SEC apart. */
+def startNextBridge() {
+    List q = new ArrayList((state.bridgeStartQueue ?: []) as List)
+    if (!q) return
+    def sid = q.remove(0)
+    state.bridgeStartQueue = q
+    long t0 = now()
+    try {
+        ensureSourceBridge(sid)
+    } catch (e) {
+        if (isLoadLimitError(e)) startLoadBackoff("starting source ${sid}")
+        else log.warn "Reolink source ${sid}: could not start the event connection -- ${e.message}"
+    }
+    logFull "Reolink source ${sid}: bridge start took ${now() - t0} ms"
+    if (q) runIn(BRIDGE_START_GAP_SEC, "startNextBridge", [overwrite: true])
+}
+
+/** v1.6.14: the hub's load limiter ("generates excessive hub load"). */
+private boolean isLoadLimitError(e) {
+    String s = e?.toString() ?: ""
+    return s.contains("LimitExceeded") || s.contains("excessive hub load")
+}
+
+private boolean inLoadBackoff(long nowMs) {
+    return nowMs < ((state.loadBackoffUntil ?: 0) as Long)
+}
+
+/** v1.6.14: pause polling and snapshots, longer each time it repeats (3, 5, 10, 15 minutes). */
+private void startLoadBackoff(String where) {
+    int level = Math.min(((state.loadBackoffLevel ?: 0) as Integer) + 1, LOAD_BACKOFF_MINUTES.size())
+    int minutes = LOAD_BACKOFF_MINUTES[level - 1]
+    state.loadBackoffLevel = level
+    state.loadBackoffUntil = now() + minutes * 60000L
+    log.warn "Reolink Integration: the hub is limiting this app for load (${where}). Pausing polling and " +
+        "snapshots for ${minutes} minutes. If this repeats, raise the poll and snapshot intervals and check " +
+        "that each source's event connection is up."
+}
+
+private int pollSeconds(child, boolean eventMode) {
+    int s = (child.getSetting("pollIntervalSec") ?: 30) as Integer
+    return eventMode ? Math.max(s, FALLBACK_POLL_FLOOR_SEC) : Math.max(s, 1)
+}
+
+private int snapshotSeconds(child, boolean eventMode) {
+    int s = (child.getSetting("snapshotIntervalSec") ?: 30) as Integer
+    return eventMode ? Math.max(s, FALLBACK_SNAPSHOT_FLOOR_SEC) : Math.max(s, 1)
 }
 
 /** True while a source's event connection is confirmed healthy -- schedulerTick() skips active polling for its children while this holds. */
@@ -3413,6 +3523,7 @@ def initializePolling() {
     def pollDue = state.nextPollDue ?: [:]
     def snapDue = state.nextSnapshotDue ?: [:]
     def battDue = state.nextBatteryCheckDue ?: [:]
+    List startQueue = []
     (state.sources ?: []).each { src ->
         // ensureSourceBridge() is only called here for a source that
         // ALREADY has a bridge -- calling it unconditionally for every
@@ -3423,9 +3534,12 @@ def initializePolling() {
         // with nothing selected yet stays completely untouched until real
         // intent exists via createSelectedChildren(), which is the only
         // place a bridge should ever get created.
-        if (!getSourceBridge(src.id)) return
-        def bridge = ensureSourceBridge(src.id)
-        bridge?.getChildDevices()?.each { child ->
+        def bridge = getSourceBridge(src.id)
+        if (!bridge) return
+        // v1.6.14: started one at a time by startNextBridge(), not all in this run.
+        noteBridgeStart(src.id, now + startQueue.size() * BRIDGE_START_GAP_SEC * 1000L)
+        startQueue << (src.id as Integer)
+        bridge.getChildDevices()?.each { child ->
             def dni = child.deviceNetworkId
             if (!pollDue.containsKey(dni)) pollDue[dni] = now
             if (!snapDue.containsKey(dni)) snapDue[dni] = now
@@ -3435,7 +3549,9 @@ def initializePolling() {
     state.nextPollDue = pollDue
     state.nextSnapshotDue = snapDue
     state.nextBatteryCheckDue = battDue
-    runIn(1, "schedulerTick", [overwrite: true])
+    state.bridgeStartQueue = startQueue
+    if (startQueue) runIn(1, "startNextBridge", [overwrite: true])
+    runIn(POLL_TICK_SEC, "schedulerTick", [overwrite: true])
 }
 
 /**
@@ -3455,6 +3571,7 @@ def initializePolling() {
  * markSourceUnreachable() elsewhere in this file.
  */
 def auditEventConnections() {
+    if (inLoadBackoff(now())) return
     (state.sources ?: []).each { src ->
         if (settings["useEventSubscription_${src.id}"] == false) return
         def bridge = getSourceBridge(src.id)
@@ -3504,6 +3621,7 @@ def auditEventConnections() {
 def retryStuckEventConnection(data) {
     def sourceId = data?.sourceId as Integer
     if (sourceId == null || settings["useEventSubscription_${sourceId}"] == false) return
+    if (inLoadBackoff(now())) return
     def bridge = getSourceBridge(sourceId)
     if (!bridge) return
     def alive = true
@@ -3541,12 +3659,21 @@ private void retryEventConnection(sourceId, String reason) {
  */
 def schedulerTick() {
     boolean anyPolling = false
+    boolean anyPollingOnly = false
+    boolean limited = false
     try {
         def nowMs = now()
+        // v1.6.14: the hub is limiting this app; stay quiet until the pause ends.
+        if (inLoadBackoff(nowMs)) {
+            limited = true
+            return
+        }
         def pollDue = state.nextPollDue ?: [:]
         def snapDue = state.nextSnapshotDue ?: [:]
         def battDue = state.nextBatteryCheckDue ?: [:]
         boolean dirty = false
+        int jobs = 0
+        String limitedAt = null
 
         // v1.6.5: run the power mode migration on its own after a code update.
         if (state.powerMigrationKey != POWER_MIGRATION_KEY &&
@@ -3561,11 +3688,16 @@ def schedulerTick() {
         }
 
         (state.sources ?: []).each { src ->
+            if (limited) return
             def bridge = getSourceBridge(src.id)
             if (!bridge) return
             def sourceConnected = isSourceEventConnected(src.id)
+            boolean eventMode = settings["useEventSubscription_${src.id}"] != false
+            boolean starting = !sourceConnected && eventMode && bridgeStarting(src.id, nowMs)
             if (!sourceConnected) anyPolling = true
+            if (!eventMode) anyPollingOnly = true
             (bridge.getChildDevices() ?: []).each { child ->
+                if (limited) return
                 def dni = child.deviceNetworkId
                 try {
                     // Battery level never arrives via push, so this runs
@@ -3591,25 +3723,42 @@ def schedulerTick() {
                         battDue[dni] = nowMs + (Math.max(hours, 1) * 3600L * 1000L)
                         dirty = true
                     }
-                    // Healthy event connection: skip polling. nextPollDue is left
-                    // alone so a drop (componentEventConnectionStatus) takes effect now.
-                    if (sourceConnected) return
+                    // Healthy event connection, or one still starting: skip polling.
+                    // nextPollDue is left alone so a drop takes effect now.
+                    if (sourceConnected || starting) return
+                    // v1.6.14: a few fallback jobs per tick; whatever is left is still due next tick.
+                    // Sources with events turned off keep their own pace.
+                    if (eventMode && (jobs >= MAX_JOBS_PER_TICK || now() - nowMs > TICK_BUDGET_MS)) return
                     if (nowMs >= ((pollDue[dni] ?: 0) as Long)) {
-                        pollChildNow(child)
-                        def interval = (child.getSetting("pollIntervalSec") ?: 30) as Integer
-                        pollDue[dni] = nowMs + (interval * 1000L)
+                        long t0 = now()
+                        boolean ok = pollChildNow(child)
+                        if (eventMode) jobs++
+                        pollDue[dni] = nowMs + (pollSeconds(child, eventMode) * 1000L)
                         dirty = true
+                        logFull "Reolink source ${src.id}: poll of ${child.displayName} took ${now() - t0} ms"
+                        if (!ok) {
+                            limited = true
+                            limitedAt = "polling ${child.displayName}"
+                            return
+                        }
                     }
-                    if (nowMs >= ((snapDue[dni] ?: 0) as Long)) {
+                    if ((!eventMode || jobs < MAX_JOBS_PER_TICK) && nowMs >= ((snapDue[dni] ?: 0) as Long)) {
+                        long t0 = now()
                         pollChildSnapshotNow(child)
-                        def sInterval = (child.getSetting("snapshotIntervalSec") ?: 30) as Integer
-                        snapDue[dni] = nowMs + (sInterval * 1000L)
+                        if (eventMode) jobs++
+                        snapDue[dni] = nowMs + (snapshotSeconds(child, eventMode) * 1000L)
                         dirty = true
+                        logFull "Reolink source ${src.id}: snapshot of ${child.displayName} took ${now() - t0} ms"
                     }
                 } catch (e) {
-                    log.warn "Reolink Integration: schedulerTick() failed for device ${dni} -- ${e.message}. Skipping this device this tick, will retry next tick."
-                    def interval = (child.getSetting("pollIntervalSec") ?: 30) as Integer
-                    pollDue[dni] = nowMs + (interval * 1000L)
+                    if (isLoadLimitError(e)) {
+                        limited = true
+                        limitedAt = "polling ${child.displayName}"
+                    } else {
+                        log.warn "Reolink Integration: schedulerTick() failed for device ${dni} -- ${e.message}. Skipping this device this tick, will retry next tick."
+                    }
+                    pollDue[dni] = nowMs + (pollSeconds(child, eventMode) * 1000L)
+                    if (nowMs >= ((snapDue[dni] ?: 0) as Long)) snapDue[dni] = nowMs + (snapshotSeconds(child, eventMode) * 1000L)
                     dirty = true
                 }
             }
@@ -3620,11 +3769,23 @@ def schedulerTick() {
             state.nextSnapshotDue = snapDue
             state.nextBatteryCheckDue = battDue
         }
+        if (limited) {
+            startLoadBackoff(limitedAt ?: "polling")
+        } else if (dirty && state.loadBackoffLevel) {
+            state.loadBackoffLevel = 0
+        }
+        if (dirty) logFull "Reolink Integration: tick ran ${jobs} job(s) in ${now() - nowMs} ms"
     } catch (e) {
-        log.warn "Reolink Integration: schedulerTick() failed outside the per-device loop -- ${e.message}"
-        anyPolling = true
+        if (isLoadLimitError(e)) {
+            limited = true
+            startLoadBackoff("scheduler")
+        } else {
+            log.warn "Reolink Integration: schedulerTick() failed outside the per-device loop -- ${e.message}"
+            anyPolling = true
+        }
     } finally {
-        runIn(anyPolling ? 1 : IDLE_TICK_SEC, "schedulerTick", [overwrite: true])
+        int next = limited ? IDLE_TICK_SEC : (anyPollingOnly ? 1 : (anyPolling ? POLL_TICK_SEC : IDLE_TICK_SEC))
+        runIn(next, "schedulerTick", [overwrite: true])
     }
 }
 
@@ -3657,9 +3818,10 @@ def pollChild(data) {
  * awake) only logs at Full tier, since that's routine and not worth
  * surfacing by default.
  */
-private void pollChildNow(child) {
+private boolean pollChildNow(child) {
     def sourceId = child.getDataValue("sourceId") as Integer
     def channel = child.getDataValue("channel") as Integer
+    def took
 
     def aiState = reolinkApiCall(sourceId, "GetAiState", [:], channel)
     def mdState = reolinkApiCall(sourceId, "GetMdState", [:], channel)
@@ -3671,15 +3833,21 @@ private void pollChildNow(child) {
         } else {
             logNormal "Reolink source ${sourceId} ch ${channel}: no response, marking asleep"
         }
-        child.markAsleep()
+        took = child.markAsleep()
     } else {
         if (wasAsleep) {
             logNormal "Reolink source ${sourceId} ch ${channel}: response received, marking awake"
         } else {
             logFull "Reolink source ${sourceId} ch ${channel}: response received (still awake)"
         }
-        child.parseReolinkState(aiState, mdState)
+        took = child.parseReolinkState(aiState, mdState)
     }
+    // v1.6.14: 1.6.14+ devices return true, so once one has, a null means the hub turned the call away.
+    if (took == true) {
+        if (!state.devicesConfirm) state.devicesConfirm = true
+        return true
+    }
+    return !state.devicesConfirm
 }
 
 /**
@@ -3839,20 +4007,14 @@ def handleSnapshotRequest() {
     render contentType: "image/jpeg", data: cached
 }
 
-/** Fetches a live snapshot, retrying once with a forced fresh login on auth failure. */
+/**
+ * Fetches a live snapshot. v1.6.14: no forced re-login and retry on failure (repeated logins
+ * locked the camera out, -506); a "login first" reply clears the token for the next run instead.
+ */
 private byte[] fetchSnapshotBytes(src, sourceId, channel) {
     def token = reolinkLogin(sourceId)
-    def bytes = doFetchSnapshot(src, sourceId, token, channel)
-    if (bytes == null) {
-        logFull "Reolink source ${sourceId} ch ${channel}: snapshot fetch failed, forcing re-login and retrying once"
-        src.token = null
-        src.tokenExpires = 0
-        def freshToken = reolinkLogin(sourceId)
-        if (freshToken) {
-            bytes = doFetchSnapshot(src, sourceId, freshToken, channel)
-        }
-    }
-    return bytes
+    if (!token) return null
+    return doFetchSnapshot(src, sourceId, token, channel)
 }
 
 /**
@@ -3870,6 +4032,10 @@ private byte[] doFetchSnapshot(src, sourceId, token, channel) {
             if (ct.contains("json")) {
                 def raw = resp?.data?.toString()
                 logNormal "Reolink source ${sourceId} ch ${channel}: snapshot request returned JSON instead of an image -- ${raw?.take(300)}"
+                if (raw?.toLowerCase()?.contains("login first")) {
+                    src.token = null
+                    src.tokenExpires = 0
+                }
             } else if (resp?.data != null) {
                 def bos = new ByteArrayOutputStream()
                 bos << resp.data

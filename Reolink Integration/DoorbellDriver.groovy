@@ -1,10 +1,11 @@
 /**
  * Reolink Doorbell (Component Driver)
- * Version: 1.6.13
+ * Version: 1.6.14
  *
  * Same delegation as Reolink Camera, plus a visitor (button press) event: "pushed 1" for a ring,
  * separate from person/motion detection.
  *
+ * v1.6.14 -- parseReolinkState and markAsleep return true so the app can tell when the hub turns a call away.
  * v1.6.13 -- Version sync (dark mode is in the app).
  * v1.6.12 -- Version sync.
  * v1.6.9 -- Manual Record command (on/off, optional seconds) and manualRecord attribute.
@@ -405,6 +406,7 @@ def parseReolinkState(aiState, mdState, String source = "poll") {
     if (pkgActive) activeTypes << "package"
 
     updateLastMotion(wasActive, activeTypes)
+    return true
 }
 private boolean anyMotionActive() {
     ["motion", "person", "vehicle", "pet", "package"].any { device.currentValue(it) == "active" }
@@ -430,6 +432,7 @@ private void sendIfChanged(String name, value) {
 /** Called by the app when a poll gets no response (see camera driver). */
 def markAsleep() {
     sendIfChanged("sleepStatus", "asleep")
+    return true
 }
 def receiveSnapshotUrl(url) {
     sendEvent(name: "snapshotUrl", value: url)
