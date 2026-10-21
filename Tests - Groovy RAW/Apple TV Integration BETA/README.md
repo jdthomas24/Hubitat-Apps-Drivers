@@ -1,4 +1,4 @@
-# Apple TV Now Playing (Beta) 1.2.0.10
+# Apple TV Now Playing (Beta) 1.2.0.11
 
 Lets Hubitat see what your Apple TV is doing: **which app** is playing (Netflix, Plex, YouTube...) and whether it's **playing or paused**. Some apps also share the title.
 

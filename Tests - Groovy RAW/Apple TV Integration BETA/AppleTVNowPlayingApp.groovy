@@ -24,7 +24,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Apple TV Now Playing (Beta)"
-@Field static final String APP_VERSION = "1.2.0.10"
+@Field static final String APP_VERSION = "1.2.0.11"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/166801"
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 @Field static final String RAOP = "_raop._tcp"

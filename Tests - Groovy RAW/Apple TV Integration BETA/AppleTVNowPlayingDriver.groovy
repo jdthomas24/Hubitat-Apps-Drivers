@@ -19,6 +19,7 @@
       (applied after 4s, wake flickers 1-0-1), else awake.
      -Now playing tracked per app like pyatv: clients by bundle ID, players by ID, active client from
       SET_NOW_PLAYING_CLIENT. Attributes publish 1s after the last change, so an app switch lands once.
+      A content item update with a new ID replaces a single-item queue (live TV programme change, 1.2.0.11).
       Leaving an app pauses it; the home screen shows the last app, paused. Asleep clears it (none, stopped).
       After waking, and after every new connection, it stays none (idle) until an app actually plays: on connect
       the Apple TV can report an old paused app (YouTube after Infuse had played, re-pair test 1.2.0.10).
@@ -31,7 +32,7 @@
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { "1.2.0.10" }
+def version() { "1.2.0.11" }
 
 metadata {
     definition(name: "Apple TV Now Playing (Beta)", namespace: "jdthomas24", author: "jdthomas24",
@@ -859,10 +860,14 @@ private void npUpdate(Map m, Map msg) {
     Map uc = msg.updateContentItemMessage as Map
     if (uc) {
         Map p = npPlayer(m, uc.playerPath as Map)
+        List items = new ArrayList((p.items ?: []) as List)
         (uc.contentItems ?: []).each { Map upd ->
-            Map ex = (p.items as List).find { (it as Map).identifier == upd.identifier } as Map
-            if (ex && upd.metadata instanceof Map) ex.metadata = ((ex.metadata ?: [:]) as Map) + (upd.metadata as Map)
+            if (!(upd.metadata instanceof Map)) return
+            Map ex = items.find { (it as Map).identifier == upd.identifier } as Map
+            if (ex) ex.metadata = ((ex.metadata ?: [:]) as Map) + (upd.metadata as Map)
+            else if (items.size() <= 1) { items = [upd]; p.location = 0 }   // live TV: new programme arrives as a new item
         }
+        p.items = items
     }
     Map pc = msg.playerClientPropertiesMessage as Map
     if (pc) npClient(m, ((pc.playerPath as Map)?.client ?: [:]) as Map)
