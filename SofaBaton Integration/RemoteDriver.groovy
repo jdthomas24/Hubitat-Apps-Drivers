@@ -35,7 +35,11 @@
       or Hubitat can leave an orphan that blocks re-adding the same DNI.
 */
 
-def version() { return "1.1.2" }
+import groovy.transform.Field
+
+@Field static final java.util.concurrent.ConcurrentHashMap SEEN_AT = new java.util.concurrent.ConcurrentHashMap()
+
+def version() { return "1.1.3" }
 
 metadata {
     definition (name: "Sofabaton Remote", namespace: "jdthomas24", author: "Jason Thomas (fork of Derek Osborn/dJOS1475, building on Mike Maxwell/mike.maxwell, Gassgs, SViel)", importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/SofaBaton%20Integration/RemoteDriver.groovy") {
@@ -332,7 +336,12 @@ private void localLog(String level, String line) {
 }
 
 // Called by the Bridge on every message for this MAC.
+// At most once a minute: a new timestamp is always a change, so every message would write an event.
 void markMqttMessageSeen() {
+    String k = device.id.toString()
+    Long last = SEEN_AT.get(k) as Long
+    if (last != null && now() - last < 60000L) return
+    SEEN_AT.put(k, now())
     sendEvent(name: "lastMqttMessage", value: new Date().format("yyyy-MM-dd h:mm:ss a"))
 }
 
@@ -437,19 +446,22 @@ private void handleActivityStateSync(String activityKey) {
 // X2 MQTT (called by the Bridge)
 // ============================================================
 
-// Activities, the hub's device list, and button names in one refresh.
-void requestActivityList() {
+// Activities, the hub's device list, and button names. After a reconnect (full false) the device list and
+// button names are fetched only when missing; the 3-hour refresh gets them anyway.
+void requestActivityList(Boolean full = true) {
     if (hubModel != "X2") return
     String mac = device.deviceNetworkId
     parent?.requestActivityList(mac)
-    parent?.requestDeviceList(mac)
-    requestButtonNames()
+    if (full || !state.hubDevices) parent?.requestDeviceList(mac)
+    if (full || !state.buttonMap) requestButtonNames()
 }
 
 // Creates missing activities, syncs every state, flags ones no longer on the hub.
 void receiveActivityList(List items) {
     if (hubModel != "X2" || items == null) return
     def children = activityChildren()
+    Map byId = [:]   // one read per Activity, not one per Activity per item
+    children.each { c -> def cid = c.currentValue("sofabatonActivityId"); if (cid != null) byId[(cid as Integer)] = c }
     Set seenIds = [] as Set
     int created = 0
     items.each { item ->
@@ -457,7 +469,7 @@ void receiveActivityList(List items) {
         if (id == null) return
         seenIds << id
         String name = item.activity_name ?: "Activity ${id}"
-        def child = children.find { (it.currentValue("sofabatonActivityId") as Integer) == id }
+        def child = byId[id]
         if (!child) {
             try {
                 child = addChildDevice("jdthomas24", "Sofabaton Activity", "${device.deviceNetworkId}-activity-${id}", [label: defaultLabel(name), isComponent: false])
@@ -481,7 +493,7 @@ void receiveActivityList(List items) {
         child.setHubInfo(name, true)
         if (item.state == "on") child.syncOn() else child.syncOff()
     }
-    children.findAll { !((it.currentValue("sofabatonActivityId") as Integer) in seenIds) }.each {
+    byId.findAll { aid, c -> !(aid in seenIds) }.values().each {
         slog("warn", "activity '${it.getLabel()}' is no longer on the hub. Remove it in the app if it was deleted.")
         it.setHubInfo(null, false)
     }

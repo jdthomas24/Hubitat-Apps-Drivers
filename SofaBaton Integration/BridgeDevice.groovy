@@ -25,13 +25,15 @@
       Any off confirms as activity_id 255 (hub-wide off).
      -{mac}/up key_id is the command number on the Home Assistant Remote, not the
       physical key ID the spec lists.
-     -The hub is single-threaded: 200ms pause after every publish. List requests sent back
+     -The hub is single-threaded: publishes are spaced 200ms apart. One within 200ms of the last waits in a
+      memory queue and goes out on a timer (1.1.3), so the driver never sleeps (pauseExecution counted as busy). List requests sent back
       to back lose a reply, so they're queued: one in flight, the next sent on its reply
       or after a 5s timeout (one retry). Duplicates are skipped. The queue lives in memory under a lock:
       atomicState went stale across Remote -> Bridge calls and lost writes. A reboot just
       empties it. A request still in flight after 7s is dropped on the next request.
       Activity control is sent directly.
-     -The hub doesn't announce list changes, so lists refresh every 3 hours.
+     -The hub doesn't announce list changes, so lists refresh every 3 hours. A reconnect only re-reads the
+      activity list; the device list and button names are re-read when missing, or on the 3-hour refresh.
      -Subscriptions are versioned. Any refresh adds new ones after a driver update, no reconnect needed.
      -Log level comes from the app and cascades Bridge -> Remotes -> Activities. Log lines
       from every Sofabaton device go up to the app via childLog, labeled by source.
@@ -52,7 +54,7 @@ import groovy.json.JsonOutput
 import groovy.transform.Field
 import hubitat.helper.MQTTHelper
 
-def version() { return "1.1.2" }
+def version() { return "1.1.3" }
 
 @Field static final Integer SUBS_VERSION = 2
 @Field static final Integer REQ_TIMEOUT = 5
@@ -61,6 +63,9 @@ def version() { return "1.1.2" }
 @Field static final java.util.concurrent.ConcurrentHashMap LAST_CONNECT = new java.util.concurrent.ConcurrentHashMap()
 @Field static final java.util.concurrent.Semaphore REQ_LOCK = new java.util.concurrent.Semaphore(1)
 @Field static final java.util.concurrent.ConcurrentHashMap REQ_STATE = new java.util.concurrent.ConcurrentHashMap()
+@Field static final java.util.concurrent.Semaphore PUB_LOCK = new java.util.concurrent.Semaphore(1)
+@Field static final java.util.concurrent.ConcurrentHashMap PUB_STATE = new java.util.concurrent.ConcurrentHashMap()
+@Field static final Integer PUB_GAP_MS = 200
 @Field static final List SUBS = ["activity/+/activity_control_up", "activity/+/list", "device/+/list", "device/+/keys_list", "+/up"]
 
 metadata {
@@ -269,9 +274,10 @@ private void onConnected() {
     unschedule("retryConnect")
     checkBuiltInBroker()   // refresh brokerRunning for the app's MQTT card
     clearRequests()   // stale requests from before the reconnect
+    PUB_STATE.remove(device.id.toString())   // and stale queued publishes
     if (!subscribeAll()) return
     if (logNormal()) slog("info", "MQTT connected and subscribed")
-    runIn(1, "refreshAllActivities")
+    runIn(1, "refreshAfterConnect")
     runEvery3Hours("refreshAllActivities")   // hub doesn't announce list changes
 }
 
@@ -338,15 +344,54 @@ private boolean publishJson(String topic, Map payload) {
         return false
     }
     String json = JsonOutput.toJson(payload)
+    if (!PUB_LOCK.tryAcquire(2, java.util.concurrent.TimeUnit.SECONDS)) return sendNow(topic, json)
+    try {
+        Map st = pubState()
+        long wait = ((st.last ?: 0L) as long) + PUB_GAP_MS - now()
+        if ((st.queue as List) || wait > 0) {
+            (st.queue as List) << [topic: topic, json: json]
+            if (!st.armed) { st.armed = true; runInMillis(Math.max(wait, 1L), "flushPublish") }
+            if (logFull()) slog("debug", "queued $json to $topic (hub needs ${PUB_GAP_MS}ms between messages)")
+            return true
+        }
+        st.last = now()
+    } finally {
+        PUB_LOCK.release()
+    }
+    return sendNow(topic, json)
+}
+
+private Map pubState() {
+    String key = device.id.toString()
+    Map st = PUB_STATE.get(key) as Map
+    if (st == null) { st = [last: 0L, queue: [], armed: false]; PUB_STATE.put(key, st) }
+    return st
+}
+
+private boolean sendNow(String topic, String json) {
     try {
         interfaces.mqtt.publish(topic, json)
         if (logFull()) slog("debug", "published $json to $topic")
-        pauseExecution(200)
         return true
     } catch (e) {
         slog("error", "MQTT publish to $topic failed: ${e.message}")
         return false
     }
+}
+
+// Sends the next queued publish, then re-arms 200ms later while more are waiting.
+void flushPublish() {
+    Map next = null
+    if (!PUB_LOCK.tryAcquire(2, java.util.concurrent.TimeUnit.SECONDS)) { runInMillis(PUB_GAP_MS, "flushPublish"); return }
+    try {
+        Map st = pubState()
+        List q = st.queue as List
+        if (q) { next = q.remove(0) as Map; st.last = now() }
+        if (q) runInMillis(PUB_GAP_MS, "flushPublish") else st.armed = false
+    } finally {
+        PUB_LOCK.release()
+    }
+    if (next && mqttUp()) sendNow(next.topic as String, next.json as String)
 }
 
 boolean publishMqttActivityControl(String mac, Integer activityId, String desiredState) {
@@ -491,6 +536,12 @@ void refreshAllActivities() {
         return
     }
     x2Hubs().each { it.requestActivityList() }
+}
+
+// After a (re)connect: activities only; device list and button names when missing.
+void refreshAfterConnect() {
+    if (!mqttUp()) return
+    x2Hubs().each { it.requestActivityList(false) }
 }
 
 // ============================================================
