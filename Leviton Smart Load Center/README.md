@@ -1,6 +1,6 @@
 # Leviton Smart Load Center for Hubitat
 
-> **Status: v2.0.1.** Brings your Leviton smart panel into Hubitat: power, current, voltage and energy for every smart breaker and CT clamp, with optional remote trip and reset. Works with LWHEM (2nd gen) and LDATA (1st gen) panels through your My Leviton account. Breaker and CT mapping ported from [rwoldberg/ldata-ha](https://github.com/rwoldberg/ldata-ha).
+> **Status: v2.0.2.** Brings your Leviton smart panel into Hubitat: power, current, voltage and energy for every smart breaker and CT clamp, with optional remote trip and reset. Works with LWHEM (2nd gen) and LDATA (1st gen) panels through your My Leviton account. Breaker and CT mapping ported from [rwoldberg/ldata-ha](https://github.com/rwoldberg/ldata-ha).
 
 ## What you get
 

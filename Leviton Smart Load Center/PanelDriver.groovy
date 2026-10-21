@@ -22,6 +22,9 @@
       and only calls a device with a real change, so devices never read their values back. Whole-panel messages
       and the REST poll store values at once and send device updates 8 every 250 ms (a full panel at once tripped
       the hub's load protection after a reboot).
+     -Hub load (2.0.2): the token is cached in memory; the app is asked again only every 6 hours, after an
+      HTTP 401 or a refused WebSocket sign-in (before, 4 app calls a minute). The REST poll is async, one request
+      at a time, so a slow Leviton cloud never blocks the hub. On startup the WebSocket connects after that poll.
      -Exclusions as in IntelliCenter: deleting a device from the Devices page excludes it; the app's Equipment
       page turns it back on.
      -Reconnect backoff 5 s to 5 min. A drop logs at Normal; still down after 4 tries warns once; recovery logs.
@@ -53,7 +56,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "2.0.1"
+@Field static final String VERSION     = "2.0.2"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/t/release-leviton-smart-load-center/163950"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -63,6 +66,7 @@ import groovy.transform.Field
 @Field static final List LEG1 = [1, 2, 5, 6, 9, 10, 13, 14, 17, 18, 21, 22, 25, 26, 29, 30,
                                  33, 34, 37, 38, 41, 42, 45, 46, 49, 50, 53, 54, 57, 58, 61, 62, 65, 66]
 @Field static final List BACKOFF = [5, 15, 30, 60, 120, 300]
+@Field static final long AUTH_CACHE_MS = 6L * 3600000L
 @Field static final Map DRIVER = [breaker: "Leviton Smart Load Center Breaker", ct: "Leviton Smart Load Center CT"]
 // Per-device working data: live values, last message time, subscription queue. Lost on a driver save, which is safe.
 @Field static final java.util.concurrent.ConcurrentHashMap RUNTIME = new java.util.concurrent.ConcurrentHashMap()
@@ -107,6 +111,8 @@ def initialize() {
     m.remove("opts")
     m.remove("cat")
     m.remove("skip")
+    m.remove("auth")
+    m.remove("restBusy")
     if (state.connected) state.connected = false
     if (!state.panel?.id) {
         setStatus("Not Configured")
@@ -119,9 +125,8 @@ def initialize() {
 }
 
 def startup() {
-    restRefresh()
     if (opt("live")) bandwidthToggle()
-    connect()
+    restRefresh([connect: true])   // connect once the catalog is current
 }
 
 def refresh() { restRefresh() }
@@ -349,7 +354,12 @@ private void handleNotification(Map n) {
 // ============================================================
 
 private Map auth(boolean fresh) {
-    try { return parent?.getAuth(fresh) as Map } catch (e) { logE "could not get the sign-in from the app: ${e.message}"; return null }
+    Map m = mem()
+    if (!fresh && m.auth && now() - ((m.authAt ?: 0L) as long) < AUTH_CACHE_MS) return m.auth as Map
+    Map a
+    try { a = parent?.getAuth(fresh) as Map } catch (e) { logE "could not get the sign-in from the app: ${e.message}"; return null }
+    if (a) { m.auth = a; m.authAt = now() } else m.remove("auth")
+    return a
 }
 
 private String token(boolean fresh = false) { auth(fresh)?.id?.toString() }
@@ -359,29 +369,6 @@ private Map headers(String tok) {
      "cache-control": "no-cache", "pragma": "no-cache",
      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:147.0) Gecko/20100101 Firefox/147.0",
      "Origin": ORIGIN, "Referer": "${ORIGIN}/", "authorization": tok ?: ""]
-}
-
-private apiGet(String path, Map extra = [:]) {
-    for (int i = 0; i < 2; i++) {
-        String tok = token(i == 1)
-        if (!tok) { restDown("not signed in"); return null }
-        try {
-            def out = null
-            httpGet([uri: "${API}${path}", contentType: "application/json", headers: headers(tok) + extra, timeout: 15]) { resp ->
-                if (resp.status == 200) out = resp.data
-            }
-            restUp()
-            return out
-        } catch (groovyx.net.http.HttpResponseException e) {
-            if (e.statusCode == 401 && i == 0) { logN "Leviton sign-in expired. Signing in again."; continue }
-            restDown("HTTP ${e.statusCode}")
-            return null
-        } catch (e) {
-            restDown(e.message)
-            return null
-        }
-    }
-    return null
 }
 
 private boolean apiPut(String path, Map body, Map extra = [:]) {
@@ -443,27 +430,85 @@ def bandwidthDone(resp, data) {
     if (resp.hasError()) logF "bandwidth keepalive: HTTP ${resp.status}"
 }
 
-def restRefresh() {
+def restRefresh(Map opts = null) {
+    Map m = mem()
     Map p = state.panel
-    if (!p?.id) return
-    if (p.type == "LDATA") {
-        def list = apiGet("/Residences/${p.residenceId}/residentialBreakerPanels", [filter: '{"include":["residentialBreakers"]}'])
-        Map raw = (list instanceof List) ? list.find { it.id?.toString() == p.id.toString() } as Map : null
-        if (raw == null) return
-        panelUpdate(raw, true)
-        if (raw.residentialBreakers instanceof List) breakersSnapshot(raw.residentialBreakers as List)
-    } else {
-        def list = apiGet("/Residences/${p.residenceId}/iotWhems")
-        Map raw = (list instanceof List) ? list.find { it.id?.toString() == p.id.toString() } as Map : null
-        if (raw) panelUpdate(raw, true)
-        def br = apiGet("/IotWhems/${p.id}/residentialBreakers", [filter: "{}"])
-        if (br instanceof List) breakersSnapshot(br as List)
-        def cts = apiGet("/IotWhems/${p.id}/iotCts", [filter: "{}"])
-        if (cts instanceof List) ctsSnapshot(cts as List)
+    boolean thenConnect = opts?.connect == true
+    if (!p?.id || (m.restBusy && now() - (m.restBusy as long) < 60000L)) { if (thenConnect) connect(); return }
+    List reqs = p.type == "LDATA" ?
+        [[k: "ldata", path: "/Residences/${p.residenceId}/residentialBreakerPanels", extra: [filter: '{"include":["residentialBreakers"]}']]] :
+        [[k: "panel", path: "/Residences/${p.residenceId}/iotWhems"],
+         [k: "breakers", path: "/IotWhems/${p.id}/residentialBreakers", extra: [filter: "{}"]],
+         [k: "cts", path: "/IotWhems/${p.id}/iotCts", extra: [filter: "{}"]]]
+    m.restBusy = now()
+    m.restConnect = thenConnect
+    m.restQueue = reqs.collect { Map r -> [k: r.k, path: r.path.toString(), extra: r.extra ?: [:]] }
+    restNext()
+}
+
+// One request at a time, so replies never write the catalog at the same moment.
+private void restNext() {
+    Map m = mem()
+    List q = (m.restQueue ?: []) as List
+    if (q) {
+        m.restQueue = q.drop(1)
+        String tok = token()
+        if (tok) { restGet(q[0] as Map, tok, false); return }
+        restDown("not signed in")
+        m.restQueue = []
     }
-    if (!mem().draining) pushTotal()
+    m.remove("restBusy")
+    if (!m.draining) pushTotal()
     stampUpdate()
-    mem().polled = true
+    m.polled = true
+    if (m.restConnect) { m.restConnect = false; connect() }
+}
+
+private void restGet(Map r, String tok, boolean retry) {
+    try {
+        asynchttpGet("restDone", [uri: "${API}${r.path}", contentType: "application/json",
+                                  headers: headers(tok) + (r.extra as Map), timeout: 15], r + [retry: retry])
+    } catch (e) {
+        restDown(e.message)
+        restNext()
+    }
+}
+
+def restDone(resp, Map r) {
+    int status = (resp.status ?: 0) as int
+    if (status == 401 && !r.retry) {
+        logN "Leviton sign-in expired. Signing in again."
+        String tok = token(true)
+        if (tok) { restGet(r, tok, true); return }
+    }
+    if (status != 200) {
+        restDown(status ? "HTTP ${status}" : (resp.errorMessage ?: "no reply"))
+        restNext()
+        return
+    }
+    try {
+        def data = resp.getJson()
+        restUp()
+        String pid = state.panel?.id?.toString()
+        switch (r.k) {
+            case "ldata":
+                Map raw = (data instanceof List) ? data.find { it.id?.toString() == pid } as Map : null
+                if (raw) {
+                    panelUpdate(raw, true)
+                    if (raw.residentialBreakers instanceof List) breakersSnapshot(raw.residentialBreakers as List)
+                }
+                break
+            case "panel":
+                Map pr = (data instanceof List) ? data.find { it.id?.toString() == pid } as Map : null
+                if (pr) panelUpdate(pr, true)
+                break
+            case "breakers": if (data instanceof List) breakersSnapshot(data as List); break
+            case "cts": if (data instanceof List) ctsSnapshot(data as List); break
+        }
+    } catch (e) {
+        restDown("could not read the reply: ${e.message}")
+    }
+    restNext()
 }
 
 // ============================================================
