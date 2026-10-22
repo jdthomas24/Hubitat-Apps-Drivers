@@ -1,10 +1,12 @@
 /**
  * Reolink Doorbell (Component Driver)
- * Version: 1.6.14
+ * Version: 1.6.15
  *
  * Same delegation as Reolink Camera, plus a visitor (button press) event: "pushed 1" for a ring,
  * separate from person/motion detection.
  *
+ * v1.6.15 -- Shorter battery/poll/snapshot setting descriptions that name the setting they depend on
+ *            ("above"/"below" didn't match the grid or phone layout).
  * v1.6.14 -- parseReolinkState and markAsleep return true so the app can tell when the hub turns a call away.
  * v1.6.13 -- Version sync (dark mode is in the app).
  * v1.6.12 -- Version sync.
@@ -74,28 +76,21 @@ metadata {
         // Each header is the FIRST of its own 3-item row (see CameraDriver.groovy).
         input name: "battChkHdr", type: "paragraph", title: "<b>Scheduled battery check</b>"
         input name: "batteryCheckEnabled", type: "bool", title: "Enable auto battery check", defaultValue: false,
-            description: "Battery devices only, OFF by default. When ON, auto-checks and updates battery level " +
-                "on the interval below. Checking briefly wakes the device (negligible power at default " +
-                "interval). Ignored for wired devices. Check > battery still works manually any time regardless " +
-                "of this setting."
+            description: "Battery devices only. Checks the battery on a schedule, which briefly wakes the device. " +
+                "Check > battery always works manually."
         input name: "batteryCheckIntervalHours", type: "number", title: "Auto battery check interval (hours)", defaultValue: 12,
-            description: "Only used if the setting above is ON."
+            description: "Used when Enable auto battery check is on."
         input name: "eventWakeHdr", type: "paragraph", title: "<b>Event-triggered battery check</b>"
         input name: "checkBatteryOnEventWake", type: "bool", title: "Also check battery/charging on real motion/AI events", defaultValue: false,
-            description: "Battery devices only, OFF by default. When ON, a real motion/AI event (device " +
-                "already awake) also triggers a battery/charging check -- free, unlike the interval above, " +
-                "since it doesn't force an extra wakeup."
+            description: "Battery devices only. Checks the battery when motion or AI already woke the device, " +
+                "so it costs no extra wakeup."
         input name: "eventWakeBatteryThrottleSec", type: "number", title: "Minimum seconds between event-triggered checks", defaultValue: 60,
-            description: "Only used if the setting above is ON. Keeps a burst of events (motion, person, " +
-                "vehicle in seconds) from triggering more than one check."
+            description: "Used when Also check battery on motion/AI events is on. Stops a burst of events " +
+                "from running more than one check."
         input name: "pollIntervalSec", type: "number", title: "Poll interval (sec)", defaultValue: 5,
-            description: "Controls how often motion/AI/visitor state is polled. Does NOT control snapshot image " +
-                "freshness -- see Snapshot interval below."
+            description: "How often motion/AI/visitor state is checked. Doesn't affect the snapshot."
         input name: "snapshotIntervalSec", type: "number", title: "Snapshot interval (sec)", defaultValue: 30,
-            description: "Controls how often the cached dashboard snapshot image refreshes. A dashboard tile's " +
-                "own refresh rate does NOT make the image any fresher than this -- it just re-displays whatever " +
-                "was last cached at this interval. Kept separate from poll interval so motion/visitor detection " +
-                "can stay fast without forcing a full image download that often."
+            description: "How often the dashboard snapshot image refreshes. A tile's own refresh can't make it newer than this."
         // Permanent per-device lock, same behavior as the camera driver.
         input name: "excludeFromRecordingPresets", type: "bool",
             title: "🔒 Exclude this device from ALL recording presets", defaultValue: false,

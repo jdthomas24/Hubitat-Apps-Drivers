@@ -1,6 +1,6 @@
 /**
  * Reolink Standalone Devices (Internal Group Driver)
- * Version: 1.6.14
+ * Version: 1.6.15
  *
  * Not user-facing. One shared instance, managed by the app. A nesting anchor only: each standalone
  * camera/doorbell still has its own Device Bridge (rawSocket is one connection per driver), and
@@ -8,6 +8,7 @@
  * parent?.componentX() call a bridge makes must have a passthrough here to the app; a missing one
  * throws MissingMethodException inside the bridge and never reaches the app's logs.
  *
+ * v1.6.15 -- Version sync (setting descriptions are in the drivers).
  * v1.6.14 -- Version sync (hub load changes are in the app).
  * v1.6.13 -- Version sync (dark mode is in the app).
  * v1.6.12 -- Version sync.

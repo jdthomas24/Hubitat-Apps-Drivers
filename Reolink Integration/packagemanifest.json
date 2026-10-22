@@ -1,12 +1,12 @@
 {
     "packageName": "Reolink Integration",
-    "releaseNotes": "v1.6.14: Hub load. When the hub limits the app for load, it now pauses polling for a few minutes instead of retrying into it. Event connections start one at a time, and while a source falls back to polling, devices poll at most every 30 seconds and snapshots refresh at most every 5 minutes. A failed snapshot no longer logs in again, and when a camera locks its login after failed attempts, the app waits out the lock instead of retrying. Update all drivers with the app. A hub reboot after updating is recommended if you were seeing excessive hub load errors.",
+    "releaseNotes": "v1.6.15: Clearer device settings. The battery check, poll and snapshot descriptions are shorter and name the setting they depend on, instead of saying \"above\" or \"below\", which didn't match the device page layout on a computer or a phone. No Done needed. v1.6.14: Hub load. When the hub limits the app for load, it now pauses polling for a few minutes instead of retrying into it. Event connections start one at a time, and while a source falls back to polling, devices poll at most every 30 seconds and snapshots refresh at most every 5 minutes. A failed snapshot no longer logs in again, and when a camera locks its login after failed attempts, the app waits out the lock instead of retrying. Update all drivers with the app. A hub reboot after updating is recommended if you were seeing excessive hub load errors.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "communityLink": "https://community.hubitat.com/t/165352",
     "author": "jdthomas24",
-    "version": "1.6.14",
+    "version": "1.6.15",
     "minimumHEVersion": "2.3.0",
-    "dateReleased": "2026-10-20",
+    "dateReleased": "2026-10-22",
     "category": "Integrations",
     "tags": "Cameras & Video",
     "apps": [
