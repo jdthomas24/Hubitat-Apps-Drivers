@@ -1,12 +1,12 @@
 {
     "packageName": "Pentair IntelliCenter Controller",
-    "releaseNotes": "v1.7.0: Choose which equipment Hubitat creates (Equipment page; deleted devices stay deleted). One Log level in the app for every device, with all logs under the app. Dark mode. Reconnects on its own if the controller goes quiet, and devices only change when a command was actually sent. Pump shows the running body's water temperature. Body devices get plain command names (old ones still work), and Heat Lock now covers every heat change. Salt cells reported by the controller get their own Chlorinator device. No Done needed: the Bridge switches over on its own within a minute.",
+    "releaseNotes": "v1.7.1: Gentler on the hub after a reboot. The Bridge now waits 3 minutes after the hub starts before connecting, so the controller's live updates don't arrive while the hub is still starting up (one could be dropped with a \"Too many events pending\" error). Done, Initialize and Refresh still connect right away once the hub has been up 5 minutes. Also skips building the Full-only message log when Full logging is off. No Done needed. v1.7.0: Choose which equipment Hubitat creates (Equipment page; deleted devices stay deleted). One Log level in the app for every device, with all logs under the app. Dark mode. Reconnects on its own if the controller goes quiet, and devices only change when a command was actually sent. Pump shows the running body's water temperature. Body devices get plain command names (old ones still work), and Heat Lock now covers every heat change. Salt cells reported by the controller get their own Chlorinator device. No Done needed: the Bridge switches over on its own within a minute.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Pentair%20Intellicenter%20Control",
     "communityLink": "https://community.hubitat.com/t/release-pentair-intellicenter-controller-beta/162876/31",
     "author": "jdthomas24",
-    "version": "1.7.0",
+    "version": "1.7.1",
     "minimumHEVersion": "2.3.0",
-    "dateReleased": "2026-10-19",
+    "dateReleased": "2026-10-22",
     "category": "Integrations",
     "tags": "Pool & Spa",
     "apps": [

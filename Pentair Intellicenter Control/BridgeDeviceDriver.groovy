@@ -17,6 +17,8 @@
      -Excluded objnams are never created. A device created once and later deleted from the Devices page
       is excluded automatically. On the first run after updating from 1.6.x, equipment with no device
       counts as deleted, so devices users removed before stay removed.
+     -After a hub reboot (uptime under 5 min) the connect waits 3 min, so live pushes don't arrive while the hub is
+      still starting up (1.7.1: a boot backlog dropped a parse at ~95s). Otherwise it connects right away.
      -Health: every message stamps lastRx in memory. An open socket with no data for max(3 polls, 3 min)
       reconnects (a half-open socket looks connected). Reconnect check every 2 min. Offline warns once,
       back online logs once.
@@ -50,7 +52,7 @@ metadata {
 
 import groovy.transform.Field
 
-@Field static final String VERSION     = "1.7.0"
+@Field static final String VERSION     = "1.7.1"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/t/release-pentair-intellicenter-controller-beta/162876/31"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -97,7 +99,22 @@ def initialize() {
     unschedule()
     schedule("0 0/2 * * * ?", "reconnectIfNeeded")
     schedule("30 * * * * ?", "healthCheck")
-    connect()
+    long up = hubUptime()
+    if (up >= 0 && up < 300) {
+        mem().waitUntil = now() + 180000L
+        state.connected = false
+        setStatus("Waiting for hub startup")
+        logN "hub just started, connecting in 3 minutes"
+        runIn(180, "bootConnect")
+    } else connect()
+}
+
+def bootConnect() { mem().remove("waitUntil"); if (!state.connected) connect() }   // Refresh may have connected already
+
+private boolean bootWait() { Long w = mem().waitUntil as Long; return w != null && now() < w }
+
+private long hubUptime() {
+    try { return (location.hub.uptime ?: -1) as long } catch (e) { return -1L }
 }
 
 // First run of 1.7.0. On an existing install, equipment with no device was deleted by the user.
@@ -183,7 +200,7 @@ private void markDown(String why) {
 }
 
 def reconnectIfNeeded() {
-    if (!state.connected) {
+    if (!state.connected && !bootWait()) {
         logF "reconnecting"
         connect()
     }
@@ -312,8 +329,9 @@ def subscribeToUpdates() {
 def parse(String message) {
     mem().lastRx = now()
     message = message?.trim()
-    if (!message?.startsWith("{")) { logF "non-JSON message: ${message?.take(100)}"; return }
-    logF "RX: ${message}"
+    boolean full = lvl() >= 2
+    if (!message?.startsWith("{")) { if (full) logF "non-JSON message: ${message.take(100)}"; return }
+    if (full) logF "RX: ${message}"
     def json
     try {
         json = new groovy.json.JsonSlurper().parseText(message)

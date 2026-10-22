@@ -1,6 +1,6 @@
 # Pentair IntelliCenter for Hubitat
 
-> **Status: v1.7.0.** Local control of a Pentair IntelliCenter pool controller. No cloud, no account: Hubitat talks straight to the controller on your network.
+> **Status: v1.7.1.** Local control of a Pentair IntelliCenter pool controller. No cloud, no account: Hubitat talks straight to the controller on your network.
 
 ## What you get
 
@@ -69,6 +69,8 @@ One **Log level** in the app covers the app, the Bridge and every pool device, a
 ## Troubleshooting
 
 **No devices after setup.** Check the IP, and that the Bridge device shows **connectionStatus: Connected**. Set Log level to Full, tap **Initialize** on the Bridge, and check the logs.
+
+**Bridge shows "Waiting for hub startup".** Normal right after a hub reboot. The Bridge waits 3 minutes so the hub can finish starting up, then connects on its own. Tap **Refresh** on the Bridge if you need it sooner.
 
 **Controller offline.** The Bridge retries every 2 minutes and reconnects on its own if the controller goes quiet. Check the controller has power and network, and that nothing blocks port 6680.
 
