@@ -1,12 +1,12 @@
 {
   "packageName": "Apple TV Integration",
-  "releaseNotes": "v1.1.5 to v1.1.7: Fixes an Apple TV showing \"connecting\" after a hub reboot or firmware update, sometimes indefinitely, while it was actually stuck or already connected. Each Apple TV is now checked a minute after the hub starts and fixed if needed, a stuck connect retries on its own, and a dropped connection always schedules its reconnect. No Done needed. v1.1.4: Dark mode. The app follows the hub's light or dark theme (Hubitat 2.5.3+) and keeps its current look on older firmware. No Done needed. Coming in 1.2.0, after more testing: which app is playing on each Apple TV.",
+  "releaseNotes": "v1.2.0: Track current app (optional, off by default). Turn it on in the app and each Apple TV reports which app is playing (currentApp, currentAppId, playbackState, title, artist, duration), using the existing pairing, no new PIN. It adds three hidden helper devices per Apple TV; turning it off removes them. Also: the device page shows the model name (Apple TV 4K (1st gen)) with the raw ID kept as modelId, the Version updates on its own after an update, new TVs whose name already says Apple TV skip the \"Apple TV - \" prefix, and a corrected connection status logs as info instead of a warning. Beta testers: remove Apple TV Now Playing (Beta) before turning on Track current app. v1.1.5 to v1.1.7: Fixes an Apple TV showing \"connecting\" after a hub reboot or firmware update. v1.1.4: Dark mode.",
   "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Apple%20TV%20Integration",
   "communityLink": "https://community.hubitat.com/t/166801",
   "author": "jdthomas24",
-  "version": "1.1.7",
+  "version": "1.2.0",
   "minimumHEVersion": "2.3.0",
-  "dateReleased": "2026-10-20",
+  "dateReleased": "2026-10-22",
   "category": "Integrations",
   "tags": "Apple TV, TV, video, local control",
   "apps": [
@@ -27,7 +27,15 @@
       "namespace": "jdthomas24",
       "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/AppleTVDriver.groovy",
       "required": true,
-      "description": "One per Apple TV. On/off with live power state, playback controls, Siri Remote buttons (including the TV button), volume, app launching and now playing, over an encrypted local connection."
+      "description": "One per Apple TV. On/off with live power state, playback controls, Siri Remote buttons (including the TV button), volume, app launching, now playing and, optionally, the current app, over an encrypted local connection."
+    },
+    {
+      "id": "7c2f9a14-3b6e-4d58-9e21-a8f0c5d1b6e3",
+      "name": "Apple TV Helper",
+      "namespace": "jdthomas24",
+      "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/AppleTVHelper.groovy",
+      "required": true,
+      "description": "Hidden helper devices for Track current app (three per Apple TV, created and removed by the Apple TV device). Holds the AirPlay connections that report which app is playing."
     }
   ]
 }

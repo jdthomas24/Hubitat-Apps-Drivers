@@ -25,8 +25,10 @@
      -Pairing: Pair creates the child (only on an explicit click) and starts pair-setup; the TV
       shows a PIN; Submit PIN finishes it. The child hands the keys back via
       componentPairingComplete(); they live in state.creds and children load them into memory.
-     -Device names default to "Apple TV - <name>" and are editable before pairing. Names set
-      in Hubitat are never overwritten.
+     -Device names default to "Apple TV - <name>" (just <name> if it already says Apple TV) and are editable
+      before pairing. Names set in Hubitat are never overwritten.
+     -Track current app (off by default) is pushed to every Apple TV device, which adds or removes its three
+      hidden helper devices. Pushed again from the main page whenever it changes.
      -Buttons pause 1.5s (Pair) or 3s (Submit PIN) so the page redraws after the TV replies.
      -The PIN box submits on change, and a saved PIN is sent as soon as the page redraws, since a
       text box isn't always saved when a button is clicked right after typing (seen over remote access).
@@ -44,7 +46,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Apple TV Integration"
-@Field static final String APP_VERSION = "1.1.7"
+@Field static final String APP_VERSION = "1.2.0"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/166801"
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
@@ -92,6 +94,7 @@ def initialize() {
     subscribe(location, "systemStart", "systemStartHandler")
     startListener(true)
     pushLogLevel()
+    pushTracking()
 }
 
 def systemStartHandler(evt) {
@@ -101,7 +104,10 @@ def systemStartHandler(evt) {
 
 def checkAfterRestart() {
     Map creds = state.creds ?: [:]
-    getChildDevices().findAll { creds[it.deviceNetworkId] }.each { try { it.healthCheck() } catch (e) { } }
+    getChildDevices().findAll { creds[it.deviceNetworkId] }.each {
+        try { it.healthCheck() } catch (e) { }
+        try { it.componentHelpersCheck() } catch (e) { }
+    }
 }
 
 private void startListener(boolean force) {
@@ -119,6 +125,17 @@ private void startListener(boolean force) {
         logDbg "could not start AirPlay discovery: ${e.message}"
     }
 }
+
+private void pushTracking() {
+    boolean on = settings.trackApps == true
+    Map creds = state.creds ?: [:]
+    getChildDevices().findAll { creds[it.deviceNetworkId] }.each { d ->
+        try { d.componentSetTracking(on) } catch (e) { logErr "couldn't ${on ? 'start' : 'stop'} app tracking on ${d.displayName}: ${e.message}" }
+    }
+    state.pushedTracking = on
+}
+
+private String defaultLabel(String tvName) { tvName?.toLowerCase()?.contains("apple tv") ? tvName : "Apple TV - ${tvName}" }
 
 private void pushLogLevel() {
     String level = currentLogLevel()
@@ -374,6 +391,7 @@ void componentPairingComplete(String dni, Map c) {
     all[target] = c
     state.creds = all
     logInfo "${d?.displayName ?: target} paired with '${c.name}' (${modelName(c.model as String)})"
+    if (settings.trackApps) try { d?.componentSetTracking(true) } catch (e) { logErr "couldn't start app tracking on ${d?.displayName}: ${e.message}" }
 }
 
 List componentLookupAddress(String dni) {
@@ -390,6 +408,7 @@ def mainPage(params = null) {
     startListener(false)
     armLogRevert()
     if (state.pushedLogLevel != currentLogLevel()) pushLogLevel()
+    if (state.pushedTracking != (settings.trackApps == true)) pushTracking()
     List found = allRecords()
     Map creds = state.creds ?: [:]
     List paired = getChildDevices().findAll { creds[it.deviceNetworkId] }.sort { it.displayName }
@@ -456,6 +475,8 @@ def mainPage(params = null) {
                 defaultValue: "Errors Only", submitOnChange: true, width: 12,
                 style: "margin-left: 0.5em; margin-right: 0.5em; margin-top: 0; padding-right:0;"
             paragraph rawHtml: true, loggingDetailsPopupHtml()
+            input "trackApps", "bool", title: "Track current app", defaultValue: false, submitOnChange: true, width: 12,
+                description: "Shows which app is playing on each Apple TV (currentApp, playbackState, title). Adds three hidden helper devices per TV."
         }
         helpAndSupportSection()
         versionFooterSection()
@@ -474,7 +495,7 @@ private void pairRow(Map rec) {
         input name: "submitPin_${key}", type: "button", title: "Submit PIN", width: 3, inputClass: "app-ui-button app-ui-button-primary"
         input name: "cancelPair_${key}", type: "button", title: "Cancel", width: 3, inputClass: "app-ui-button"
     } else {
-        input name: "tvName_${key}", type: "text", title: "Device name in Hubitat", defaultValue: child?.label ?: "Apple TV - ${tvName}",
+        input name: "tvName_${key}", type: "text", title: "Device name in Hubitat", defaultValue: child?.label ?: defaultLabel(tvName),
             required: false, width: 6
         input name: "pairTv_${key}", type: "button", title: stage == "FAILED" ? "Try Again" : "Pair", width: 3, inputClass: "app-ui-button app-ui-button-primary"
         if (child) input name: "cancelPair_${key}", type: "button", title: "Cancel", width: 3, inputClass: "app-ui-button"
@@ -521,7 +542,13 @@ private String atvCardHtml(d) {
         "<i class='fa-regular fa-external-link' style='margin-left:5px;font-size:0.8em'></i></a>"
     card << "<span style='margin-left:8px;background:${cc};color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em;font-weight:bold'>${conn}</span>"
     card << "<span style='margin-left:6px;background:#455a64;color:#fff;border-radius:10px;padding:1px 8px;font-size:0.8em'>${power}</span></div>"
-    card << "<div class='text-color-secondary' style='margin-top:6px;font-size:0.8em'>${sub}</div></div>"
+    card << "<div class='text-color-secondary' style='margin-top:6px;font-size:0.8em'>${sub}</div>"
+    String np = d.currentValue("currentApp")
+    if (settings.trackApps && np) {
+        String st = d.currentValue("playbackState")
+        card << "<div class='text-color-secondary' style='margin-top:4px;font-size:0.8em'>Current app: ${np == 'none' ? 'none' : np + (st ? ', ' + st : '')}</div>"
+    }
+    card << "</div>"
     return card.toString()
 }
 
@@ -566,7 +593,7 @@ private void startPair(String key) {
     if (!rec) { state.pageNote = "That Apple TV isn't announcing itself right now. Tap Refresh, or add it by IP."; return }
     String dni = "ATV-${key}"
     String tvName = atvName(rec)
-    String label = (settings["tvName_${key}"] ?: "Apple TV - ${tvName}").toString().trim()
+    String label = (settings["tvName_${key}"] ?: defaultLabel(tvName)).toString().trim()
     def child = getChildDevice(dni)
     if (!child) {
         try {
@@ -661,7 +688,8 @@ private List tipsTopics() {
                 "<p>${HUBITAT_PILL}<br>Type it in and tap <b>Submit PIN</b>. The Apple TV moves up to <b>Apple TVs</b> and connects. " +
                 "Repeat for each Apple TV, then tap <b>Done</b>.</p>" +
                 exampleBoxHtml("<b>Why \"Apple TV - Living Room\"?</b><br>Lights and speakers are often named after the room too. " +
-                    "The prefix keeps \"turn off Living Room\" from catching the Apple TV, and groups your Apple TVs together in device lists."),
+                    "The prefix keeps \"turn off Living Room\" from catching the Apple TV, and groups your Apple TVs together in device lists. " +
+                    "It's skipped when the Apple TV's own name already says Apple TV, such as \"Loft Apple TV\"."),
             warning: "Pairing is one time only. It survives hub reboots, Apple TV reboots and IP changes."],
         [id: "cec", label: "2. Turn the TV on too", title: "Turn the TV on too (optional)", group: "Setup", icon: "pi-desktop",
             body: "<p>${APPLETV_PILL}<br><b>Settings &rarr; Remotes and Devices &rarr; Control TVs and Receivers</b>, turn it on.</p>" +
@@ -680,6 +708,22 @@ private List tipsTopics() {
                 "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'><b>refresh</b></td><td style='padding:8px'>Re-reads the power state</td></tr>" +
                 "</table>" +
                 "<p>Power changes made with the Siri Remote show up in Hubitat right away, so rules can react when someone turns the Apple TV on or off.</p>"],
+        [id: "track", label: "Track current app", title: "Track the current app", group: "Using it", icon: "pi-eye",
+            body: "<p>${HUBITAT_PILL}<br>Turn on <b>Track current app</b> under Quick Settings. Each Apple TV then reports which app is playing, " +
+                "so a rule can start movie night when Plex plays, or something else when Netflix or YouTube does. No extra PIN is needed.</p>" +
+                "<table style='width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px'>" +
+                "<tr style='background:var(--surface-ground, #f5f7fa)'><th style='text-align:left;padding:8px'>Attribute</th><th style='text-align:left;padding:8px'>What it shows</th></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'><b>currentApp</b></td><td style='padding:8px'>The app's name, or none</td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'><b>currentAppId</b></td><td style='padding:8px'>Its bundle ID, e.g. com.plexapp.plex</td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'><b>playbackState</b></td><td style='padding:8px'>playing, paused, stopped or idle</td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'><b>title, artist, duration</b></td><td style='padding:8px'>When the app shares them (some, like Netflix, don't)</td></tr>" +
+                "</table>" +
+                "<p><b>For rules, check playbackState is playing, not just currentApp.</b> The Apple TV never announces the Home Screen, " +
+                "so leaving an app shows it as paused. When the Apple TV sleeps it clears to none and stopped, and after waking or reconnecting " +
+                "it stays none until an app actually plays.</p>" +
+                "<p>It adds three hidden helper devices per Apple TV, named after the TV (e.g. <b>Living Room control</b>, <b>event</b>, <b>data</b>). " +
+                "They hold the extra connections and stay out of dashboards and rules. Turning the setting off removes them.</p>",
+            warning: "Running the Apple TV Now Playing (Beta)? Remove it before turning this on, so only one app tracks each Apple TV."],
         [id: "remote", label: "Remote buttons", title: "Home Screen vs TV button", group: "Using it", icon: "pi-mobile",
             body: "<p><b>homeScreen</b> always takes the Apple TV to the Home Screen, no matter what's on screen. " +
                 "Use it in rules when you just want to go home.</p>" +
@@ -707,7 +751,9 @@ private List tipsTopics() {
                 "Apple TV reboots, network drops and IP changes, and checks the connection every 5 minutes.</p>" +
                 "<p><b>reconnecting</b> is normal for a few seconds after a drop. <b>offline</b> is reported only after several failed attempts. " +
                 "It keeps retrying every 5 minutes and logs <b>back online</b> when it recovers.</p>" +
-                "<p>If the log says to pair again, the pairing was removed on the Apple TV side. Tap <b>Remove</b> on the main page, then pair it again.</p>"],
+                "<p>If the log says to pair again, the pairing was removed on the Apple TV side. Tap <b>Remove</b> on the main page, then pair it again.</p>" +
+                "<p><b>Apple TV 4K (1st gen) on Ethernet going offline while asleep?</b> Some of these units drop off the network when they sleep. " +
+                "If yours does, Wi-Fi, an IR blaster or HDMI-CEC from the TV are workarounds for waking it.</p>"],
         [id: "faq", label: "Common questions", title: "Common questions", group: "Troubleshooting", icon: "pi-question-circle",
             body: "<p><b>Where does the name in the Found list come from?</b><br>The Apple TV itself: ${APPLETV_PILL} " +
                 "<b>Settings &rarr; General &rarr; About &rarr; Name</b>. Your Hubitat device name is separate and never overwritten.</p>" +
@@ -715,8 +761,8 @@ private List tipsTopics() {
                 "<b>Settings &rarr; Remotes and Devices &rarr; Remote App and Devices</b>. Removing it there unpairs the hub.</p>" +
                 "<p><b>Why don't my iPad or Mac show up?</b><br>They announce the same service, but only Apple TVs are listed.</p>" +
                 "<p><b>What about HomePods?</b><br>Keep them on Hubitat's AirPlay integration for audio and announcements.</p>" +
-                "<p><b>Which app is on screen?</b><br>The Apple TV doesn't report it over this connection. " +
-                "<b>Last Launch From Hubitat</b> in State Variables shows the last app opened from Hubitat.</p>"],
+                "<p><b>Which app is on screen?</b><br>Turn on <b>Track current app</b> (see Track current app). " +
+                "<b>Last Launch From Hubitat</b> in State Variables shows the last app opened from Hubitat either way.</p>"],
 
         [id: "removal", label: "Removing Apple TVs", title: "Remove Apple TVs safely", group: "Devices", icon: "pi-trash",
             body: "<p>Use <b>Remove</b> on the main page, not Hubitat's Devices page. That also clears the saved pairing.</p>" +

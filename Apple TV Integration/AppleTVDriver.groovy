@@ -30,7 +30,7 @@
       two back to back open the App Switcher, as pyatv's double tap; max 2 so a triple press never
       triggers the accessibility shortcut). Aliases: menu = back; home = homeScreen; tv = tvButton.
       Closing an app in the App Switcher needs Media Remote (MRP) key events; Companion Up and touch swipes
-      only scroll it (tested), so closeApp waits for MRP in 1.2.0.
+      only scroll it (tested), so closeApp waits for MRP (1.2.1).
      -Right after connecting the Apple TV reports its controls twice in a few ms (256, then the real
       value), so flags in the first 2s are applied once, after 2s, to avoid a false "stopped".
      -remoteButton(times) and volumeUp/Down(steps) repeat with a 150/250ms gap (max 10/20).
@@ -56,6 +56,11 @@
      -Every other event is logged at Full with its decoded content (binary plists decoded), once per
       distinct payload, to learn what NowPlayingInfo carries.
      -The session map is a ConcurrentHashMap: clear keys with remove(), never "= null".
+     -Track current app (app setting, off by default): creates three hidden Apple TV Helper children (control,
+      event, data) that run the AirPlay/Media Remote session with this device's Companion keys and publish
+      currentApp, currentAppId, playbackState, title, artist and duration here. Off removes them and those attributes.
+     -model shows the friendly name (Apple TV 4K (1st gen)); the raw ID stays in modelId. state.version is
+      written on every connect, so the device page follows HPM updates.
      -Log level comes from the app. Log lines go up to childLog() and appear under the app,
       labeled with this device's name. Falls back to local logging.
 */
@@ -63,7 +68,7 @@
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { return "1.1.7" }
+def version() { return "1.2.0" }
 
 metadata {
     definition(name: "Apple TV", namespace: "jdthomas24", author: "Jason Thomas", importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/AppleTVDriver.groovy") {
@@ -75,6 +80,12 @@ metadata {
         attribute "power", "string"
         attribute "connection", "string"
         attribute "nowPlaying", "string"
+        attribute "currentApp", "string"
+        attribute "currentAppId", "string"
+        attribute "playbackState", "string"
+        attribute "title", "string"
+        attribute "artist", "string"
+        attribute "duration", "number"
         command "playPause"
         command "nextTrack"
         command "previousTrack"
@@ -97,6 +108,11 @@ metadata {
 
 @Field static final java.util.concurrent.ConcurrentHashMap<String, Map> MEM = new java.util.concurrent.ConcurrentHashMap()
 @Field static final Map POWER_NAMES = [1: "asleep", 2: "screensaver", 3: "awake", 4: "idle"]
+@Field static final Map MODELS = ["AppleTV2,1": "Apple TV (2nd gen)", "AppleTV3,1": "Apple TV (3rd gen)", "AppleTV3,2": "Apple TV (3rd gen)",
+                                  "AppleTV5,3": "Apple TV HD", "AppleTV6,2": "Apple TV 4K (1st gen)",
+                                  "AppleTV11,1": "Apple TV 4K (2nd gen)", "AppleTV14,1": "Apple TV 4K (3rd gen)"]
+@Field static final List NP_ATTRS = ["currentApp", "currentAppId", "playbackState", "title", "artist", "duration"]
+@Field static final List HELPERS = ["control", "event", "data"]
 @Field static final List RETRY_SEC = [5, 15, 30, 60, 120, 300]
 @Field static final int OFFLINE_AFTER = 4
 @Field static final List CONNECTING = ["OPEN", "PV2", "PV4", "SETUP"]
@@ -124,8 +140,10 @@ def updated() { initialize() }
 
 def initialize() {
     state.version = version()
+    fixModel()
     unschedule()
     runEvery5Minutes("healthCheck")
+    if (state.trackApps) { ensureHelpers(); helper("control")?.initialize() }
     Map m = mem()
     if (m.mode == "pair") return
     closeSocket()
@@ -136,6 +154,7 @@ def initialize() {
 
 def uninstalled() {
     closeSocket()
+    removeHelpers()
     MEM.remove(device.id.toString())
 }
 
@@ -453,7 +472,10 @@ def commandTimeout() {
 
 // ---------- app interface ----------
 
-void setLogLevel(String level) { if (state.logLevel != level) state.logLevel = level }
+void setLogLevel(String level) {
+    if (state.logLevel != level) state.logLevel = level
+    getChildDevices().each { try { it.setLogLevel(level) } catch (e) { } }
+}
 
 def componentSetAddress(String ip, Integer port, String model = null, String tvName = null) {
     if (ip && (state.ip != ip || state.port != (port ?: 49153))) {
@@ -463,8 +485,17 @@ def componentSetAddress(String ip, Integer port, String model = null, String tvN
         updateDataValue("ip", ip)
         updateDataValue("port", "${port ?: 49153}")
     }
-    if (model && getDataValue("model") != model) updateDataValue("model", model)
+    if (model?.startsWith("AppleTV") && getDataValue("modelId") != model) { updateDataValue("modelId", model); fixModel() }
     if (tvName && getDataValue("appleTvName") != tvName) updateDataValue("appleTvName", tvName)
+}
+
+// Device page shows the friendly name in model; the raw ID (AppleTV6,2) stays in modelId.
+private void fixModel() {
+    String raw = getDataValue("modelId") ?: getDataValue("model")
+    if (!raw?.startsWith("AppleTV")) return
+    if (getDataValue("modelId") != raw) updateDataValue("modelId", raw)
+    String name = MODELS[raw] ?: raw
+    if (getDataValue("model") != name) updateDataValue("model", name)
 }
 
 def componentStartPairing() {
@@ -555,6 +586,7 @@ private void handlePairFrame(Map m, int type, byte[] payload) {
                          ourId: toHex(randomBytes(6)), name: c.name, model: c.model]
             parent?.componentPairingComplete(device.deviceNetworkId, saved)
             m.remove("creds")
+            try { helper("control")?.componentReset() } catch (e) { }
             m.pairStage = "DONE"
             m.pairStatus = "Paired"
             m.remove("mode")
@@ -825,6 +857,7 @@ private void finishSetup(Map m) {
     send(companionEvent(m.ss as Map, "_interest", ["_regEvents": ["_iMC"]]))
     m.stage = "READY"
     m.readyAt = now()
+    state.version = version()
     unschedule("connectTimeout")
     boolean wasOffline = device.currentValue("connection") == "offline"
     m.failCount = 0
@@ -842,7 +875,7 @@ private void finishSetup(Map m) {
 // Also called on each answered health check; if the first update was lost, this corrects it.
 private void markConnected() {
     if (device.currentValue("connection") == "connected") return
-    if (mem().readyAt && now() - (mem().readyAt as long) > 10000) logE("connection status was out of date, corrected to connected")
+    if (mem().readyAt && now() - (mem().readyAt as long) > 10000) logN("connection status was out of date, corrected to connected")
     sendIfChanged("connection", "connected")
 }
 
@@ -965,6 +998,79 @@ private void sendIfChanged(String name, String value) {
 }
 
 private String fmtNow() { new Date().format("MMM d, h:mm a", location.timeZone) }
+
+// ---------- Track current app: helper devices ----------
+// Three hidden helpers per TV (one raw socket per device): control runs the AirPlay/Media Remote session,
+// event and data hold its channels. Created only while Track current app is on; removed when it's off.
+
+void componentSetTracking(Boolean on) {
+    boolean want = on == true
+    if (want == (state.trackApps == true) && (!want || helper("control"))) return
+    state.trackApps = want
+    if (want) {
+        if (!ensureHelpers()) return
+        logN("tracking the current app")
+        helper("control")?.initialize()
+    } else {
+        removeHelpers()
+        NP_ATTRS.each { try { device.deleteCurrentState(it) } catch (e) { } }
+        logN("stopped tracking the current app")
+    }
+}
+
+// From the app a minute after a hub restart.
+void componentHelpersCheck() { if (state.trackApps) helper("control")?.componentEnsureConnected() }
+
+boolean componentEnsureHelpers() { state.trackApps ? ensureHelpers() : false }
+
+private boolean ensureHelpers() {
+    String base = device.displayName.replaceFirst(/(?i)^Apple TV\s*-\s*/, "")
+    try {
+        HELPERS.each { k ->
+            String lbl = "${base} ${k}"
+            def h = helper(k)
+            if (!h) {
+                h = addChildDevice("jdthomas24", "Apple TV Helper", helperDni(k), [name: "Apple TV Helper", label: lbl, isComponent: true])
+                h.setLogLevel(state.logLevel ?: "Errors Only")
+            } else if (h.label != lbl) h.setLabel(lbl)
+        }
+        return true
+    } catch (e) {
+        String why = "${e}".contains("UnknownDeviceType") ? "the Apple TV Helper driver isn't installed (update with HPM or add it in Drivers Code)" : e.message
+        logE("couldn't create the helper devices: ${why}")
+        return false
+    }
+}
+
+private void removeHelpers() {
+    HELPERS.each { k -> try { if (helper(k)) deleteChildDevice(helperDni(k)) } catch (e) { } }
+}
+
+private String helperDni(String k) { "ATV-H${device.id}-${k}" }
+private helper(String k) { getChildDevice(helperDni(k)) }
+
+def componentHelper(String k) { helper(k) }
+String componentHelperAddress() { state.ip }
+Map componentGetCredentials(String dni) { parent?.componentGetCredentials(device.deviceNetworkId) as Map }
+
+// Relays between the helpers (siblings can't call each other directly).
+void channelUp(String kind) { helper("control")?.channelUp(kind) }
+void channelDown(String kind, String why) { helper("control")?.channelDown(kind, why) }
+void channelOrphan() { helper("control")?.channelOrphan() }
+void channelProtobuf(String hex) { helper("control")?.channelProtobuf(hex) }
+void childLog(String level, String source, String msg) { slog(level, "Now Playing: ${msg}") }
+
+void componentNowPlaying(Map np) {
+    if (!state.trackApps) return
+    NP_ATTRS.each { k ->
+        def v = np[k]
+        if (k == "duration") {
+            int d = (v ?: 0) as int
+            if (device.currentValue("duration") == null || (device.currentValue("duration") as int) != d)
+                sendEvent(name: "duration", value: d, unit: "s", descriptionText: "${device.displayName} duration is ${d}s")
+        } else sendIfChanged(k, (v ?: "none") as String)
+    }
+}
 
 // ---------- logging (routed through the app) ----------
 
