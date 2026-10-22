@@ -1,130 +1,105 @@
-# Apple TV Integration for Hubitat
+# Reolink Integration for Hubitat
 
-Native, local control of Apple TVs from Hubitat Elevation. Turn your Apple TVs on and off, control playback, press remote buttons and launch apps from scenes, rules and dashboards, with live power and playback state. No Homebridge, no Home Assistant, no Raspberry Pi, no Python.
+Local control of Reolink cameras, doorbells, NVRs and Home Hubs from a Hubitat Elevation hub. No cloud and no Reolink account, just the device's local IP and login.
 
-> **Status: v1.2.0.** Install through HPM: search for **Apple TV Integration**, or use the manifest URL below.
+**[Try the interactive demo](https://jdthomas24.github.io/Hubitat-Apps-Drivers/Reolink%20Integration/reolinkdemo.html)**: click through adding a Home Hub, live detections, device controls and recording presets. No hub needed.
 
-**Forum thread:** [Apple TV Integration on the Hubitat Community](https://community.hubitat.com/t/166801)
+**Install:** Hubitat Package Manager, search "Reolink Integration".
+**Discussion and support:** [Hubitat Community thread](https://community.hubitat.com/t/165352)
 
----
+This integration is also becoming Hubitat's built-in Reolink integration. This repo stays the source of truth, and HPM installs remain available.
 
-## What it does
+## Features
 
-- **Finds your Apple TVs automatically** over Bonjour. No IP addresses or ports to type.
-- **Shows each Apple TV's real name**, read from the Apple TV itself.
-- **One-time pairing** with the 4-digit PIN shown on the TV.
-- **One device per Apple TV** with a standard **Switch**: on wakes it, off puts it to sleep.
-- **Live power state** (`asleep`, `screensaver`, `awake`), including changes made with the Siri Remote.
-- **Playback controls:** Play, Pause, Stop, Next, Previous and Skip, with live `playing` / `paused` / `stopped` state.
-- **Siri Remote buttons and volume**, including one that goes straight to the Home Screen and the TV button (twice for the App Switcher).
-- **Launch apps by name**, from a dropdown of common apps or any installed app.
-- **Now playing title** for apps that share it (YouTube, Plex, NBC and Apple's TV app do; Netflix doesn't).
-- **Which app is playing** (optional, off by default): turn on **Track current app** and each Apple TV reports `currentApp` and `playbackState`, so rules can react when Plex or Netflix starts.
-- **Stays connected** through one encrypted local connection per Apple TV, and reconnects on its own after hub reboots, network drops and IP changes.
-- **Set up any number of Apple TVs in one place**, with default names like `Apple TV - Living Room` so they never collide with lights or speakers named after the room.
+- **Real-time detections.** Motion, person, vehicle, pet, package and doorbell press arrive within a second over a live event connection. If that connection drops, the app falls back to polling and switches back on its own.
+- **Last motion.** `lastMotionTime` and `lastMotionType` for rules and dashboards.
+- **Doorbell press** as a standard button (pushed 1), so Rule Machine treats it like any doorbell.
+- **Snapshots and live video.** Cached snapshots for dashboard tiles, plus RTSP live streaming through Hubitat's video stream service on supported hubs.
+- **Camera controls.** PTZ moves, presets and calibration; spotlight on/off and spotlight auto (whether motion turns it on at night); night vision; siren; PIR on/off for battery devices.
+- **Battery devices.** Battery level, charging status (charging / plugged in / not charging) and a one-line Battery Wired summary. Wired devices never show battery values.
+- **Manual recording.** Start a recording now from a rule (for example on motion), for a set number of seconds.
+- **NVR recording control.** A master record switch, plus named per-channel schedule presets that Hubitat modes or rules can load (for example "Away" and "Home").
+- **Capability detection.** A `supportedFeatures` attribute per device, read from the camera, shows what that model can actually do.
+- **Logging levels.** Errors Only (default), Normal or Full. Full turns itself off after 60 minutes.
 
-It uses the same protocol as the Apple TV Remote app and Control Center (Companion Link). Everything stays on your local network.
+## Device commands
 
-## Requirements
+Commands are grouped into dropdowns so each device page stays short.
 
-- Apple TV HD or Apple TV 4K on a current tvOS
-- Apple TV and hub on the same network, with Bonjour (mDNS) able to reach the hub
-- Hubitat Elevation hub
+| Command | Options |
+|---|---|
+| Check | battery, abilities, ptz calibration, recording schedule |
+| Set Interval | poll or snapshot, plus seconds |
+| Ptz | Left, Right, Up, Down, ZoomInc, ZoomDec, Stop, Calibrate |
+| Ptz Preset | go to or save here, plus preset ID |
+| Set Spotlight | on, off, auto on, auto off |
+| Set Night Vision | auto, on, off |
+| Set Siren | on, off |
+| Set Pir | on, off |
+| Manual Record | on or off, plus optional seconds (1 to 600) |
+| Take Snapshot | |
 
-Only Apple TVs are listed. iPhones, iPads and Macs are filtered out. HomePods and TTS announcements stay with Hubitat's built-in AirPlay integration, which this does not replace.
+Doorbells have Check, Set Interval, Set Pir, Manual Record and Take Snapshot. Hubitat shows every command on every device, so check `supportedFeatures` to see what a given model supports. Rules written before 1.6.8 with the older command names (Pir Off, Ptz Go To Preset, Spotlight On and so on) keep working.
 
-## Install
+The Device Bridge has Recording (the master record switch, same as On/Off), Push and Load Preset for recording presets, and Event Connection (restart, start, stop).
 
-### Hubitat Package Manager (recommended)
+## How it works
 
-1. Open **Hubitat Package Manager** and choose **Install**.
-2. Choose **From a URL** and paste:
-   ```
-   https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/packagemanifest.json
-   ```
-3. Finish the install. HPM will notify you of updates from then on.
+- **Sources.** A source is anything with its own IP and login: a standalone camera, an NVR or a Home Hub. A Hub or NVR has one channel per paired camera; a standalone camera has one channel.
+- **Reolink Device Bridge.** Each source gets a bridge device that holds its live event connection and is the parent of its camera and doorbell devices, so they group together in the Devices list. Standalone cameras' bridges group under a single "Reolink Standalone Devices" device.
+- **The app** (ParentApp.groovy) handles login, discovery, polling and every camera command. The camera and doorbell drivers are thin and pass everything to the app.
+- **Hub health.** One central scheduler times all polling and skips any source with a healthy event connection. While a source falls back to polling, each device polls at most every 30 seconds and refreshes its snapshot at most every 5 minutes; a source with event mode turned off uses its own intervals. Event connections start one at a time, and if the hub limits the app for load, it pauses polling for a few minutes instead of retrying into it. Battery devices poll slowly by default, since polling harder doesn't get fresher data and only costs battery.
 
-### Manual
+## Installation
 
-1. **Drivers Code → New Driver:** paste `AppleTVDriver.groovy` and save.
-2. **Drivers Code → New Driver:** paste `AppleTVHelper.groovy` and save (used by Track current app).
-3. **Apps Code → New App:** paste `ParentApp.groovy` and save.
+**Hubitat Package Manager (recommended):** Install, search "Reolink Integration". HPM installs the app and all four drivers.
+
+**Manual:** add these in order, then add the app under Apps, Add User App:
+1. Drivers Code: ReolinkDeviceBridge.groovy, StandaloneDevices.groovy, CameraDriver.groovy, DoorbellDriver.groovy
+2. Apps Code: ParentApp.groovy
 
 ## Setup
 
-1. Open **Integrations** in the left menu and add **Apple TV Integration**.
-2. Give it about 30 seconds, then click **Refresh**. Your Apple TVs show under **Found on your network**. Not listed? Wake it with its remote and click Refresh, or type its IP under **Not listed? Add by IP** and click **Add**.
-3. Change the **device name** if you like, then click **Pair**.
-4. A PIN appears on the TV within a few seconds. Type it in and click **Submit PIN**.
-5. Repeat for each Apple TV, then click **Done**.
+1. **On the camera, Hub or NVR first:** enable HTTP, HTTPS and ONVIF under Network > Advanced (or Server) settings. They are often off by default, and this is the most common reason a source won't connect. On a Home Hub, these toggles are only in the Reolink desktop Client. Once a camera is paired to a Hub, manage these settings on the Hub.
+2. Open the app and add a source with its IP address or hostname, port (default 443), username and password.
+3. Discovery lists the channels. Turn on the ones you want and apply.
+4. The live event connection uses port 9000. If a firewall blocks it, the source still works by polling.
 
-After pairing, the Apple TV lists **Hubitat** under Settings → Remotes and Devices → Remote App and Devices. Removing it there unpairs the hub.
+To change a source's address or login later, use **Edit connection settings** on its page. There's no need to remove and re-add it.
 
-## Using it
+The in-app **Tips & Troubleshooting** page covers device quirks, polling, battery behavior, PTZ, spotlight and recording presets, and is kept current with each release.
 
-| Attribute / command | What it does |
+## Compatibility
+
+| Device | Status |
 |---|---|
-| `on` | Wakes the Apple TV |
-| `off` | Puts the Apple TV to sleep |
-| `switch` | `on` when awake or on the screensaver, `off` when asleep |
-| `power` | `asleep`, `screensaver` or `awake` |
-| `connection` | `connected`, `connecting`, `reconnecting`, `offline` or `not paired` |
-| `refresh` | Re-reads the power state and the installed apps |
-| `play`, `pause`, `stop`, `playPause` | Playback. The Apple TV has no real stop, so `stop` pauses |
-| `nextTrack`, `previousTrack`, `skipForward`, `skipBackward` | Next and previous, skip 10 seconds |
-| `volumeUp`, `volumeDown` | Volume, with an optional number of steps |
-| `remoteButton` | `up`, `down`, `left`, `right`, `select`, `back`, `homeScreen`, `tvButton`, `playPause`, with an optional number of presses |
-| `launchApp` | Opens an app picked from the list, or typed under Other (name, bundle ID or app link) |
-| `transportStatus` | `playing`, `paused` or `stopped`, including changes made with the Siri Remote |
-| `nowPlaying` | The title, for apps that share it, otherwise `none`. Arrives when playback starts |
+| Home Hub Pro | ✅ Working, with multiple paired cameras on one event connection |
+| Reolink NVRs (e.g. RLN16-410) | ✅ Working, confirmed by community users, including recording control |
+| E1 Pro, E1 Zoom, Trackmix | ✅ Working, PTZ confirmed |
+| RLC-1240A, Duo 3V PoE | ✅ Working |
+| RLC-410W | ✅ Working (older model, motion only, no AI detection) |
+| E1 Outdoor | ✅ Working. Some ~2021 firmware units give false "asleep" reports (see Tips) |
+| Video Doorbell WiFi (wired) | ✅ Working, package detection confirmed |
+| Argus 4 Pro and other battery cameras/doorbells | ✅ Working behind a Home Hub or NVR. ❌ Not standalone (see below) |
+| Base E1, Lumus | ❓ Untested. Check the camera's own network settings for HTTP/HTTPS |
 
-**State Variables** show **Installed Apps** (names you can type under Other) and **Last Launch From Hubitat**, for example `Netflix (launched)` or `Hulu (failed: not installed)`. It only covers launches sent from Hubitat. For the app actually playing, use Track current app below.
+Other PoE and WiFi cameras outside the battery line are expected to work standalone.
 
-**Notes**
-- `homeScreen` holds Back, like the Siri Remote, so it always goes to the Home Screen. Use it in rules when you just want to go home.
-- `tvButton` presses the Siri Remote's TV button. One press follows each Apple TV's TV Button setting (Settings → Remotes and Devices → TV Button), so it may open the Apple TV app instead of the Home Screen. Two presses (times 2) open the App Switcher.
-- App links open only in apps that support them, and the Apple TV asks you to confirm. YouTube web links are converted to the YouTube app's own link automatically.
+## Known limitations
 
-### Track current app
+- **Battery-class devices need a Home Hub or NVR.** Confirmed on real hardware: a standalone Argus 4 Pro refuses both the HTTP API and the event port, even on a DC adapter. Add the Hub or NVR as the source and the device shows up as one of its channels.
+- **Many standalone cameras.** Each standalone camera keeps its own connection to the hub. Past roughly 10, a Home Hub or NVR is the better setup: one connection and one login for every channel.
+- **Recording control is NVR/Hub only**, and the master record switch applies to every channel at once (a Reolink API limitation). Use presets to control individual channels.
+- **Spotlight auto in Hubitat** updates right away when changed from Hubitat. A change made in the Reolink app shows after a Refresh (read at most every 10 minutes) or Check > abilities.
 
-Off by default. Turn on **Track current app** under Quick Settings in the app, and each Apple TV device adds:
+## Security
 
-| Attribute | What it shows |
-|---|---|
-| `currentApp` | The app's name, or `none` |
-| `currentAppId` | Its bundle ID, e.g. `com.plexapp.plex` |
-| `playbackState` | `playing`, `paused`, `stopped` or `idle` |
-| `title`, `artist`, `duration` | When the app shares them |
+The source password is stored only in the app on your hub. It is never written to logs, and the Device Bridge page shows only "Password: Saved, N characters" plus the last login result. Like most Hubitat apps, credentials live in the app's own settings, which are included in hub backups.
 
-- **No extra PIN.** It reuses the Apple TV's existing pairing.
-- **For rules, check `playbackState` is `playing`, not just `currentApp`.** The Apple TV never announces the Home Screen, so leaving an app shows it as paused.
-- When the Apple TV sleeps it clears to `none` / `stopped`. After waking or reconnecting it stays `none` until an app actually plays.
-- It adds three hidden helper devices per Apple TV, named after the TV (`Living Room control`, `Living Room event`, `Living Room data`). They hold the extra connections and stay out of dashboards and rules. Turning the setting off removes them.
-- Running the Apple TV Now Playing (Beta)? Remove it before turning this on.
+## Contributing and testing
 
-**Turn the TV on too:** on the Apple TV, enable **Settings → Remotes and Devices → Control TVs and Receivers** (HDMI-CEC). Waking the Apple TV then wakes the TV and switches its input.
+Testing on more hardware helps, especially:
+- A true external or accessory floodlight
+- Newer battery doorbell firmware, including whether any battery model now exposes a local API
 
-## Logging
-
-All logs for the integration show under the app, labeled by device. Set **Log level** in the app:
-
-- **Errors Only** (default): real problems, such as an Apple TV going offline
-- **Normal:** adds connections, commands, power and playback changes, and now playing titles
-- **Full:** adds protocol detail for troubleshooting
-
-## Troubleshooting
-
-- **Apple TV not found:** wake it with its remote, then click Refresh. If it still isn't listed, add it by IP (find the IP on the Apple TV under Settings → Network). Networks that separate devices into VLANs need an mDNS repeater.
-- **No PIN on screen:** wake the Apple TV first, and check that its AirPlay access setting (Allow Access) lets devices on your network connect.
-- **"Back off" error while pairing:** too many attempts in a row. Wait a minute and try again.
-- **Wrong name in the Found list:** the name comes from the Apple TV (Settings → General → About → Name). Your Hubitat device name is separate and never overwritten.
-- **Apple TV 4K (1st gen) on Ethernet goes offline while asleep:** some of these units drop off the network when they sleep. Wi-Fi, an IR blaster or HDMI-CEC from the TV are workarounds for waking it.
-- **Device shows offline:** check that the Apple TV has power and network. It retries on its own every 5 minutes. If it says to pair again, the pairing was removed on the Apple TV side.
-
-## Credits
-
-Protocol knowledge from the [pyatv](https://github.com/postlund/pyatv) project by Pierre Ståhl (MIT), whose documentation of Apple's Companion Link protocol made this possible.
-
-## License
-
-See the repository license.
+The `Tests - Groovy RAW` folder has standalone tools for dumping a device's raw API data. Reports and logs are welcome in the community thread.
