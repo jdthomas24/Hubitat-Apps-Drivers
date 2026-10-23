@@ -44,7 +44,9 @@
      -Any failed connect or dropped connection retries on its own (30s, 60s, then every 5 min)
       until connected: the broker can start after drivers at boot, and isBuiltInBrokerRunning()
       can read false while it's starting, so a failed check still attempts the connect.
-      One warning per outage, one info line on recovery.
+      One warning per outage, one info line on recovery. Within 5 min of hub startup the broker is usually
+      still starting, so the first miss logs at Normal; it warns only if still down after that (1.1.4).
+      Refreshes asked for while a connect is pending are skipped quietly: refreshAfterConnect covers them.
      -Remotes must clear their Activity children before deletion, or Hubitat can
       orphan them and block re-adding the same DNI.
 */
@@ -54,7 +56,7 @@ import groovy.json.JsonOutput
 import groovy.transform.Field
 import hubitat.helper.MQTTHelper
 
-def version() { return "1.1.3" }
+def version() { return "1.1.4" }
 
 @Field static final Integer SUBS_VERSION = 2
 @Field static final Integer REQ_TIMEOUT = 5
@@ -66,6 +68,7 @@ def version() { return "1.1.3" }
 @Field static final java.util.concurrent.Semaphore PUB_LOCK = new java.util.concurrent.Semaphore(1)
 @Field static final java.util.concurrent.ConcurrentHashMap PUB_STATE = new java.util.concurrent.ConcurrentHashMap()
 @Field static final Integer PUB_GAP_MS = 200
+@Field static final java.util.concurrent.ConcurrentHashMap CONNECTING = new java.util.concurrent.ConcurrentHashMap()   // device id -> warned (Boolean)
 @Field static final List SUBS = ["activity/+/activity_control_up", "activity/+/list", "device/+/list", "device/+/keys_list", "+/up"]
 
 metadata {
@@ -202,6 +205,7 @@ void ensureMqttConnected(Boolean builtIn, String host = null, String port = null
         try { interfaces.mqtt.disconnect() } catch (e) { }
     }
     atomicState.mqttTarget = target
+    if (!CONNECTING.containsKey(device.id.toString())) CONNECTING.put(device.id.toString(), false)
     sendEvent(name: "mqttStatus", value: "connecting")
     String clientId = "sofabaton-hubitat-${device.id}"
     try {
@@ -225,8 +229,16 @@ void ensureMqttConnected(Boolean builtIn, String host = null, String port = null
 // Retries until connected. Repeated runIn calls replace the pending one, so retries never stack.
 private void scheduleRetry(String reason) {
     int n = (state.retryCount ?: 0) as int
-    if (n == 0) slog("warn", "MQTT not connected (${reason}). Retrying automatically.")
-    else if (logFull()) slog("debug", "MQTT retry ${n} failed: ${reason}")
+    String id = device.id.toString()
+    boolean warned = CONNECTING.get(id) == true
+    boolean booting = hubUptime() < 300
+    if (!warned && !booting) {
+        slog("warn", "MQTT not connected (${reason}). Retrying automatically.")
+        warned = true
+    } else if (n == 0 && booting) {
+        if (logNormal()) slog("info", "waiting for MQTT after hub startup (${reason}). Connects on its own.")
+    } else if (logFull()) slog("debug", "MQTT retry ${n} failed: ${reason}")
+    CONNECTING.put(id, warned)
     state.retryCount = n + 1
     runIn(RETRY_DELAYS[Math.min(n, RETRY_DELAYS.size() - 1)] as Integer, "retryConnect")
 }
@@ -266,6 +278,7 @@ void verifyConnected() {
 }
 
 private void onConnected() {
+    CONNECTING.remove(device.id.toString())
     sendEvent(name: "mqttStatus", value: "connected")
     if (state.retryCount) {
         slog("info", "MQTT reconnected after ${state.retryCount} ${state.retryCount == 1 ? 'retry' : 'retries'}")
@@ -296,6 +309,12 @@ private boolean subscribeAll() {
 private void ensureSubscriptions() {
     if (state.subsVersion == SUBS_VERSION || !mqttUp()) return
     if (subscribeAll() && logNormal()) slog("info", "MQTT subscriptions updated")
+}
+
+private boolean connectPending() { CONNECTING.containsKey(device.id.toString()) }
+
+private long hubUptime() {
+    try { return (location.hub.uptime ?: 9999) as long } catch (e) { return 9999L }
 }
 
 private boolean mqttUp() {
@@ -340,7 +359,7 @@ def checkBuiltInBroker() {
 
 private boolean publishJson(String topic, Map payload) {
     if (!mqttUp()) {
-        slog("warn", "MQTT not connected, can't publish to $topic")
+        slog("warn", connectPending() ? "MQTT still connecting, couldn't send to $topic" : "MQTT not connected, can't publish to $topic")
         return false
     }
     String json = JsonOutput.toJson(payload)
@@ -401,7 +420,8 @@ boolean publishMqttActivityControl(String mac, Integer activityId, String desire
 
 boolean requestActivityList(String mac) {
     if (!mqttUp()) {
-        slog("warn", "MQTT not connected, can't refresh $mac. Run Force Reconnect on the Bridge.")
+        if (connectPending()) { if (logFull()) slog("debug", "MQTT connecting, $mac refreshes once connected"); return false }
+        slog("warn", "MQTT not connected, can't refresh $mac. Run Force Reconnect on the Bridge if it doesn't reconnect on its own.")
         return false
     }
     ensureSubscriptions()
