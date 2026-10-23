@@ -2,7 +2,7 @@
 
 Native, local control of Apple TVs from Hubitat Elevation. Turn your Apple TVs on and off, control playback, press remote buttons and launch apps from scenes, rules and dashboards, with live power and playback state. No Homebridge, no Home Assistant, no Raspberry Pi, no Python.
 
-> **Status: v1.2.0.** Install through HPM: search for **Apple TV Integration**, or use the manifest URL below.
+> **Status: v1.2.1.** Install through HPM: search for **Apple TV Integration**, or use the manifest URL below.
 
 **Forum thread:** [Apple TV Integration on the Hubitat Community](https://community.hubitat.com/t/166801)
 
@@ -100,7 +100,6 @@ Off by default. Turn on **Track current app** under Quick Settings in the app, a
 - **For rules, check `playbackState` is `playing`, not just `currentApp`.** The Apple TV never announces the Home Screen, so leaving an app shows it as paused.
 - When the Apple TV sleeps it clears to `none` / `stopped`. After waking or reconnecting it stays `none` until an app actually plays.
 - It adds three hidden helper devices per Apple TV, named after the TV (`Living Room control`, `Living Room event`, `Living Room data`). They hold the extra connections and stay out of dashboards and rules. Turning the setting off removes them.
-- Running the Apple TV Now Playing (Beta)? Remove it before turning this on.
 
 **Turn the TV on too:** on the Apple TV, enable **Settings → Remotes and Devices → Control TVs and Receivers** (HDMI-CEC). Waking the Apple TV then wakes the TV and switches its input.
 
@@ -119,6 +118,7 @@ All logs for the integration show under the app, labeled by device. Set **Log le
 - **"Back off" error while pairing:** too many attempts in a row. Wait a minute and try again.
 - **Wrong name in the Found list:** the name comes from the Apple TV (Settings → General → About → Name). Your Hubitat device name is separate and never overwritten.
 - **Apple TV 4K (1st gen) on Ethernet goes offline while asleep:** some of these units drop off the network when they sleep. Wi-Fi, an IR blaster or HDMI-CEC from the TV are workarounds for waking it.
+- **Changed the Apple TV's IP:** it finds the Apple TV again by the ID saved at pairing. If it doesn't, tap **Edit address** on its card in the app, enter the new IP and tap **Save**. No new pairing needed.
 - **Device shows offline:** check that the Apple TV has power and network. It retries on its own every 5 minutes. If it says to pair again, the pairing was removed on the Apple TV side.
 
 ## Credits

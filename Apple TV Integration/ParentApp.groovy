@@ -27,6 +27,10 @@
       componentPairingComplete(); they live in state.creds and children load them into memory.
      -Device names default to "Apple TV - <name>" (just <name> if it already says Apple TV) and are editable
       before pairing. Names set in Hubitat are never overwritten.
+     -Addresses follow the permanent ID from pairing (creds atvId), not the DNI, so a TV whose DNI is still
+      "ATV-IP..." follows IP changes too. Lookup: an edited address, then Bonjour by that ID, then any other
+      Apple TV whose /info pi/psi matches it. Edit address (card button) takes IPv4 only, no DNS names.
+      The page only moves a TV's address while it isn't connected.
      -Track current app (off by default) is pushed to every Apple TV device, which adds or removes its three
       hidden helper devices. Pushed again from the main page whenever it changes.
      -Buttons pause 1.5s (Pair) or 3s (Submit PIN) so the page redraws after the TV replies.
@@ -46,7 +50,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Apple TV Integration"
-@Field static final String APP_VERSION = "1.2.0"
+@Field static final String APP_VERSION = "1.2.1"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/166801"
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
@@ -330,7 +334,8 @@ private Map fetchInfo(String ip) {
             byte[] body = toBytes(resp.data)
             if (body && body.length > 8 && new String(slice(body, 0, 8), "US-ASCII") == "bplist00") {
                 def info = bplistParse(body)
-                if (info instanceof Map) out = [name: info.name?.toString(), model: info.model?.toString()]
+                if (info instanceof Map) out = [name: info.name?.toString(), model: info.model?.toString(),
+                                                ids: [info.psi, info.pi].findAll { it }.collect { it.toString().toUpperCase() }]
             }
         }
     } catch (e) {
@@ -394,9 +399,67 @@ void componentPairingComplete(String dni, Map c) {
     if (settings.trackApps) try { d?.componentSetTracking(true) } catch (e) { logErr "couldn't start app tracking on ${d?.displayName}: ${e.message}" }
 }
 
+// Addresses to try for a paired TV, by its permanent ID from pairing (not the DNI): an edited address first,
+// then Bonjour, then any other Apple TV whose /info identity matches (Companion list gone stale, RAOP-only).
 List componentLookupAddress(String dni) {
-    Map rec = findRecord(dni - "ATV-")
-    return rec ? (rec.addresses as List).reverse() : []
+    List out = []
+    String edited = editedIp(dni)
+    if (edited) out << [ip: edited, port: 49153]
+    List found = allRecords()
+    String pk = permKey(dni)
+    Map rec = found.find { it.key == pk } ?: found.find { "ATV-${it.key}" == dni }
+    if (rec) (rec.addresses as List).reverse().each { a -> if (!out.any { it.ip == a.ip }) out << a }
+    if (!rec) {
+        String id = ((state.creds ?: [:])[dni] as Map)?.atvId?.toString()?.toUpperCase()
+        String current = getChildDevice(dni)?.getDataValue("ip")
+        if (id) for (Map r in found) {
+            String ip = (r.addresses.last() as Map).ip
+            if (ip == current || out.any { it.ip == ip }) continue
+            if (fetchInfo(ip)?.ids?.contains(id)) {
+                logInfo "${getChildDevice(dni)?.displayName ?: dni} found at ${ip} by its pairing ID"
+                out << [ip: ip, port: 49153]
+                break
+            }
+        }
+    }
+    return out
+}
+
+// Bonjour key for a paired TV: its pairing ID, the same key Bonjour (rpMRtID) uses.
+private String permKey(String dni) {
+    String id = ((state.creds ?: [:])[dni] as Map)?.atvId?.toString()
+    return id ? id.replaceAll("[^A-Za-z0-9]", "").toUpperCase() : dni - "ATV-"
+}
+
+private String editedIp(String dni) { ((state.editedIps ?: [:]) as Map)[dni] as String }
+
+private void saveAddress(String key) {
+    String dni = "ATV-${key}"
+    def d = getChildDevice(dni)
+    String ip = (settings["newIp_${key}"] ?: "").toString().trim()
+    if (!d) { state.remove("editAddr"); return }
+    if (!(ip ==~ /\d{1,3}(\.\d{1,3}){3}/) || ip.split("\\.").any { (it as int) > 255 }) {
+        state.pageNote = "Enter the Apple TV's IP address, e.g. 192.168.1.120."
+        return
+    }
+    Map info = fetchInfo(ip)
+    if (!info?.model?.startsWith("AppleTV")) {
+        state.pageNote = info ? "${ip} answered, but it isn't an Apple TV (${info.model ?: 'unknown model'})." :
+            "No Apple TV answered at ${ip}. Check the address and that the Apple TV is on."
+        return
+    }
+    // Not enforced: pair-verify on connect is the real identity check. Logged to confirm /info carries the pairing ID.
+    String id = ((state.creds ?: [:])[dni] as Map)?.atvId?.toString()?.toUpperCase()
+    logDbg "Edit address: /info ids ${info.ids} ${id && info.ids?.contains(id) ? 'include' : 'do not include'} the pairing ID"
+    Map all = (state.editedIps ?: [:]) as Map
+    all[dni] = ip
+    state.editedIps = all
+    app.removeSetting("newIp_${key}")
+    state.remove("editAddr")
+    d.componentSetAddress(ip, 49153)
+    d.initialize()
+    logInfo "${d.displayName} address set to ${ip}"
+    pauseExecution(1500)
 }
 
 // ============================================================================
@@ -413,8 +476,10 @@ def mainPage(params = null) {
     Map creds = state.creds ?: [:]
     List paired = getChildDevices().findAll { creds[it.deviceNetworkId] }.sort { it.displayName }
     paired.each { d ->
-        Map rec = found.find { "ATV-${it.key}" == d.deviceNetworkId }
-        if (rec && !rec.addresses.any { it.ip == d.getDataValue("ip") }) {
+        if (d.currentValue("connection") == "connected") return
+        String pk = permKey(d.deviceNetworkId)
+        Map rec = found.find { it.key == pk || "ATV-${it.key}" == d.deviceNetworkId }
+        if (rec && !rec.addresses.any { it.ip == d.getDataValue("ip") } && !editedIp(d.deviceNetworkId)) {
             Map a = rec.addresses.last() as Map
             d.componentSetAddress(a.ip as String, a.port as Integer)
         }
@@ -450,7 +515,13 @@ def mainPage(params = null) {
                     input name: "confirmRemove_${key}", type: "button", title: "Yes, remove", width: 3,
                         inputClass: "app-ui-button app-ui-button-danger"
                     input name: "keepTv_${key}", type: "button", title: "Keep it", width: 3, inputClass: "app-ui-button"
+                } else if (state.editAddr == key) {
+                    input name: "newIp_${key}", type: "text", title: "New IP address", description: "e.g. 192.168.1.120",
+                        defaultValue: d.getDataValue("ip") ?: "", required: false, width: 4
+                    input name: "saveAddr_${key}", type: "button", title: "Save", width: 2, inputClass: "app-ui-button app-ui-button-primary"
+                    input name: "cancelAddr_${key}", type: "button", title: "Cancel", width: 2, inputClass: "app-ui-button"
                 } else {
+                    input name: "editAddr_${key}", type: "button", title: "Edit address", width: 3, inputClass: "app-ui-button"
                     input name: "removeTv_${key}", type: "button", title: "Remove", width: 3, inputClass: "app-ui-button"
                 }
                 paragraph rawHtml: true, "<div class='atv-end'></div>"
@@ -586,6 +657,9 @@ def appButtonHandler(String btn) {
     if (btn.startsWith("removeTv_")) { state.confirmRemove = btn - "removeTv_"; return }
     if (btn.startsWith("confirmRemove_")) { removeTv(btn - "confirmRemove_"); return }
     if (btn.startsWith("keepTv_")) { state.remove("confirmRemove"); return }
+    if (btn.startsWith("editAddr_")) { state.editAddr = btn - "editAddr_"; state.remove("confirmRemove"); return }
+    if (btn.startsWith("cancelAddr_")) { String k = btn - "cancelAddr_"; app.removeSetting("newIp_${k}"); state.remove("editAddr"); return }
+    if (btn.startsWith("saveAddr_")) { saveAddress(btn - "saveAddr_"); return }
 }
 
 private void startPair(String key) {
@@ -654,6 +728,8 @@ private void removeTv(String key) {
     Map all = state.creds ?: [:]
     all.remove(dni)
     state.creds = all
+    Map ed = (state.editedIps ?: [:]) as Map
+    if (ed.remove(dni) != null) state.editedIps = ed
     app.removeSetting("tvName_${key}")
     state.remove("confirmRemove")
     logInfo "removed ${label}"
@@ -722,8 +798,7 @@ private List tipsTopics() {
                 "so leaving an app shows it as paused. When the Apple TV sleeps it clears to none and stopped, and after waking or reconnecting " +
                 "it stays none until an app actually plays.</p>" +
                 "<p>It adds three hidden helper devices per Apple TV, named after the TV (e.g. <b>Living Room control</b>, <b>event</b>, <b>data</b>). " +
-                "They hold the extra connections and stay out of dashboards and rules. Turning the setting off removes them.</p>",
-            warning: "Running the Apple TV Now Playing (Beta)? Remove it before turning this on, so only one app tracks each Apple TV."],
+                "They hold the extra connections and stay out of dashboards and rules. Turning the setting off removes them.</p>"],
         [id: "remote", label: "Remote buttons", title: "Home Screen vs TV button", group: "Using it", icon: "pi-mobile",
             body: "<p><b>homeScreen</b> always takes the Apple TV to the Home Screen, no matter what's on screen. " +
                 "Use it in rules when you just want to go home.</p>" +
@@ -749,6 +824,8 @@ private List tipsTopics() {
         [id: "offline", label: "Offline or reconnecting", title: "Offline or reconnecting", group: "Troubleshooting", icon: "pi-wifi",
             body: "<p>Each Apple TV keeps one encrypted connection open, so commands are instant. It reconnects on its own after hub reboots, " +
                 "Apple TV reboots, network drops and IP changes, and checks the connection every 5 minutes.</p>" +
+                "<p><b>Changed the Apple TV's IP and it won't reconnect?</b> It looks for the Apple TV by the ID saved at pairing, so it usually finds it. " +
+                "If not, tap <b>Edit address</b> on its card, enter the new IP and tap <b>Save</b>. No new pairing needed.</p>" +
                 "<p><b>reconnecting</b> is normal for a few seconds after a drop. <b>offline</b> is reported only after several failed attempts. " +
                 "It keeps retrying every 5 minutes and logs <b>back online</b> when it recovers.</p>" +
                 "<p>If the log says to pair again, the pairing was removed on the Apple TV side. Tap <b>Remove</b> on the main page, then pair it again.</p>" +
@@ -827,6 +904,7 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
   a.atv-link { color: var(--hubitat-link-color, #1565c0); text-decoration: none; font-weight: 600; }
   a.atv-link:hover { text-decoration: underline; }
   .app-main-content :is([name*='removeTv_'],[name*='confirmRemove_'],[name*='keepTv_'],[name*='pairTv_'],[name*='submitPin_'],[name*='cancelPair_'],[name='refreshTvs'],
+    [name*='editAddr_'],[name*='saveAddr_'],[name*='cancelAddr_'],[id*='editAddr_'],[id*='saveAddr_'],[id*='cancelAddr_'],
     [id*='removeTv_'],[id*='confirmRemove_'],[id*='keepTv_'],[id*='pairTv_'],[id*='submitPin_'],[id*='cancelPair_'],[id='refreshTvs']) {
     font-size: 13px !important; padding: 3px 12px !important; min-height: 0 !important; height: auto !important;
     line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid var(--hubitat-control-border, #d0d7de) !important;
