@@ -31,6 +31,8 @@
       triggers the accessibility shortcut). Aliases: menu = back; home = homeScreen; tv = tvButton.
       controlCenter holds the TV button 1s. closeApp: App Switcher (TV x2), 1.5s, then Up x2 over Media Remote
       (Companion Up only scrolls it), then homeScreen; needs Track current app (the helpers hold Media Remote).
+     -Device page (1.2.2): Playback groups playPause/next/previous/skips; Remote Button adds volumeUp/Down (times =
+      steps). The old commands stay as methods for existing rules; playPause still works in remoteButton.
      -sendText: Companion remote keyboard like pyatv (_tiStop, _tiStart gives the session in _tiD, then _tiC with an
       RTIKeyedArchiver payload). replace clears first; add appends. Needs a focused text field.
      -Right after connecting the Apple TV reports its controls twice in a few ms (256, then the real
@@ -88,16 +90,11 @@ metadata {
         attribute "title", "string"
         attribute "artist", "string"
         attribute "duration", "number"
-        command "playPause"
-        command "nextTrack"
-        command "previousTrack"
-        command "skipForward"
-        command "skipBackward"
-        command "volumeUp", [[name: "steps", type: "NUMBER", description: "Steps (blank = 1, max 20)"]]
-        command "volumeDown", [[name: "steps", type: "NUMBER", description: "Steps (blank = 1, max 20)"]]
+        command "playback", [[name: "action", type: "ENUM", description: "Play/Pause toggles; skips are 10 seconds",
+            constraints: ["playPause", "nextTrack", "previousTrack", "skipForward", "skipBackward"]]]
         command "remoteButton", [[name: "button", type: "ENUM", description: "Siri Remote button",
-            constraints: ["up", "down", "left", "right", "select", "back", "homeScreen", "tvButton", "controlCenter", "closeApp", "playPause"]],
-            [name: "times", type: "NUMBER", description: "Presses (blank = 1, max 10). tvButton x2 opens the App Switcher"]]
+            constraints: ["up", "down", "left", "right", "select", "back", "homeScreen", "tvButton", "controlCenter", "closeApp", "volumeUp", "volumeDown"]],
+            [name: "times", type: "NUMBER", description: "Presses (blank = 1, max 10; volume max 20). tvButton x2 opens the App Switcher"]]
         command "sendText", [[name: "text", type: "STRING", description: "Text for the search box that's open on the TV"],
             [name: "mode", type: "ENUM", description: "replace (default) clears the box first; add appends", constraints: ["replace", "add"]]]
         command "launchApp", [[name: "app", type: "ENUM", description: "App (Other = use the box below)",
@@ -318,6 +315,18 @@ def play() {
 def playAfterWake() { media("play") }
 def pause() { media("pause") }
 def stop() { media("pause") }   // Apple TV has no stop; pause is the closest
+// Device page groups these (1.2.2). The old command names stay as methods so existing rules keep working.
+def playback(String action) {
+    switch ((action ?: "").trim()) {
+        case "playPause": playPause(); break
+        case "nextTrack": nextTrack(); break
+        case "previousTrack": previousTrack(); break
+        case "skipForward": skipForward(); break
+        case "skipBackward": skipBackward(); break
+        default: logE("unknown playback action '${action}'. Use playPause, nextTrack, previousTrack, skipForward or skipBackward.")
+    }
+}
+
 def nextTrack() { media("nextTrack") }
 def previousTrack() { media("previousTrack") }
 def skipForward() { media("skipForward") }
@@ -332,8 +341,8 @@ def remoteButton(String button, times = null) {
     key = BTN_ALIAS[key] ?: key
     if (key == "closeApp") { closeApp(); return }
     String b = HID_BTN.keySet().find { it.equalsIgnoreCase(key) }
-    if (!b) { logE("unknown button '${button}'. Use up, down, left, right, select, back, homeScreen, tvButton, controlCenter, closeApp or playPause."); return }
-    press(b, count(times, b == "tvButton" ? 2 : 10))
+    if (!b) { logE("unknown button '${button}'. Use up, down, left, right, select, back, homeScreen, tvButton, controlCenter, closeApp, volumeUp, volumeDown or playPause."); return }
+    press(b, count(times, b == "tvButton" ? 2 : b.startsWith("volume") ? 20 : 10))
 }
 
 private int count(raw, int max) {

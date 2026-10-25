@@ -70,10 +70,9 @@ After pairing, the Apple TV lists **Hubitat** under Settings → Remotes and Dev
 | `power` | `asleep`, `screensaver` or `awake` |
 | `connection` | `connected`, `connecting`, `reconnecting`, `offline` or `not paired` |
 | `refresh` | Re-reads the power state and the installed apps |
-| `play`, `pause`, `stop`, `playPause` | Playback. The Apple TV has no real stop, so `stop` pauses |
-| `nextTrack`, `previousTrack`, `skipForward`, `skipBackward` | Next and previous, skip 10 seconds |
-| `volumeUp`, `volumeDown` | Volume, with an optional number of steps |
-| `remoteButton` | `up`, `down`, `left`, `right`, `select`, `back`, `homeScreen`, `tvButton`, `controlCenter`, `closeApp`, `playPause`, with an optional number of presses |
+| `play`, `pause`, `stop` | Playback. Play always plays and Pause always pauses. The Apple TV has no real stop, so `stop` pauses |
+| `playback` | `playPause` (toggles), `nextTrack`, `previousTrack`, `skipForward`, `skipBackward` (10 seconds) |
+| `remoteButton` | `up`, `down`, `left`, `right`, `select`, `back`, `homeScreen`, `tvButton`, `controlCenter`, `closeApp`, `volumeUp`, `volumeDown`, with an optional number of presses (volume up to 20) |
 | `sendText` | Types into a search box that's open on the TV. `replace` clears it first, `add` adds to it |
 | `launchApp` | Opens an app picked from the list, or typed under Other (name, bundle ID or app link) |
 | `transportStatus` | `playing`, `paused` or `stopped`, including changes made with the Siri Remote |
@@ -82,6 +81,7 @@ After pairing, the Apple TV lists **Hubitat** under Settings → Remotes and Dev
 **State Variables** show **Installed Apps** (names you can type under Other) and **Last Launch From Hubitat**, for example `Netflix (launched)` or `Hulu (failed: not installed)`. It only covers launches sent from Hubitat. For the app actually playing, use Track current app below.
 
 **Notes**
+- The device page groups the playback buttons under **Playback** and volume under **Remote Button**. Rules written with the older command names (Next Track, Volume Up and so on) keep working.
 - `homeScreen` holds Back, like the Siri Remote, so it always goes to the Home Screen. Use it in rules when you just want to go home.
 - `tvButton` presses the Siri Remote's TV button. One press follows each Apple TV's TV Button setting (Settings → Remotes and Devices → TV Button), so it may open the Apple TV app instead of the Home Screen. Two presses (times 2) open the App Switcher.
 - `controlCenter` holds the TV button, which opens Control Center.
