@@ -29,8 +29,10 @@
       Siri Remote), tvButton (HID 7, the TV button: one press follows the Apple TV's TV Button setting,
       two back to back open the App Switcher, as pyatv's double tap; max 2 so a triple press never
       triggers the accessibility shortcut). Aliases: menu = back; home = homeScreen; tv = tvButton.
-      Closing an app in the App Switcher needs Media Remote (MRP) key events; Companion Up and touch swipes
-      only scroll it (tested), so closeApp waits for MRP (1.2.1).
+      controlCenter holds the TV button 1s. closeApp: App Switcher (TV x2), 1.5s, then Up x2 over Media Remote
+      (Companion Up only scrolls it), then homeScreen; needs Track current app (the helpers hold Media Remote).
+     -sendText: Companion remote keyboard like pyatv (_tiStop, _tiStart gives the session in _tiD, then _tiC with an
+      RTIKeyedArchiver payload). replace clears first; add appends. Needs a focused text field.
      -Right after connecting the Apple TV reports its controls twice in a few ms (256, then the real
       value), so flags in the first 2s are applied once, after 2s, to avoid a false "stopped".
      -remoteButton(times) and volumeUp/Down(steps) repeat with a 150/250ms gap (max 10/20).
@@ -68,7 +70,7 @@
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { return "1.2.1" }
+def version() { return "1.2.2" }
 
 metadata {
     definition(name: "Apple TV", namespace: "jdthomas24", author: "Jason Thomas", importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/AppleTVDriver.groovy") {
@@ -94,8 +96,10 @@ metadata {
         command "volumeUp", [[name: "steps", type: "NUMBER", description: "Steps (blank = 1, max 20)"]]
         command "volumeDown", [[name: "steps", type: "NUMBER", description: "Steps (blank = 1, max 20)"]]
         command "remoteButton", [[name: "button", type: "ENUM", description: "Siri Remote button",
-            constraints: ["up", "down", "left", "right", "select", "back", "homeScreen", "tvButton", "playPause"]],
+            constraints: ["up", "down", "left", "right", "select", "back", "homeScreen", "tvButton", "controlCenter", "closeApp", "playPause"]],
             [name: "times", type: "NUMBER", description: "Presses (blank = 1, max 10). tvButton x2 opens the App Switcher"]]
+        command "sendText", [[name: "text", type: "STRING", description: "Text for the search box that's open on the TV"],
+            [name: "mode", type: "ENUM", description: "replace (default) clears the box first; add appends", constraints: ["replace", "add"]]]
         command "launchApp", [[name: "app", type: "ENUM", description: "App (Other = use the box below)",
             constraints: ["Netflix", "YouTube", "YouTube TV", "Prime Video", "Disney+", "Hulu", "HBO Max", "Peacock",
                           "Paramount+", "Plex", "Apple TV", "Music", "Spotify", "Other"]],
@@ -119,8 +123,8 @@ metadata {
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
 @Field static final Map MC_CMD = [play: 1, pause: 2, nextTrack: 3, previousTrack: 4, skipForward: 7, skipBackward: 7]
 @Field static final Map HID_BTN = [up: 1, down: 2, left: 3, right: 4, back: 5, select: 6,
-                                   volumeUp: 8, volumeDown: 9, playPause: 14, homeScreen: 5, tvButton: 7]
-@Field static final Map BTN_ALIAS = [menu: "back", home: "homeScreen", tv: "tvButton", tvbutton: "tvButton",
+                                   volumeUp: 8, volumeDown: 9, playPause: 14, homeScreen: 5, tvButton: 7, controlCenter: 7]
+@Field static final Map BTN_ALIAS = [menu: "back", home: "homeScreen", tv: "tvButton", tvbutton: "tvButton", controlcenter: "controlCenter", cc: "controlCenter", closeapp: "closeApp",
                                      enter: "select", ok: "select", homescreen: "homeScreen", mainmenu: "homeScreen"]
 // Dropdown pick -> names the Apple TV may use for it, tried exactly, in order.
 @Field static final Map APP_NAMES = ["YouTube TV": ["YouTube TV"], "Prime Video": ["Prime Video", "Amazon Prime Video"],
@@ -326,8 +330,9 @@ def volumeDown(steps = null) { press("volumeDown", count(steps, 20)) }
 def remoteButton(String button, times = null) {
     String key = (button ?: "").trim().toLowerCase()
     key = BTN_ALIAS[key] ?: key
+    if (key == "closeApp") { closeApp(); return }
     String b = HID_BTN.keySet().find { it.equalsIgnoreCase(key) }
-    if (!b) { logE("unknown button '${button}'. Use up, down, left, right, select, back, homeScreen, tvButton or playPause."); return }
+    if (!b) { logE("unknown button '${button}'. Use up, down, left, right, select, back, homeScreen, tvButton, controlCenter, closeApp or playPause."); return }
     press(b, count(times, b == "tvButton" ? 2 : 10))
 }
 
@@ -352,7 +357,7 @@ private void press(String name, int times = 1) {
     if (m.stage != "READY") { queue("btn:${name}:${times}"); return }
     int code = HID_BTN[name] as int
     int gap = name.startsWith("volume") ? 250 : name == "tvButton" ? 0 : 150   // tvButton x2 = double tap, back to back
-    int hold = name == "homeScreen" ? 1000 : 0   // homeScreen = hold Back, like the Siri Remote
+    int hold = name in ["homeScreen", "controlCenter"] ? 1000 : 0   // hold Back = Home Screen, hold TV = Control Center
     for (int i = 0; i < times; i++) {
         if (i > 0 && gap) pauseExecution(gap)
         request("_hidC", ["_hBtS": 1, "_hidC": code], name)
@@ -806,6 +811,8 @@ private void handleSessionFrame(Map m, byte[] header, byte[] payload) {
         if (msg._em) {
             if (label == "tvrc") { finishSetup(m); return }
             if (label == "launch") { launchFailed("${m.launchName ?: 'app'}: ${msg._em}", msg._em.toString().take(60)); return }
+            if (label == "tiStart") { m.remove("tiText"); logE("sendText: the Apple TV refused the text session (${msg._em})"); return }
+            if (label == "tiStop") { logF("sendText: no text session to stop"); return }
             if (label == "apps") {
                 logN("could not read the app list: ${msg._em}")
                 if (m.pendingLaunch) launchFailed("${m.pendingLaunch}: the app list couldn't be read", "app list unavailable")
@@ -831,6 +838,9 @@ private void handleSessionFrame(Map m, byte[] header, byte[] payload) {
                 break
             case "apps":
                 appList(msg._c)
+                break
+            case "tiStart":
+                textInput(m, msg._c)
                 break
             case "launch":
                 logF("${m.launchName ?: 'launch'} acknowledged")
@@ -998,6 +1008,151 @@ private void sendIfChanged(String name, String value) {
 }
 
 private String fmtNow() { new Date().format("MMM d, h:mm a", location.timeZone) }
+
+// ---------- closeApp and sendText ----------
+
+private void closeApp() {
+    if (mem().stage != "READY") { logE("closeApp: not connected yet"); return }
+    if (!state.trackApps) { logE("closeApp: turn on Track current app in the Apple TV Integration app to use closeApp"); return }
+    if (!helper("control")?.componentMrpReady()) { logE("closeApp: Media Remote is still connecting, try again in a moment"); return }
+    press("tvButton", 2)
+    runInMillis(1500, "closeAppUp", [data: [n: 1]])
+}
+
+def closeAppUp(Map d) {
+    int n = (d?.n ?: 1) as int
+    if (!helper("control")?.componentMrpKey("up")) { logE("closeApp: Media Remote dropped, app not closed"); return }
+    if (n < 2) runInMillis(400, "closeAppUp", [data: [n: n + 1]])
+    else runInMillis(800, "closeAppHome")
+}
+
+def closeAppHome() { press("homeScreen", 1); logN("closed the app") }
+
+// Remote keyboard over Companion like pyatv: _tiStop, _tiStart (session in _tiD), then _tiC with an RTI payload.
+def sendText(String text, String mode = null) {
+    Map m = mem()
+    if (m.stage != "READY") { logE("sendText: not connected yet"); return }
+    m.tiText = text ?: ""
+    m.tiClear = (mode ?: "replace") == "replace"
+    request("_tiStop", [:], "tiStop")
+    request("_tiStart", [:], "tiStart")
+    logN("sendText: starting a text session")
+}
+
+private void textInput(Map m, c) {
+    String text = (m.remove("tiText") ?: "") as String
+    boolean clear = m.remove("tiClear") == true
+    def ti = c instanceof Map ? c._tiD : null
+    if (!(ti instanceof byte[])) { logE("sendText: no text field is focused on the Apple TV. Open a search box first."); return }
+    byte[] uuid = null
+    try {
+        Map p = bplistParse(ti as byte[]) as Map
+        List objs = p['$objects'] as List
+        def v = (p['$top'] as Map)?.sessionUUID
+        for (int i = 0; i < 3 && v instanceof Map && (v as Map).containsKey('$uid'); i++) v = objs[(v['$uid'] as int)]
+        if (v instanceof Map && (v as Map)['NS.uuidbytes'] != null) {
+            v = (v as Map)['NS.uuidbytes']
+            if (v instanceof Map && (v as Map).containsKey('$uid')) v = objs[(v['$uid'] as int)]
+        }
+        if (v instanceof byte[]) uuid = v as byte[]
+        if (lvl() >= 2) logF("sendText: session archive ${nsResolve(p['$top'], objs, 0)}")
+    } catch (e) { logF("sendText: couldn't read the session: ${e.message}") }
+    if (!uuid) { logE("sendText: couldn't read the text session from the Apple TV"); return }
+    if (clear) send(companionEvent(m.ss as Map, "_tiC", ["_tiV": 1, "_tiD": rtiPayload(uuid, null)]))
+    if (text) send(companionEvent(m.ss as Map, "_tiC", ["_tiV": 1, "_tiD": rtiPayload(uuid, text)]))
+    logN("sendText: ${clear ? 'replaced with' : 'added'} '${text}'")
+}
+
+// pyatv rti_text_operations: clear (text null) or insert text, as an RTIKeyedArchiver plist.
+private byte[] rtiPayload(byte[] uuid, String text) {
+    List objs
+    if (text == null) {
+        objs = ['$null', ['$class': ['$uid': 7], targetSessionUUID: ['$uid': 5], keyboardOutput: ['$uid': 2], textToAssert: ['$uid': 4]],
+                ['$class': ['$uid': 3]], ['$classname': "TIKeyboardOutput", '$classes': ["TIKeyboardOutput", "NSObject"]], "",
+                ['NS.uuidbytes': uuid, '$class': ['$uid': 6]], ['$classname': "NSUUID", '$classes': ["NSUUID", "NSObject"]],
+                ['$classname': "RTITextOperations", '$classes': ["RTITextOperations", "NSObject"]]]
+    } else {
+        objs = ['$null', [keyboardOutput: ['$uid': 2], '$class': ['$uid': 7], targetSessionUUID: ['$uid': 5]],
+                [insertionText: ['$uid': 3], '$class': ['$uid': 4]], text,
+                ['$classname': "TIKeyboardOutput", '$classes': ["TIKeyboardOutput", "NSObject"]],
+                ['NS.uuidbytes': uuid, '$class': ['$uid': 6]], ['$classname': "NSUUID", '$classes': ["NSUUID", "NSObject"]],
+                ['$classname': "RTITextOperations", '$classes': ["RTITextOperations", "NSObject"]]]
+    }
+    return bplistWrite(['$version': 100000, '$archiver': "RTIKeyedArchiver", '$top': [textOperations: ['$uid': 1]], '$objects': objs])
+}
+
+byte[] bplistWrite(root) {
+    List objs = []
+    Closure add
+    add = { v ->
+        int idx = objs.size()
+        objs << null
+        if (v instanceof Map && (v as Map).size() == 1 && (v as Map).containsKey('$uid')) {
+            objs[idx] = [t: "uid", v: (v as Map)['$uid'] as long]
+        } else if (v instanceof Map) {
+            List ks = (v as Map).keySet().collect { add(it.toString()) }
+            List vs = (v as Map).values().collect { add(it) }
+            objs[idx] = [t: "dict", k: ks, v: vs]
+        } else if (v instanceof List) {
+            objs[idx] = [t: "list", v: (v as List).collect { add(it) }]
+        } else objs[idx] = [t: "val", v: v]
+        return idx
+    }
+    add(root)
+    int refSize = objs.size() < 256 ? 1 : 2
+    java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()
+    out.write("bplist00".getBytes("UTF-8"))
+    List offsets = []
+    objs.each { o ->
+        offsets << out.size()
+        if (o.t == "dict") {
+            bpMarker(out, 0xD, (o.k as List).size())
+            (o.k + o.v).each { bpWriteUInt(out, it as long, refSize) }
+        } else if (o.t == "uid") {
+            long u = o.v as long
+            int len = u < 256 ? 1 : u < 65536 ? 2 : 4
+            out.write(0x80 | (len - 1)); bpWriteUInt(out, u, len)
+        } else if (o.t == "list") {
+            bpMarker(out, 0xA, (o.v as List).size())
+            (o.v as List).each { bpWriteUInt(out, it as long, refSize) }
+        } else {
+            def v = o.v
+            if (v instanceof Boolean) out.write(v ? 0x09 : 0x08)
+            else if (v instanceof byte[]) { bpMarker(out, 0x4, (v as byte[]).length); out.write(v as byte[]) }
+            else if (v instanceof Number) {
+                BigInteger n = v as BigInteger
+                if (n.signum() >= 0 && n.bitLength() <= 8) { out.write(0x10); bpWriteUInt(out, n.longValue(), 1) }
+                else if (n.signum() >= 0 && n.bitLength() <= 16) { out.write(0x11); bpWriteUInt(out, n.longValue(), 2) }
+                else if (n.signum() >= 0 && n.bitLength() <= 32) { out.write(0x12); bpWriteUInt(out, n.longValue(), 4) }
+                else if (n.bitLength() <= 63) { out.write(0x13); bpWriteUInt(out, n.longValue(), 8) }
+                else { out.write(0x14); byte[] b = new byte[16]; byte[] m = n.toByteArray(); for (int i = 0; i < Math.min(16, m.length); i++) b[15 - i] = m[m.length - 1 - i]; out.write(b) }
+            } else {
+                String sv = v.toString()
+                if (sv.every { (it as char) < 128 }) { bpMarker(out, 0x5, sv.length()); out.write(sv.getBytes("US-ASCII")) }
+                else { bpMarker(out, 0x6, sv.length()); out.write(sv.getBytes("UTF-16BE")) }
+            }
+        }
+    }
+    int offTable = out.size()
+    int offSize = offTable < 256 ? 1 : offTable < 65536 ? 2 : 4
+    offsets.each { bpWriteUInt(out, it as long, offSize) }
+    out.write(new byte[6])
+    out.write(offSize); out.write(refSize)
+    bpWriteUInt(out, objs.size() as long, 8); bpWriteUInt(out, 0L, 8); bpWriteUInt(out, offTable as long, 8)
+    return out.toByteArray()
+}
+
+private void bpMarker(java.io.ByteArrayOutputStream out, int type, int count) {
+    if (count < 15) { out.write((type << 4) | count); return }
+    out.write((type << 4) | 0xF)
+    if (count < 256) { out.write(0x10); bpWriteUInt(out, count as long, 1) }
+    else if (count < 65536) { out.write(0x11); bpWriteUInt(out, count as long, 2) }
+    else { out.write(0x12); bpWriteUInt(out, count as long, 4) }
+}
+
+private void bpWriteUInt(java.io.ByteArrayOutputStream out, long v, int size) {
+    for (int i = size - 1; i >= 0; i--) out.write((int) ((v >>> (8 * i)) & 0xFF))
+}
 
 // ---------- Track current app: helper devices ----------
 // Three hidden helpers per TV (one raw socket per device): control runs the AirPlay/Media Remote session,

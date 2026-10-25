@@ -30,7 +30,7 @@
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { "1.2.1" }
+def version() { "1.2.2" }
 
 metadata {
     definition(name: "Apple TV Helper", namespace: "jdthomas24", author: "jdthomas24",
@@ -131,6 +131,28 @@ def reconnect() {
 }
 
 // After the Apple TV is paired again: drop the cached keys and start over.
+// Media Remote keys for closeApp (pyatv _send_hid_key: down, up, then a generic message as a flush).
+@Field static final Map MRP_KEYS = [up: [1, 0x8C], down: [1, 0x8D], left: [1, 0x8B], right: [1, 0x8A], select: [1, 0x89], menu: [1, 0x86], home: [12, 0x40]]
+
+boolean componentMrpReady() { mem().mrpStage == "READY" }
+
+boolean componentMrpKey(String key) {
+    Map m = mem()
+    List k = MRP_KEYS[key] as List
+    if (m.mrpStage != "READY" || !k) return false
+    [true, false].each { boolean down ->
+        mrpSend(m, "SEND_HID_EVENT_MESSAGE", null, ["sendHIDEventMessage": ["hidEventData": hidEvent(k[0] as int, k[1] as int, down)]])
+    }
+    mrpSend(m, "GENERIC_MESSAGE", null, [:])
+    return true
+}
+
+private byte[] hidEvent(int page, int usage, boolean down) {
+    String hex = "438922cf08020000" + "00000000000000000100000000000000020" + "00000200000000300000001000000000000" +
+        String.format("%04x%04x%04x", page, usage, down ? 1 : 0) + "0000000000000001000000"
+    return fromHex(hex)
+}
+
 void componentReset() {
     if (role() != "main") return
     mem().remove("creds")

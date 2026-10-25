@@ -50,7 +50,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Apple TV Integration"
-@Field static final String APP_VERSION = "1.2.1"
+@Field static final String APP_VERSION = "1.2.2"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/166801"
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
@@ -799,12 +799,15 @@ private List tipsTopics() {
                 "it stays none until an app actually plays.</p>" +
                 "<p>It adds three hidden helper devices per Apple TV, named after the TV (e.g. <b>Living Room control</b>, <b>event</b>, <b>data</b>). " +
                 "They hold the extra connections and stay out of dashboards and rules. Turning the setting off removes them.</p>"],
-        [id: "remote", label: "Remote buttons", title: "Home Screen vs TV button", group: "Using it", icon: "pi-mobile",
+        [id: "remote", label: "Remote buttons", title: "Remote buttons and text", group: "Using it", icon: "pi-mobile",
             body: "<p><b>homeScreen</b> always takes the Apple TV to the Home Screen, no matter what's on screen. " +
                 "Use it in rules when you just want to go home.</p>" +
                 "<p><b>tvButton</b> presses the TV button on the Siri Remote (the one with the TV icon). One press does whatever your " +
                 "Apple TV's TV Button setting says, the Home Screen or the Apple TV app (${APPLETV_PILL} <b>Settings &rarr; Remotes and Devices " +
                 "&rarr; TV Button</b>). Two presses (<b>times</b> 2) open the App Switcher.</p>" +
+                "<p><b>controlCenter</b> holds the TV button, which opens Control Center.</p>" +
+                "<p><b>closeApp</b> closes the app on screen and goes back to the Home Screen. It needs <b>Track current app</b> turned on.</p>" +
+                "<p><b>Send Text</b> types into a search box that's already open on the TV. <b>replace</b> clears the box first, <b>add</b> adds to what's there.</p>" +
                 exampleBoxHtml("<b>Not sure which to use?</b> For rules, <b>homeScreen</b> is the safe choice."),
             warning: "home is a shortcut for homeScreen, and tv for tvButton, if you type button names in a rule."],
 
