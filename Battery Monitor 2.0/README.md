@@ -1,6 +1,6 @@
 # Battery Monitor 2.0 for Hubitat
 
-> **Status: v2.7.1.** Tracks battery levels, drain, health and replacements for the devices you pick, with Li-ion cliff-drop alerts and an optional web portal. Companion to [Device Health Monitor](../Device%20Health%20Monitor), which watches connectivity.
+> **Status: v2.7.2.** Tracks battery levels, drain, health and replacements for the devices you pick, with Li-ion cliff-drop alerts and an optional web portal. Companion to [Device Health Monitor](../Device%20Health%20Monitor), which watches connectivity.
 
 ## What it does
 
@@ -71,7 +71,7 @@ Li-ion cells hold a flat charge, then can drop to near dead within hours. Cliff 
 1. **Apps Code** → open Battery Monitor 2.0 → **OAuth** (top right) → **Enable OAuth in App** → **Update**.
 2. Back in the app, tap **Done**. Cloud and Local links appear under **Settings → Web portal**.
 
-Add either link to a dashboard Link tile for one-tap access. The portal refreshes every 2 minutes and has its own dark theme.
+Add either link to a dashboard Link tile for one-tap access. The portal refreshes every 2 minutes. It's dark by default: pick Light or Follow device under **Portal theme**, or tap the sun/moon button on the portal, which each browser remembers.
 
 ## Troubleshooting
 
