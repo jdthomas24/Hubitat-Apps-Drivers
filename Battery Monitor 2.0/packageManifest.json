@@ -1,6 +1,6 @@
 {
     "packageName": "Battery Monitor 2.0",
-    "releaseNotes": "v2.7.2: Light mode for the web portal. Pick Dark, Light or Follow device under Web portal in the app, or tap the new sun/moon button on the portal itself, which each browser remembers. Dark stays the default. No Done needed. v2.7.1: Dark mode. The app follows the hub's light or dark theme (Hubitat 2.5.3+) and keeps its current look on older firmware. The web portal keeps its own dark theme. No changes to monitoring.",
+    "releaseNotes": "v2.7.2: Light mode for the web portal. Pick Dark, Light or Follow device under Web portal in the app, or tap the new ◐ button on the portal itself, which each browser remembers. Dark stays the default. No Done needed. v2.7.1: Dark mode. The app follows the hub's light or dark theme (Hubitat 2.5.3+) and keeps its current look on older firmware. The web portal keeps its own dark theme. No changes to monitoring.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Battery%20Monitor%202.0",
     "communityLink": "https://community.hubitat.com/t/release-battery-monitor-2-0/162329",
     "author": "jdthomas24",

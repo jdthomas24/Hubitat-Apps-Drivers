@@ -9,7 +9,7 @@
  * Optional OAuth web portal serves a live dashboard.
  *
  * v2.7.2 -- Web portal light mode: Portal theme setting (Dark default, Light, Follow device) plus a
- *    sun/moon button on the portal that each browser remembers. Dark rules stay under .bm-dark.
+ *    ◐ button on the portal that each browser remembers. Dark rules stay under .bm-dark.
  * v2.7.1 -- Dark mode: in-hub pages use the hub's theme colors (var() tokens with fallbacks, tinted
  *    pills and messages); legacyLightThemeCss() covers pre-2.5.3 firmware (pattern from Reolink 1.6.13).
  *    The web portal keeps its own dark theme.
@@ -535,7 +535,7 @@ def portalPage() {
                     "<b>Local (at home):</b><br><a href='${localUrl}' target='_blank'>${localUrl}</a></div>"
                 input "portalTheme", "enum", title: "Portal theme", options: ["dark": "Dark", "light": "Light", "auto": "Follow device"],
                     defaultValue: "dark", required: false, width: 4
-                paragraph rawHtml: true, "<div class='bm-hint'>The starting look for everyone. The sun/moon button on the portal switches it, and each browser remembers its choice.</div>"
+                paragraph rawHtml: true, "<div class='bm-hint'>The starting look for everyone. The ◐ button on the portal switches it, and each browser remembers its choice.</div>"
             } else {
                 def hubIp = location?.hub?.localIP ?: ""
                 paragraph rawHtml: true, "<div class='bm-msg bm-msg-err'><b>OAuth isn't enabled yet.</b> To turn on the portal:<br><br>" +
@@ -1513,7 +1513,7 @@ ${portalThemeScript()}
 }
 
 // Portal theme: body class bm-dark or bm-light. The summary markup's own styles are the light look (var() fallbacks);
-// bm-dark overrides them. A browser's saved choice (sun/moon button) wins over the app setting.
+// bm-dark overrides them. A browser's saved choice (◐ button) wins over the app setting.
 private String portalThemeClass() { (settings.portalTheme ?: "dark") == "light" ? "bm-light" : "bm-dark" }
 
 private String portalThemeScript() {
