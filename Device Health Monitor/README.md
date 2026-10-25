@@ -1,6 +1,6 @@
 # Device Health Monitor for Hubitat
 
-> **Status: v1.7.3.** Learns how often each device normally checks in and flags the ones that go quiet. Covers Zigbee, Z-Wave, Matter, Hub Mesh, LAN, Virtual and Hub Variable devices. Companion to [Battery Monitor 2.0](../Battery%20Monitor%202.0), which watches batteries.
+> **Status: v1.7.4.** Learns how often each device normally checks in and flags the ones that go quiet. Covers Zigbee, Z-Wave, Matter, Hub Mesh, LAN, Virtual and Hub Variable devices. Companion to [Battery Monitor 2.0](../Battery%20Monitor%202.0), which watches batteries.
 
 ## What it does
 
@@ -67,7 +67,7 @@ Check one device any time from **Device actions → Check with hub radio**, or r
 1. **Apps Code** → open Device Health Monitor → **OAuth** (top right) → **Enable OAuth in App** → **Update**.
 2. Back in the app, tap **Done**. The links appear under **Settings → Web portal**.
 
-The portal refreshes every 60 seconds, groups by protocol, health or location, and lets you set a device's location or note by tapping it. It has its own dark theme.
+The portal refreshes every 60 seconds, groups by protocol, health or location, and lets you set a device's location or note by tapping it. It's dark by default: pick Light or Follow device under **Portal theme**, or tap the ◐ button on the portal, which each browser remembers.
 
 ## Troubleshooting
 

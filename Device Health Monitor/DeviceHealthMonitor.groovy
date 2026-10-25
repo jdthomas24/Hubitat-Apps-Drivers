@@ -1,12 +1,14 @@
 /**
  * Device Health Monitor
- * Version: 1.7.3
+ * Version: 1.7.4
  *
  * Learns each device's normal check-in pattern and flags devices that go quiet, across
  * Zigbee, Z-Wave, Matter, Hub Mesh, LAN, Virtual and Hub Variable. Verifies Poor/Offline
  * devices by state events, refresh/ping, the hub's Z-Wave and Zigbee radio data, or Hue Bridge /
  * Konnected Panel round-trips. Optional OAuth web portal.
  *
+ * v1.7.4 -- Web portal light mode: Portal theme setting (Dark default, Light, Follow device) plus a
+ *    theme button on the portal that each browser remembers. Light rules live under body.dhm-light.
  * v1.7.3 -- Dark mode: in-hub pages use the hub's theme colors (var() tokens with fallbacks, tinted
  *    pills and messages); legacyLightThemeCss() covers pre-2.5.3 firmware (pattern from Reolink 1.6.13).
  *    State colors used as data and the web portal's own dark theme are unchanged. Code moved from
@@ -69,7 +71,7 @@ definition(
     oauth: true
 )
 
-@Field static final String APP_VERSION = "1.7.3"
+@Field static final String APP_VERSION = "1.7.4"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/release-device-health-monitor/163229"
 @Field static final String COFFEE_URL = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "best"
@@ -2316,8 +2318,25 @@ def formatInterval(minutes) {
 def getPortalRedirectHtml(delayMs, msgText) {
     return "<!DOCTYPE html><html><head><meta charset='UTF-8'>" +
            "<script>setTimeout(function(){window.location.href='dashboard?access_token=${state.accessToken}';},${delayMs});</script>" +
-           "</head><body style='background:#0d0d0d;color:#fff;text-align:center;padding-top:100px;font-family:sans-serif;'>" +
-           "<h3>🔄 Refreshing...</h3><p style='color:#666;'>${msgText}</p></body></html>"
+           "<style>body{background:#0d0d0d;color:#fff;text-align:center;padding-top:100px;font-family:sans-serif;}p{color:#888;}" +
+           "body.dhm-light{background:#f3f4f6;color:#111827;}body.dhm-light p{color:#6b7280;}</style>" +
+           "</head><body class='${portalThemeClass()}'>${portalThemeScript()}" +
+           "<h3>🔄 Refreshing...</h3><p>${msgText}</p></body></html>"
+}
+
+// Portal theme: dark by default (no body class), light = body.dhm-light. A browser's saved choice wins over the setting.
+private String portalThemeClass() { (settings.portalTheme ?: "dark") == "light" ? "dhm-light" : "" }
+
+private String portalThemeScript() {
+    String pref = (settings.portalTheme ?: "dark").toString()
+    """<script>
+(function(){
+  var pref = '${pref}', saved = null;
+  try { saved = localStorage.getItem('dhmPortalTheme'); } catch (e) {}
+  var light = saved ? saved === 'light' : pref === 'auto' ? !!(window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches) : pref === 'light';
+  document.body.className = light ? 'dhm-light' : '';
+})();
+</script>"""
 }
 
 def forceRefreshEndpoint() {
@@ -2489,6 +2508,34 @@ summary:hover{background:#252525}
 .scanning-badge{background:#1f618d;color:#fff;font-size:11px;padding:3px 8px;border-radius:10px;margin-left:8px}
 select.top-select{background:#2c3e50;color:#fff;border:none;border-radius:8px;padding:0 12px;font-size:13px;font-weight:600;cursor:pointer;height:44px}
 @media(max-width:600px){body{padding:10px}.container{padding:14px}.row{flex-wrap:wrap}.summary-card{min-width:40%}}
+body.dhm-light{background:#f3f4f6;color:#1f2937}
+.dhm-light .container{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.dhm-light h2,.dhm-light .dev-name,.dhm-light .summary-card b,.dhm-light summary,.dhm-light .modal-title,.dhm-light .modal-row span:last-child{color:#111827}
+.dhm-light .subtitle,.dhm-light .cat-count,.dhm-light .dev-meta,.dhm-light .modal-row span:first-child,.dhm-light .empty{color:#6b7280}
+.dhm-light .summary-card{background:#f5f7fa;border-bottom-color:#d1d5db}
+.dhm-light .summary-card span,.dhm-light .filter-bar label{color:#4b5563}
+.dhm-light .filter-bar input[type=text],.dhm-light .modal-input{background:#fff;border-color:#cfd6de;color:#111827}
+.dhm-light summary{background:#f3f4f6}
+.dhm-light summary:hover{background:#e9edf2}
+.dhm-light .dev-card{background:#fff;border-top:1px solid #e5e7eb;border-right:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb}
+.dhm-light .health-Offline{background:linear-gradient(90deg,rgba(153,27,27,.08) 0%,#fff 30%)}
+.dhm-light .health-Poor{background:linear-gradient(90deg,rgba(239,68,68,.07) 0%,#fff 30%)}
+.dhm-light .health-Fair{background:linear-gradient(90deg,rgba(249,115,22,.07) 0%,#fff 30%)}
+.dhm-light .modal-overlay{background:rgba(0,0,0,.4)}
+.dhm-light .modal{background:#fff;border-color:#e5e7eb}
+.dhm-light .modal-title{border-bottom-color:#e5e7eb}
+.dhm-light .modal-row{border-bottom-color:#eef0f3}
+.dhm-light .modal-info{background:#f5f7fa}
+.dhm-light .modal-info .modal-row{border-bottom-color:#e5e7eb}
+.dhm-light .modal-cancel{background:#e5e7eb;color:#111827}
+.dhm-light .modal-cancel:hover{background:#d1d5db}
+.dhm-light select.top-select{background:#e5e7eb;color:#111827}
+.dhm-light .loader{border-color:#e5e7eb;border-top-color:#3b82f6}
+.theme-btn{flex:0 0 44px;height:44px;border-radius:8px;border:1px solid #333;background:transparent;color:#d1d5db;font-size:18px;cursor:pointer}
+.dhm-light .theme-btn{border-color:#cfd6de;color:#374151}
+.modal-info{background:#1a1a1a;border-radius:6px;padding:10px;margin-bottom:14px;font-size:12px}
+.modal-info .modal-row{border-bottom-color:#222}
+.modal-info .modal-row:last-child{border-bottom:0}
 """
 
         def js = """
@@ -2643,6 +2690,7 @@ function render() {
     html += "<option value='health'   " + (groupMode==='health'  ?'selected':'') + ">❤️ By Health</option>";
     html += "<option value='location' " + (groupMode==='location'?'selected':'') + ">🏷️ By Location</option>";
     html += "</select>";
+    html += "<button type='button' class='theme-btn' onclick='toggleTheme()' title='Switch light or dark' aria-label='Switch light or dark'>◐</button>";
     html += "</div>";
 
     html += "<div class='filter-bar'>";
@@ -2735,6 +2783,11 @@ function saveEdit() {
 }
 
 function closeEdit() { document.getElementById('editModal').style.display = 'none'; }
+function toggleTheme() {
+    let light = !document.body.classList.contains('dhm-light');
+    document.body.className = light ? 'dhm-light' : '';
+    try { localStorage.setItem('dhmPortalTheme', light ? 'light' : 'dark'); } catch (e) {}
+}
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeEdit(); });
 document.addEventListener('DOMContentLoaded', load);
 setInterval(silentRefresh, 60000);
@@ -2743,16 +2796,16 @@ setInterval(silentRefresh, 60000);
         def html = "<!DOCTYPE html><html><head>" +
                    "<meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>" +
                    "<title>Device Health Portal</title>" +
-                   "<style>${css}</style></head><body>" +
+                   "<style>${css}</style></head><body class='${portalThemeClass()}'>" + portalThemeScript() +
                    "<div class='container'><div id='app'></div></div>" +
                    "<div id='editModal' class='modal-overlay' onclick='closeEdit()'>" +
                    "<div class='modal' onclick='event.stopPropagation()'>" +
                    "<div class='modal-title'>📡 <span id='editDeviceName'></span></div>" +
                    "<input type='hidden' id='editDeviceId'>" +
-                   "<div style='background:#1a1a1a;border-radius:6px;padding:10px;margin-bottom:14px;font-size:12px;'>" +
-                   "<div class='modal-row' style='border-bottom:1px solid #222;'><span>Health</span><span id='modalHealth'>—</span></div>" +
-                   "<div class='modal-row' style='border-bottom:1px solid #222;'><span>Protocol</span><span id='modalProtocol'>—</span></div>" +
-                   "<div class='modal-row' style='border-bottom:1px solid #222;'><span>Last Check-in</span><span id='modalLastSeen'>—</span></div>" +
+                   "<div class='modal-info'>" +
+                   "<div class='modal-row'><span>Health</span><span id='modalHealth'>—</span></div>" +
+                   "<div class='modal-row'><span>Protocol</span><span id='modalProtocol'>—</span></div>" +
+                   "<div class='modal-row'><span>Last Check-in</span><span id='modalLastSeen'>—</span></div>" +
                    "<div class='modal-row'><span>Avg Check-in</span><span id='modalAvgInt'>—</span></div>" +
                    "</div>" +
                    "<div class='modal-row'><span>Location</span><span style='width:60%;'><select id='editLoc' class='modal-input'></select></span></div>" +
@@ -3469,6 +3522,9 @@ def portalPage() {
                 paragraph rawHtml: true, "<div class='bm-msg bm-msg-info' style='word-break:break-all;'>" +
                     "<b>Cloud (anywhere):</b><br><a href='${cloudUrl}' target='_blank'>${cloudUrl}</a><br><br>" +
                     "<b>Local (at home):</b><br><a href='${localUrl}' target='_blank'>${localUrl}</a></div>"
+                input "portalTheme", "enum", title: "Portal theme", options: ["dark": "Dark", "light": "Light", "auto": "Follow device"],
+                    defaultValue: "dark", required: false, width: 4
+                paragraph rawHtml: true, "<div class='bm-hint'>The starting look for everyone. The ◐ button on the portal switches it, and each browser remembers its choice.</div>"
             } else {
                 paragraph rawHtml: true, "<div class='bm-msg bm-msg-err'><b>OAuth isn't enabled yet.</b> To turn on the portal:<br><br>" +
                     "1. Open <b>Apps Code</b> (" + hubLink("/app/list", "open it here") + ")<br>" +

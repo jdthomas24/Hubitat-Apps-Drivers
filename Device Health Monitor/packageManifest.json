@@ -1,12 +1,12 @@
 {
     "packageName": "Device Health Monitor",
-    "releaseNotes": "v1.7.3: Dark mode. The app follows the hub's light or dark theme (Hubitat 2.5.3+) and keeps its current look on older firmware. The web portal keeps its own dark theme. No changes to monitoring.",
+    "releaseNotes": "v1.7.4: Light mode for the web portal. Pick Dark, Light or Follow device under Web portal in the app, or tap the new ◐ button on the portal itself, which each browser remembers. Dark stays the default. No Done needed. v1.7.3: Dark mode. The app follows the hub's light or dark theme (Hubitat 2.5.3+) and keeps its current look on older firmware. The web portal keeps its own dark theme. No changes to monitoring.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Device%20Health%20Monitor",
     "communityLink": "https://community.hubitat.com/t/release-device-health-monitor/163229",
     "author": "jdthomas24",
-    "version": "1.7.3",
+    "version": "1.7.4",
     "minimumHEVersion": "2.3.0",
-    "dateReleased": "2026-10-19",
+    "dateReleased": "2026-10-25",
     "category": "Convenience",
     "tags": "Monitoring",
     "apps": [
