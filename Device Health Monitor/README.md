@@ -1,6 +1,6 @@
 # Device Health Monitor for Hubitat
 
-> **Status: v1.7.5.** Learns how often each device normally checks in and flags the ones that go quiet. Covers Zigbee, Z-Wave, Matter, Hub Mesh, LAN, Virtual and Hub Variable devices. Companion to [Battery Monitor 2.0](../Battery%20Monitor%202.0), which watches batteries.
+> **Status: v1.8.0.** Learns how often each device normally checks in and flags the ones that go quiet. Covers Zigbee, Z-Wave, Matter, Hub Mesh, LAN, Virtual and Hub Variable devices. Companion to [Battery Monitor 2.0](../Battery%20Monitor%202.0), which watches batteries.
 
 ## What it does
 
@@ -43,6 +43,7 @@ Each device needs 3 check-ins before it leaves **Pending**, so give new devices 
 | Offline | No activity for the offline threshold (default 168 hours) |
 
 - **Dead batteries:** a Zigbee, Z-Wave or Matter device reporting 5% or lower shows Poor at best until a new battery reports.
+- **Radio seen, no events:** a Zigbee or Z-Wave device the hub radio still hears, but that has sent no events for the offline threshold, shows Poor with a note. The radio proves it's reachable, not that it's working (a stuck sensor, or a battery sensor that has stopped reporting). Only devices that normally report regularly are checked, using a pace learned from events alone.
 - **Driver reports offline:** the device shows Poor at best with a note. Z-Wave and Zigbee devices are checked with the hub radio right away and go Offline after 3 missed checks. Real activity or a radio answer always wins over the driver.
 - **Minimum usual check-in** keeps burst devices from learning an unrealistic pattern: 8 hours for LAN and Hub Mesh, 2 hours for Matter, 24 hours for Virtual and Hub Variable.
 
