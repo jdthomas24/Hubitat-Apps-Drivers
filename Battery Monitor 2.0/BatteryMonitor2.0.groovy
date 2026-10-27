@@ -1,6 +1,6 @@
 /**
  * Battery Monitor 2.0
- * Version: 2.7.2
+ * Version: 2.7.3
  *
  * Tracks battery levels, drain, health, and replacements for selected devices.
  * Scans on a recurring schedule plus each device's own battery events. Health uses
@@ -8,6 +8,8 @@
  * and reacts faster to recent readings. Replacements are auto-detected from a confirmed upward jump.
  * Optional OAuth web portal serves a live dashboard.
  *
+ * v2.7.3 -- Info logging toggle (on by default) beside Debug logging. Off silences scan lines;
+ *    warnings and errors always log.
  * v2.7.2 -- Web portal light mode: Portal theme setting (Dark default, Light, Follow device) plus a
  *    ◐ button on the portal that each browser remembers. Dark rules stay under .bm-dark.
  * v2.7.1 -- Dark mode: in-hub pages use the hub's theme colors (var() tokens with fallbacks, tinted
@@ -43,7 +45,7 @@ definition(
     oauth: true
 )
 
-@Field static final String APP_VERSION = "2.7.2"
+@Field static final String APP_VERSION = "2.7.3"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/release-battery-monitor-2-0/162329"
 @Field static final String COFFEE_URL = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "best"
@@ -169,8 +171,12 @@ def updated() {
     syncCliffDefaults()
 }
 
+// Unset on upgrade counts as on
+def infoEnabled() { return settings?.infoMode != false }
+def logInfo(msg)  { if (infoEnabled()) log.info msg }
+
 def disableDebugLogging() {
-    log.info "Battery Monitor: auto-disabling debug logging after 30 minutes"
+    logInfo "Battery Monitor: auto-disabling debug logging after 30 minutes"
     app.updateSetting("debugMode", [value: false, type: "bool"])
 }
 
@@ -433,6 +439,8 @@ def mainPage() {
 
         helpAndSupportSection()
         section {
+            input "infoMode", "bool", title: "Info logging <span style='font-size:13px;color:var(--text-color-secondary, #6b7280);'>· scan lines, warnings always log</span>",
+                  defaultValue: true, submitOnChange: true
             input "debugMode", "bool", title: "Debug logging <span style='font-size:13px;color:var(--text-color-secondary, #6b7280);'>· turns off after 30 minutes</span>",
                   defaultValue: false, submitOnChange: true
         }
@@ -603,7 +611,7 @@ def scanAllDevices() {
     def devList = (autoDevices ?: []).findAll { !isIgnored(it) }
     if (!devList) return
     if (debugMode) log.debug "Running scheduled battery scan for ${devList.size()} device(s)"
-    log.info "Battery Monitor: scan started — ${devList.size()} device(s)"
+    logInfo "Battery Monitor: scan started — ${devList.size()} device(s)"
 
     confirmPendingReplacements()
 
@@ -630,7 +638,7 @@ def scanAllDevices() {
     if (poor.size()  > 0) msg += " Low battery: ${poor.join(', ')}."
     if (stale.size() > 0) msg += " Stale: ${stale.join(', ')}."
     state.lastScanAt = now()
-    log.info "Battery Monitor: scan complete — ${devList.size()} device(s) processed"
+    logInfo "Battery Monitor: scan complete — ${devList.size()} device(s) processed"
 }
 
 def reportScheduler() {
@@ -3009,9 +3017,10 @@ private List tipsTopics() {
             ],
             warning: "<b>Rechargeable lithium cells can hold near-full, then drop quickly.</b><br>A sudden fall after weeks of stable readings is often the chemistry, not the app. Turn on cliff detection for those devices."],
         [id: "logging", label: "Scan logging", title: "Scan messages in the logs", group: "Troubleshooting", icon: "pi-file",
-            body: "<p>Each scheduled scan logs a <b>scan started</b> and <b>scan complete</b> line at info level. This is intentional, " +
+            body: "<p>Each scheduled scan logs a <b>scan started</b> and <b>scan complete</b> line at info level, " +
                 "so you can confirm scans are running without turning on debug logging.</p>" +
-                "<p><b>Debug logging</b> (the toggle at the bottom of the main page) adds step-by-step detail and turns itself off after 30 minutes.</p>"]
+                "<p><b>Info logging</b> (bottom of the main page) is on by default; turn it off to keep your logs quiet. Warnings and errors still log. " +
+                "<b>Debug logging</b> adds step-by-step detail and turns itself off after 30 minutes.</p>"]
     ]
 }
 

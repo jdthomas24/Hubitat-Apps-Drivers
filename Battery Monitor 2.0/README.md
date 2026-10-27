@@ -1,6 +1,6 @@
 # Battery Monitor 2.0 for Hubitat
 
-> **Status: v2.7.2.** Tracks battery levels, drain, health and replacements for the devices you pick, with Li-ion cliff-drop alerts and an optional web portal. Companion to [Device Health Monitor](../Device%20Health%20Monitor), which watches connectivity.
+> **Status: v2.7.3.** Tracks battery levels, drain, health and replacements for the devices you pick, with Li-ion cliff-drop alerts and an optional web portal. Companion to [Device Health Monitor](../Device%20Health%20Monitor), which watches connectivity.
 
 ## What it does
 
@@ -79,7 +79,7 @@ Add either link to a dashboard Link tile for one-tap access. The portal refreshe
 
 **Heavy drain right after install.** Reset that device's drain history in **Device actions**.
 
-**Is it scanning?** Each scan logs a start and finish line at info level. Debug logging (bottom of the main page) adds detail and turns itself off after 30 minutes.
+**Is it scanning?** Each scan logs a start and finish line at info level. Info logging (bottom of the main page) is on by default and can be turned off to keep logs quiet; warnings and errors still log. Debug logging adds detail and turns itself off after 30 minutes.
 
 The app's **Tips & Troubleshooting** page covers all of this in more detail.
 
