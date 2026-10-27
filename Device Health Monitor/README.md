@@ -1,6 +1,6 @@
 # Device Health Monitor for Hubitat
 
-> **Status: v1.7.4.** Learns how often each device normally checks in and flags the ones that go quiet. Covers Zigbee, Z-Wave, Matter, Hub Mesh, LAN, Virtual and Hub Variable devices. Companion to [Battery Monitor 2.0](../Battery%20Monitor%202.0), which watches batteries.
+> **Status: v1.7.5.** Learns how often each device normally checks in and flags the ones that go quiet. Covers Zigbee, Z-Wave, Matter, Hub Mesh, LAN, Virtual and Hub Variable devices. Companion to [Battery Monitor 2.0](../Battery%20Monitor%202.0), which watches batteries.
 
 ## What it does
 
@@ -75,7 +75,7 @@ The portal refreshes every 60 seconds, groups by protocol, health or location, a
 
 **A healthy device keeps showing Poor.** Check it has had a few days to learn, add its bridge or panel if it has one, and use Device actions → Check with hub radio.
 
-**Is it scanning?** Devices are scanned in batches (40, or 25 on installs over 200 devices) and each scan logs a start and finish line at info level. Debug logging (bottom of the main page) adds detail and turns itself off after 30 minutes.
+**Is it scanning?** Devices are scanned in batches (40, or 25 on installs over 200 devices) and each scan logs a start and finish line at info level. Info logging (bottom of the main page) is on by default and can be turned off to keep logs quiet; warnings and errors still log. Debug logging adds detail and turns itself off after 30 minutes.
 
 The app's **Tips & Troubleshooting** page covers all of this in more detail.
 

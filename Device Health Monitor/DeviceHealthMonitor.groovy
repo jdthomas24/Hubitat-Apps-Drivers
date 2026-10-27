@@ -1,12 +1,14 @@
 /**
  * Device Health Monitor
- * Version: 1.7.4
+ * Version: 1.7.5
  *
  * Learns each device's normal check-in pattern and flags devices that go quiet, across
  * Zigbee, Z-Wave, Matter, Hub Mesh, LAN, Virtual and Hub Variable. Verifies Poor/Offline
  * devices by state events, refresh/ping, the hub's Z-Wave and Zigbee radio data, or Hue Bridge /
  * Konnected Panel round-trips. Optional OAuth web portal.
  *
+ * v1.7.5 -- Info logging toggle (on by default) beside Debug logging. Off silences scan and verification
+ *    info lines; warnings and errors always log.
  * v1.7.4 -- Web portal light mode: Portal theme setting (Dark default, Light, Follow device) plus a
  *    theme button on the portal that each browser remembers. Light rules live under body.dhm-light.
  * v1.7.3 -- Dark mode: in-hub pages use the hub's theme colors (var() tokens with fallbacks, tinted
@@ -71,7 +73,7 @@ definition(
     oauth: true
 )
 
-@Field static final String APP_VERSION = "1.7.4"
+@Field static final String APP_VERSION = "1.7.5"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/release-device-health-monitor/163229"
 @Field static final String COFFEE_URL = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "best"
@@ -188,7 +190,7 @@ def initialize() {
             }
         }
         state.samplesRoundedDone = true
-        if (roundedAny) log.info "Device Health Monitor: one-time cleanup — rounded bloated sample precision in state.history"
+        if (roundedAny) logInfo "Device Health Monitor: one-time cleanup — rounded bloated sample precision in state.history"
     }
     if (state.deviceLocations == null) state.deviceLocations = [:]
 
@@ -217,9 +219,12 @@ def initialize() {
 }
 
 def debugEnabled() { return settings?.debugMode == true }
+// Unset on upgrade counts as on
+def infoEnabled()  { return settings?.infoMode != false }
+def logInfo(msg)   { if (infoEnabled()) log.info msg }
 
 def disableDebugLogging() {
-    log.info "Device Health Monitor: auto-disabling debug logging after 30 minutes"
+    logInfo "Device Health Monitor: auto-disabling debug logging after 30 minutes"
     app.updateSetting("debugMode", [value: false, type: "bool"])
 }
 
@@ -716,7 +721,7 @@ def zwProbeReadback() {
         def names = missed.collect { m -> m.name + " " + Math.min(m.misses as int, ZW_MISS_LIMIT) + "/" + ZW_MISS_LIMIT }.join(", ")
         log.warn(msg + ", ${missed.size()} no answer (${names})")
     } else {
-        log.info(msg)
+        logInfo(msg)
     }
 }
 
@@ -1374,9 +1379,9 @@ def runDeepVerificationScan() {
 
     def targets = devList.findAll { getPingStatus(it.id) in ["declared", "unknown"] || zwNeedsRadioCheck(it) }
 
-    log.info "Device Health Monitor: deep verification scan starting — ${targets.size()} device(s) to verify"
+    logInfo "Device Health Monitor: deep verification scan starting — ${targets.size()} device(s) to verify"
     if (targets.size() == 0) {
-        log.info "Device Health Monitor: deep verification scan — nothing to verify (all devices already Verified or Unverifiable)"
+        logInfo "Device Health Monitor: deep verification scan — nothing to verify (all devices already Verified or Unverifiable)"
         return
     }
 
@@ -1384,7 +1389,7 @@ def runDeepVerificationScan() {
     def batchSize    = totalDevices > 200 ? 25 : 40
     def groups       = targets.collate(batchSize)
     def totalGroups  = groups.size()
-    log.info "Device Health Monitor: deep scan — ${totalGroups} batch(es) of ${batchSize}"
+    logInfo "Device Health Monitor: deep scan — ${totalGroups} batch(es) of ${batchSize}"
 
     state.deepScanQueue     = groups.collect { group -> group.collect { it.id } }
     state.deepScanTotal     = totalGroups
@@ -1407,7 +1412,7 @@ def processDeepScanGroup(data = null) {
     def groupNum    = state.deepScanCurrent
     def totalGroups = state.deepScanTotal ?: 0
     def allDevs     = getAllMonitoredDevices()
-    log.info "Device Health Monitor: deep scan batch ${groupNum}/${totalGroups} — pinging ${deviceIds.size()} device(s)"
+    logInfo "Device Health Monitor: deep scan batch ${groupNum}/${totalGroups} — pinging ${deviceIds.size()} device(s)"
 
     if (!queue.isEmpty()) {
         runIn(2, "processDeepScanGroup", [overwrite: false])
@@ -1496,10 +1501,10 @@ def finalizeDeepScan(data = null) {
     app.updateSetting("enableDeepScan", [value: false, type: "bool"])
     unschedule("runDeepVerificationScan")
 
-    log.info "Device Health Monitor: deep verification scan complete — ${verified} verified, ${unverifiable} unverifiable, ${declared} still declared"
+    logInfo "Device Health Monitor: deep verification scan complete — ${verified} verified, ${unverifiable} unverifiable, ${declared} still declared"
 
     runIn(30, "scanAllDevices", [overwrite: true])
-    log.info "Device Health Monitor: running scan to check for ping responses — waiting 30s for device responses"
+    logInfo "Device Health Monitor: running scan to check for ping responses — waiting 30s for device responses"
 }
 
 // ============================================================
@@ -1522,7 +1527,7 @@ def scanAllDevices() {
         return
     }
 
-    log.info "Device Health Monitor: scan started — ${devList.size()} device(s) queued"
+    logInfo "Device Health Monitor: scan started — ${devList.size()} device(s) queued"
     state.isScanning    = true
     state.scanStartTime = nowMs
     state.tempResults   = []
@@ -1585,7 +1590,7 @@ def processScanChunk() {
     def remaining    = queue.drop(chunkSize)
     state.scanQueue  = remaining
     def batchNum     = Math.ceil(totalDevices / chunkSize).toInteger() - Math.ceil(remaining.size() / chunkSize).toInteger()
-    log.info "Device Health Monitor: scanning batch ${batchNum} — ${chunk.size()} devices (${remaining.size()} remaining)"
+    logInfo "Device Health Monitor: scanning batch ${batchNum} — ${chunk.size()} devices (${remaining.size()} remaining)"
 
     def allDevs         = getAllMonitoredDevices()
     def intervalStr     = settings?.scanInterval ?: "3"
@@ -1751,7 +1756,7 @@ def finalizeScan() {
     state.tempResults   = []
     state.scanQueue     = []
     state.lastScanCompleted = now()
-    log.info "Device Health Monitor: scan complete — all devices processed"
+    logInfo "Device Health Monitor: scan complete — all devices processed"
 }
 
 // ============================================================
@@ -2045,7 +2050,7 @@ private void updateHealthCore(device, boolean allowProbe) {
 
     if (getStateVerified(id as String)) {
         state.verifying[id] = "state_verified"
-        log.info "Device Health Monitor: ${currentHealth} — ${device.displayName} self-verified via state change event (no ping needed)"
+        logInfo "Device Health Monitor: ${currentHealth} — ${device.displayName} self-verified via state change event (no ping needed)"
         def capMapSV  = state.deviceCapabilities ?: [:]
         def capDataSV = capMapSV[id as String] ?: [:]
         if (capDataSV.pingTrustSource == "weak" || capDataSV.weakTrustFirstGranted || capDataSV.weakTrustCooldownUntil) {
@@ -2119,7 +2124,7 @@ private void updateHealthCore(device, boolean allowProbe) {
     }
     state.verifying[id] = verifyMethod
     if (verifyMethod in ["refresh", "ping"]) {
-        log.info "Device Health Monitor: ${currentHealth} — sent ${verifyMethod} to ${device.displayName}"
+        logInfo "Device Health Monitor: ${currentHealth} — sent ${verifyMethod} to ${device.displayName}"
     } else if (verifyMethod in ["none", "virtual", "hue_no_bridge", "failed"]) {
         if (debugEnabled()) log.debug "Device Health Monitor: ${currentHealth} — cannot verify ${device.displayName} (${verifyMethod})"
     }
@@ -3078,6 +3083,8 @@ def mainPage() {
 
         helpAndSupportSection()
         section {
+            input "infoMode", "bool", title: "Info logging <span style='font-size:13px;color:var(--text-color-secondary, #6b7280);'>· scan and verification lines, warnings always log</span>",
+                  defaultValue: true, submitOnChange: true
             input "debugMode", "bool", title: "Debug logging <span style='font-size:13px;color:var(--text-color-secondary, #6b7280);'>· turns off after 30 minutes</span>",
                   defaultValue: false, submitOnChange: true
         }
@@ -4387,7 +4394,7 @@ private List tipsTopics() {
         [id: "unknown", label: "Unknown devices", title: "Devices shown as Unknown", group: "Troubleshooting", icon: "pi-question-circle",
             body: "<p>Devices whose connection type can't be read at all are skipped, and counted under <b>Monitored devices</b>. Devices detected as Hub Mesh, LAN, Virtual, or Hub Variable are still monitored; correct their connection type in <b>Device actions</b> if it's wrong.</p>"],
         [id: "logging", label: "Logging", title: "Logging", group: "Troubleshooting", icon: "pi-file",
-            body: "<p>Scans log a start and finish line at info level so you can confirm they run. <b>Debug logging</b> (the toggle at the bottom of the main page) adds step-by-step detail and turns itself off after 30 minutes.</p>"]
+            body: "<p>Scans log a start and finish line at info level so you can confirm they run. <b>Info logging</b> (bottom of the main page) is on by default; turn it off to keep your logs quiet. Warnings and errors still log. <b>Debug logging</b> adds step-by-step detail and turns itself off after 30 minutes.</p>"]
     ]
 }
 
