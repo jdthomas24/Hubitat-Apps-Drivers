@@ -1,12 +1,12 @@
 {
     "packageName": "Sofabaton Integration",
-    "releaseNotes": "v1.1.4: Quieter after a hub reboot. The hub's MQTT broker often starts a little after the integration, which logged a warning to run Force Reconnect even though the Bridge connects on its own. Now, for the first 5 minutes after startup it waits quietly, warns only if it still can't connect after that, and skips refreshes asked for while it's connecting, since every remote refreshes once connected. No Done needed. v1.1.3: Lighter on the hub. The Bridge no longer pauses after every MQTT message (the X2's spacing is kept with a timer), the Remote's last-message time updates at most once a minute, activity syncs read each Activity once, and a reconnect only re-reads the activity list. Nothing changes in how Sofabaton works. No Done needed. v1.1.2: Dark mode. The app follows the hub's light or dark theme (Hubitat 2.5.3+) and keeps its current look on older firmware. No Done needed.",
+    "releaseNotes": "v1.1.5: Navigation fix. Edit, Cancel and Save on the Add and Edit pages now move between pages the normal way instead of drawing one page inside another, so going in and out of Add or Edit no longer leaves the app's pages out of order or stuck on an edit. Add and Edit pages also list anything still needed before Save. Same fix as Reolink 1.6.16, thanks to gopher.ny. No Done needed. v1.1.4: Quieter after a hub reboot. The hub's MQTT broker often starts a little after the integration, which logged a warning to run Force Reconnect even though the Bridge connects on its own. Now, for the first 5 minutes after startup it waits quietly, warns only if it still can't connect after that, and skips refreshes asked for while it's connecting, since every remote refreshes once connected. No Done needed.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/SofaBaton%20Integration",
     "communityLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/SofaBaton%20Integration",
     "author": "jdthomas24",
-    "version": "1.1.4",
+    "version": "1.1.5",
     "minimumHEVersion": "2.5.2.126",
-    "dateReleased": "2026-10-23",
+    "dateReleased": "2026-10-28",
     "category": "Integrations",
     "tags": "remote, video, TV, buttons, MQTT",
     "apps": [

@@ -56,7 +56,7 @@ import groovy.json.JsonOutput
 import groovy.transform.Field
 import hubitat.helper.MQTTHelper
 
-def version() { return "1.1.4" }
+def version() { return "1.1.5" }
 
 @Field static final Integer SUBS_VERSION = 2
 @Field static final Integer REQ_TIMEOUT = 5

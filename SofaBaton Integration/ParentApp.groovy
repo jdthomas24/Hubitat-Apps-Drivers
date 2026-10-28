@@ -21,12 +21,12 @@
       Edit Hub can set it manually. Button Actions maps each button to switches (Toggle/On/Off);
       the app subscribes to the hub's pushed events. Group toggle: any on -> all off, else all on.
       Button events still fire on the hub device for Rule Machine or Button Controller.
-     -Add/Edit pages save ONLY on an explicit Save click (state.*SaveRequested).
-      Hubitat's Done is hidden there (it left without saving). Cancel and Save sit together at
-      the bottom as links to mainPage (so a browser reload stays on the main page), with a
-      one-time token so a reload can't re-submit. Save is gray until required fields are filled.
-     -Edit/Remove use buttons + state, not hrefs with params (Hubitat drops
-      params across same-page hrefs).
+     -Navigation (1.1.5, pattern by gopher.ny, Reolink 1.6.16): pages only link to each other, never draw
+      another page in place. Edit is a link to the Add/Edit page with the hub or activity in params.
+      Cancel links to mainPage, which clears any Add/Edit in progress. Save is a link to mainPage only
+      once the form is complete (one-time token so a reload can't save twice); mainPage saves it.
+      Until then Save is gray and the page lists what's missing. Hubitat's Done is hidden on Add/Edit.
+     -Remove uses buttons + state, not hrefs with params (Hubitat drops params across same-page hrefs).
      -No required:true on Add page inputs (browser validation blocked Cancel).
       No refreshInterval (bounced to mainPage); button presses re-render instead.
      -uninstalled() must delete the Bridge, or everything under it is orphaned.
@@ -43,7 +43,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Sofabaton Integration"
-@Field static final String APP_VERSION = "1.1.4"
+@Field static final String APP_VERSION = "1.1.5"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com"   // TODO: release thread
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
@@ -194,24 +194,18 @@ void revertLogLevel() {
 // ============================================================================
 
 def mainPage(params = null) {
-    // Save/Cancel on Add/Edit pages are links to mainPage, so the browser URL ends up here
-    // and a reload stays on the main page. The token stops a reload from re-submitting.
+    // Save on Add/Edit is a link here; the one-time token stops a reload from saving twice.
+    String notice = null
     if (params?.formAction && params?.token && params.token == state.formToken) {
         state.remove("formToken")
-        switch (params.formAction) {
-            case "saveHub": state.hubSaveRequested = true; return addHubPage()
-            case "cancelHub": state.hubPageCancelled = true; return addHubPage()
-            case "saveActivity": state.activitySaveRequested = true; return addActivityPage()
-            case "cancelActivity": state.activityPageCancelled = true; return addActivityPage()
-        }
+        if (params.formAction == "saveHub") notice = saveHubForm()
+        else if (params.formAction == "saveActivity") notice = saveActivityForm()
     }
-    if (state.editingHubDni) return addHubPage()
-    if (state.editingActivityKey) return addActivityPage()
-
-    // Clear half-entered fields from a cancelled attempt.
+    // Coming back here ends any Add/Edit: clear its fields and state (also pre-1.1.5 leftovers).
     clearHubSettings()
     clearActivitySettings()
-    ["activitySaveRequested", "discoveryStarted", "findError"].each { state.remove(it) }
+    ["editingHubDni", "editHubPrefilled", "editingActivityKey", "editActivityPrefilled", "discoveryStarted", "findError",
+     "hubSaveRequested", "hubPageCancelled", "activitySaveRequested", "activityPageCancelled"].each { state.remove(it) }
     armLogRevert()
     if (state.pushedLogLevel != currentLogLevel()) pushLogLevel()
 
@@ -229,6 +223,7 @@ def mainPage(params = null) {
     dynamicPage(name: "mainPage", install: true, uninstall: true) {
         section {
             paragraph rawHtml: true, statusBannerHtml(banner.ok, banner.title, banner.summary)
+            if (notice) paragraph "<b class='hub-text-danger'>${notice}</b>"
         }
         section(sectionClass: "app-ui-links app-main-content") {
             paragraph rawHtml: true, columnHeader("Hubs")
@@ -242,7 +237,7 @@ def mainPage(params = null) {
                 paragraph rawHtml: true, hubCardHtml(hub, activities)
                 // Hubitat can't put inputs inside HTML, so these sit tight under the card (see sb-hub-btn CSS).
                 if (hub.currentValue("hubModel") == "X2") {
-                    input name: "editHub_${dni}", type: "button", title: "Edit Hub", width: 3, inputClass: "app-ui-button"
+                    href name: "editHub_${dni}", title: "Edit Hub", description: "", page: "addHubPage", params: [editDni: dni], width: 3
                     input name: "syncHub_${dni}", type: "button", title: "Refresh Activities", width: 3, inputClass: "app-ui-button"
                     href name: "btnActs_${dni}", title: "Button Actions", description: "", page: "buttonActionsPage", params: [hub: dni], width: 3
                     input name: "removeHub_${dni}", type: "button", title: "Remove Hub", width: 3, inputClass: "app-ui-button"
@@ -251,10 +246,11 @@ def mainPage(params = null) {
                             inputClass: "app-ui-button app-ui-button-danger"
                     }
                 } else {
-                    input name: "editHub_${dni}", type: "button", title: "Edit Hub", width: 3, inputClass: "app-ui-button"
+                    href name: "editHub_${dni}", title: "Edit Hub", description: "", page: "addHubPage", params: [editDni: dni], width: 3
                     input name: "removeHub_${dni}", type: "button", title: "Remove Hub", width: 3, inputClass: "app-ui-button"
                     activities.each { act ->
-                        input name: "editAct_${dni}_${act.deviceNetworkId}", type: "button", title: "Edit ${shortName(act, hubLabel)}", width: 3, inputClass: "app-ui-button"
+                        href name: "editAct_${dni}_${act.deviceNetworkId}", title: "Edit ${shortName(act, hubLabel)}", description: "",
+                            page: "addActivityPage", params: [editKey: "${dni}|${act.deviceNetworkId}".toString()], width: 3
                         input name: "removeAct_${dni}_${act.deviceNetworkId}", type: "button", title: "Remove ${shortName(act, hubLabel)}", width: 3, inputClass: "app-ui-button"
                     }
                 }
@@ -517,16 +513,11 @@ private void clearButtonSettings(String dni) {
 // ============================================================================
 
 def addHubPage(params = [:]) {
-    logDbg "addHubPage() name=${newHubName}, model=${newHubModel}, editing=${state.editingHubDni}, saveRequested=${state.hubSaveRequested}"
-    if (state.hubPageCancelled) {
-        ["hubPageCancelled", "editingHubDni", "editHubPrefilled", "hubSaveRequested", "discoveryStarted", "findError"].each { state.remove(it) }
-        clearHubSettings()
-        return mainPage()
-    }
-    if (params?.editDni) {
+    if (params?.editDni && params.editDni != state.editingHubDni) {
         state.editingHubDni = params.editDni
         state.remove("editHubPrefilled")
     }
+    logDbg "addHubPage() name=${newHubName}, model=${newHubModel}, editing=${state.editingHubDni}"
     String editingDni = state.editingHubDni
     def bridge = getBridge()
     def editingHub = editingDni ? bridge?.getChildDevice(editingDni) : null
@@ -547,38 +538,9 @@ def addHubPage(params = [:]) {
     }
 
     boolean builtIn = newHubBuiltIn != false
-    String pickedMac = newHubMacPick ?: newHubMac
-
-    String saveError = null
-    if (state.hubSaveRequested) {
-        state.remove("hubSaveRequested")
-        if (!editingHub && newHubName && newHubModel == "X1S" && newHubIp) {
-            logInfo "adding X1S hub '${newHubName}'"
-            createHttpHub(newHubName, newHubIp)
-            clearHubSettings()
-            return mainPage()
-        } else if (!editingHub && newHubName && newHubModel == "X2" && pickedMac && (builtIn || newHubMqttHost)) {
-            logInfo "adding X2 hub '${newHubName}'"
-            createMqttHub(newHubName, pickedMac, builtIn, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass)
-            clearHubSettings()
-            return mainPage()
-        } else if (editingHub && newHubName && (editingHub.currentValue("hubModel") == "X1S" || builtIn || newHubMqttHost)) {
-            logInfo "updating hub '${editingDni}'"
-            updateExistingHub(editingHub, newHubName, builtIn, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass, newHubButtonDev)
-            clearHubSettings()
-            state.remove("editingHubDni")
-            state.remove("editHubPrefilled")
-            return mainPage()
-        } else {
-            saveError = "Please fill in all required fields before saving."
-        }
-    }
-
     String editModel = editingHub?.currentValue("hubModel")
     boolean showX2 = (!editingHub && newHubModel == "X2") || editModel == "X2"
-    boolean hubReady = editingHub ?
-        (newHubName && (editModel == "X1S" || builtIn || newHubMqttHost)) as boolean :
-        (newHubName && ((newHubModel == "X1S" && newHubIp) || (newHubModel == "X2" && pickedMac && (builtIn || newHubMqttHost)))) as boolean
+    List missing = hubMissing(editingHub)
 
     dynamicPage(name: "addHubPage", title: editingHub ? "Edit ${editingHub.getLabel()}" : "Add a Sofabaton Hub", install: false, uninstall: false) {
         section {
@@ -646,10 +608,43 @@ def addHubPage(params = [:]) {
             }
         }
         section {
-            if (saveError) paragraph "<b class='hub-text-danger'>${saveError}</b>"
-            formButtons("Hub", editingHub ? "Save Changes" : "Add This Hub", hubReady)
+            if (missing) paragraph "<span class='text-color-secondary' style='font-size:14px;'>Still needed: ${missing.join(', ')}</span>"
+            formButtons("Hub", editingHub ? "Save Changes" : "Add This Hub", !missing)
         }
     }
+}
+
+// What the hub form still needs; empty when it can be saved.
+private List hubMissing(editingHub) {
+    String model = editingHub ? editingHub.currentValue("hubModel") : newHubModel
+    List missing = []
+    if (!newHubName) missing << "Hub Name"
+    if (!model) missing << "Hub Model"
+    if (!editingHub && model == "X1S" && !newHubIp) missing << "Hub IP Address"
+    if (!editingHub && model == "X2" && !(newHubMacPick ?: newHubMac)) missing << "your X2 (Find My X2 or the MAC)"
+    if (model == "X2" && newHubBuiltIn == false && !newHubMqttHost) missing << "Broker Host/IP"
+    return missing
+}
+
+// Runs on mainPage after Save. Returns an error to show there, or null when saved.
+private String saveHubForm() {
+    String editingDni = state.editingHubDni
+    def editingHub = editingDni ? getBridge()?.getChildDevice(editingDni) : null
+    if (editingDni && !editingHub) return "Not saved: that hub no longer exists."
+    List missing = hubMissing(editingHub)
+    if (missing) return "Not saved. Still needed: ${missing.join(', ')}."
+    boolean builtIn = newHubBuiltIn != false
+    if (editingHub) {
+        logInfo "updating hub '${editingDni}'"
+        updateExistingHub(editingHub, newHubName, builtIn, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass, newHubButtonDev)
+    } else if (newHubModel == "X1S") {
+        logInfo "adding X1S hub '${newHubName}'"
+        createHttpHub(newHubName, newHubIp)
+    } else {
+        logInfo "adding X2 hub '${newHubName}'"
+        createMqttHub(newHubName, newHubMacPick ?: newHubMac, builtIn, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass)
+    }
+    return null
 }
 
 private void clearHubSettings() {
@@ -734,28 +729,17 @@ private void createMqttHub(String name, String mac, boolean builtIn, String host
 // Add / Edit Activity (X1S only. X2 activities come from the hub.)
 // ============================================================================
 
-def addActivityPage() {
-    logDbg "addActivityPage() hub=${newActivityHub}, name=${newActivityName}, saveRequested=${state.activitySaveRequested}, editing=${state.editingActivityKey}"
-    if (state.activityPageCancelled) {
-        ["activityPageCancelled", "editingActivityKey", "editActivityPrefilled"].each { state.remove(it) }
-        clearActivitySettings()
-        return mainPage()
+def addActivityPage(params = [:]) {
+    if (params?.editKey && params.editKey != state.editingActivityKey) {
+        state.editingActivityKey = params.editKey
+        state.remove("editActivityPrefilled")
     }
-    def bridge = getBridge()
-    def x1sHubs = (bridge?.getChildDevices() ?: []).findAll { it.currentValue("hubModel") != "X2" }
-
-    // state.editingActivityKey = "<hubDni>|<actDni>", set by the Edit button.
-    String editingHubDni = null
-    def editingActivity = null
-    def editingHub = null
-    if (state.editingActivityKey) {
-        def keyParts = state.editingActivityKey.split(/\|/, 2)
-        if (keyParts.length == 2) {
-            editingHubDni = keyParts[0]
-            editingHub = bridge?.getChildDevice(editingHubDni)
-            editingActivity = editingHub?.getChildDevice(keyParts[1])
-        }
-    }
+    logDbg "addActivityPage() hub=${newActivityHub}, name=${newActivityName}, editing=${state.editingActivityKey}"
+    def x1sHubs = (getBridge()?.getChildDevices() ?: []).findAll { it.currentValue("hubModel") != "X2" }
+    Map f = activityForm()
+    String editingHubDni = f.editingHubDni
+    def editingActivity = f.editingActivity
+    def editingHub = f.editingHub
 
     if (editingActivity && !state.editActivityPrefilled) {
         app.updateSetting("newActivityHub", [value: editingHubDni, type: "enum"])
@@ -766,41 +750,15 @@ def addActivityPage() {
         state.editActivityPrefilled = true
     }
 
-    def selectedHub = newActivityHub ? bridge?.getChildDevice(newActivityHub) : null
-
     // Suggest a body value from the name until the user sets one.
     if (newActivityName && !newActivityBody) {
         app.updateSetting("newActivityBody", [value: suggestBody(newActivityName), type: "text"])
     }
-    String body = (settings.newActivityBody ?: "").trim()
-    def clash = selectedHub?.getChildDevices()?.find {
-        it.deviceNetworkId != editingActivity?.deviceNetworkId && body && it.currentValue("bodyValue")?.equalsIgnoreCase(body)
-    }
-
-    List missing = []
-    if (!editingActivity && !newActivityHub) missing << "Sofabaton Hub"
-    if (!newActivityName) missing << "Activity Name"
-    if (!body) missing << "Body Value"
-
-    String saveError = null
-    if (state.activitySaveRequested) {
-        state.remove("activitySaveRequested")
-        if (clash) {
-            saveError = "Body value '${body}' is already used by ${clash.getLabel()}. Pick a different one."
-        } else if (missing) {
-            saveError = "Still needed: ${missing.join(', ')}."
-        } else if (editingActivity) {
-            updateExistingActivity(editingActivity, editingHub, newActivityName, newActivityUrlOn, newActivityUrlOff, body)
-            clearActivitySettings()
-            state.remove("editingActivityKey")
-            state.remove("editActivityPrefilled")
-            return mainPage()
-        } else {
-            createActivity(newActivityHub, newActivityName, newActivityUrlOn, newActivityUrlOff, body)
-            clearActivitySettings()
-            return mainPage()
-        }
-    }
+    f = activityForm()
+    def selectedHub = f.selectedHub
+    String body = f.body
+    def clash = f.clash
+    List missing = f.missing
 
     dynamicPage(name: "addActivityPage", title: editingActivity ? "Edit ${editingActivity.getLabel()}" : "Add an X1S Activity", install: false, uninstall: false) {
         section {
@@ -833,23 +791,63 @@ def addActivityPage() {
             }
         }
         section {
-            if (saveError) paragraph "<b class='hub-text-danger'>${saveError}</b>"
-            boolean activityReady = (!missing && !clash) as boolean
-            formButtons("Activity", editingActivity ? "Save Changes" : "Add This Activity", activityReady)
+            if (clash) paragraph "<b class='hub-text-danger'>Body value '${body}' is already used by ${clash.getLabel()}. Pick a different one.</b>"
+            else if (missing) paragraph "<span class='text-color-secondary' style='font-size:14px;'>Still needed: ${missing.join(', ')}</span>"
+            formButtons("Activity", editingActivity ? "Save Changes" : "Add This Activity", (!missing && !clash) as boolean)
         }
     }
 }
 
-// Cancel and Save side by side at the bottom of Add/Edit pages, as links to mainPage styled
-// as buttons (see HIDE_DONE_CSS). Save is gray until required fields are filled; pressing it
-// anyway just shows what's missing.
+// The activity being edited (state.editingActivityKey = "<hubDni>|<actDni>") and what the form still needs.
+private Map activityForm() {
+    def bridge = getBridge()
+    Map f = [missing: []]
+    if (state.editingActivityKey) {
+        def keyParts = state.editingActivityKey.split(/\|/, 2)
+        if (keyParts.length == 2) {
+            f.editingHubDni = keyParts[0]
+            f.editingHub = bridge?.getChildDevice(keyParts[0])
+            f.editingActivity = f.editingHub?.getChildDevice(keyParts[1])
+        }
+    }
+    f.selectedHub = newActivityHub ? bridge?.getChildDevice(newActivityHub) : null
+    f.body = (settings.newActivityBody ?: "").trim()
+    f.clash = f.selectedHub?.getChildDevices()?.find {
+        it.deviceNetworkId != f.editingActivity?.deviceNetworkId && f.body && it.currentValue("bodyValue")?.equalsIgnoreCase(f.body)
+    }
+    if (!f.editingActivity && !newActivityHub) f.missing << "Sofabaton Hub"
+    if (!newActivityName) f.missing << "Activity Name"
+    if (!f.body) f.missing << "Body Value"
+    return f
+}
+
+// Runs on mainPage after Save. Returns an error to show there, or null when saved.
+private String saveActivityForm() {
+    Map f = activityForm()
+    if (state.editingActivityKey && !f.editingActivity) return "Not saved: that activity no longer exists."
+    if (f.clash) return "Not saved. Body value '${f.body}' is already used by ${f.clash.getLabel()}."
+    if (f.missing) return "Not saved. Still needed: ${f.missing.join(', ')}."
+    if (f.editingActivity) {
+        updateExistingActivity(f.editingActivity, f.editingHub, newActivityName, newActivityUrlOn, newActivityUrlOff, f.body)
+    } else {
+        createActivity(newActivityHub, newActivityName, newActivityUrlOn, newActivityUrlOff, f.body)
+    }
+    return null
+}
+
+// Cancel and Save side by side at the bottom of Add/Edit pages, styled as buttons (HIDE_DONE_CSS).
+// Cancel goes to mainPage, which clears the form. Save links to mainPage only when the form is
+// complete; until then it's gray and just redraws this page.
 private void formButtons(String kind, String saveTitle, boolean ready) {
-    if (!state.formToken) state.formToken = now().toString()
-    href name: "sbCancel${kind}", title: "Cancel", description: "", page: "mainPage",
-        params: [formAction: "cancel${kind}", token: state.formToken], width: 3
-    // "Ready" in the name lets HIDE_DONE_CSS color it green (href style lands on an outer box).
-    href name: "sbSave${kind}${ready ? 'Ready' : ''}", title: saveTitle, description: "", page: "mainPage",
-        params: [formAction: "save${kind}", token: state.formToken], width: 3
+    href name: "sbCancel${kind}", title: "Cancel", description: "", page: "mainPage", width: 3
+    if (ready) {
+        if (!state.formToken) state.formToken = now().toString()
+        // "Ready" in the name lets HIDE_DONE_CSS color it green (href style lands on an outer box).
+        href name: "sbSave${kind}Ready", title: saveTitle, description: "", page: "mainPage",
+            params: [formAction: "save${kind}", token: state.formToken], width: 3
+    } else {
+        href name: "sbSave${kind}", title: saveTitle, description: "", page: "add${kind}Page", width: 3
+    }
 }
 
 // Small colored pill plus one line of help, used as a group header on the Activity page.
@@ -900,13 +898,6 @@ def appButtonHandler(String btn) {
     logDbg "button: ${btn}"
     def bridge = getBridge()
 
-    if (btn == "saveHubBtn") { state.hubSaveRequested = true; return }
-    if (btn == "cancelHubBtn") {
-        state.remove("editingHubDni")
-        state.remove("editHubPrefilled")
-        state.hubPageCancelled = true
-        return
-    }
     if (btn == "findX2Btn") {
         state.remove("findError")
         boolean builtIn = newHubBuiltIn != false
@@ -916,11 +907,6 @@ def appButtonHandler(String btn) {
         }
         bridge?.startDiscovery(builtIn, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass)
         state.discoveryStarted = true
-        return
-    }
-    if (btn.startsWith("editHub_")) {
-        state.editingHubDni = btn - "editHub_"
-        state.remove("editHubPrefilled")
         return
     }
     if (btn.startsWith("syncHub_")) {
@@ -935,21 +921,11 @@ def appButtonHandler(String btn) {
         subscribeButtons()
         return
     }
-    if (btn == "cancelActivityBtn") { state.activityPageCancelled = true; return }
-    if (btn.startsWith("editAct_")) {
-        def parts = (btn - "editAct_").split("_", 2)
-        if (parts.length == 2) {
-            state.editingActivityKey = "${parts[0]}|${parts[1]}"
-            state.remove("editActivityPrefilled")
-        }
-        return
-    }
     if (btn.startsWith("removeAct_")) {
         def parts = (btn - "removeAct_").split("_", 2)
         if (parts.length == 2) bridge?.getChildDevice(parts[0])?.removeActivityDeviceByDni(parts[1])
         return
     }
-    if (btn == "saveActivityBtn") { state.activitySaveRequested = true; return }
 }
 
 // Mirrors RemoteDriver's ipToHex(). Keep in sync.
@@ -1143,19 +1119,19 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
     font-size: 13px !important; padding: 3px 12px !important; min-height: 0 !important; height: auto !important;
     line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid var(--hubitat-control-border, #d0d7de) !important;
     white-space: nowrap; }
-  .mdl-cell:has(> button.hrefElem[name^='_action_href_btnActs_']) {
+  .mdl-cell:has(> button.hrefElem:is([name^='_action_href_btnActs_'],[name^='_action_href_editHub_'],[name^='_action_href_editAct_'])) {
     background: transparent !important; border: 0 !important; box-shadow: none !important; padding: 0 !important; }
-  .app-main-content button.hrefElem[name^='_action_href_btnActs_'] {
+  .app-main-content button.hrefElem:is([name^='_action_href_btnActs_'],[name^='_action_href_editHub_'],[name^='_action_href_editAct_']) {
     width: auto !important; min-width: 0 !important; display: inline-block !important;
     font-size: 13px !important; padding: 3px 12px !important; min-height: 0 !important; height: auto !important;
     line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid var(--hubitat-control-border, #d0d7de) !important;
     border-radius: 2px !important; background: var(--hubitat-control-background, #eeeeee) !important; color: var(--hubitat-control-text, #333) !important; text-align: center !important; white-space: nowrap; }
-  .app-main-content button.hrefElem[name^='_action_href_btnActs_']:hover { background: var(--hubitat-control-hover-background, #e0e0e0) !important; }
-  .app-main-content button.hrefElem[name^='_action_href_btnActs_'] span { font-size: 13px !important; font-weight: 400 !important; color: var(--hubitat-control-text, #333) !important; }
-  .app-main-content button.hrefElem[name^='_action_href_btnActs_']::before,
-  .app-main-content button.hrefElem[name^='_action_href_btnActs_']::after,
-  .app-main-content button.hrefElem[name^='_action_href_btnActs_'] .state-incomplete-text,
-  .app-main-content button.hrefElem[name^='_action_href_btnActs_'] .state-complete-text { display: none !important; }
+  .app-main-content button.hrefElem:is([name^='_action_href_btnActs_'],[name^='_action_href_editHub_'],[name^='_action_href_editAct_']):hover { background: var(--hubitat-control-hover-background, #e0e0e0) !important; }
+  .app-main-content button.hrefElem:is([name^='_action_href_btnActs_'],[name^='_action_href_editHub_'],[name^='_action_href_editAct_']) span { font-size: 13px !important; font-weight: 400 !important; color: var(--hubitat-control-text, #333) !important; }
+  .app-main-content button.hrefElem:is([name^='_action_href_btnActs_'],[name^='_action_href_editHub_'],[name^='_action_href_editAct_'])::before,
+  .app-main-content button.hrefElem:is([name^='_action_href_btnActs_'],[name^='_action_href_editHub_'],[name^='_action_href_editAct_'])::after,
+  .app-main-content button.hrefElem:is([name^='_action_href_btnActs_'],[name^='_action_href_editHub_'],[name^='_action_href_editAct_']) .state-incomplete-text,
+  .app-main-content button.hrefElem:is([name^='_action_href_btnActs_'],[name^='_action_href_editHub_'],[name^='_action_href_editAct_']) .state-complete-text { display: none !important; }
   .sb-hub-end { border-bottom: 1px solid var(--surface-border, rgba(0,0,0,.12)); margin: 4px 0 18px; }
   a.sb-link:hover { text-decoration: underline; }
   .app-main-support button.hrefElem[name^='_action_href_tips'] { height: 61.5px; padding-bottom: 13.5px; box-sizing: border-box; }
