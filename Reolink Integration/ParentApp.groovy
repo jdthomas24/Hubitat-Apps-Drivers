@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.6.15
+ * Version: 1.6.16
  *
  * A "source" is anything answering the Reolink HTTP/JSON API (standalone camera, NVR or Home Hub),
  * each with its own IP and login; NVR/Hub channels are 0..N-1, a standalone camera is channel 0.
@@ -11,6 +11,9 @@
  * device (wired 2-5s, battery loose). Device quirks live in the README and Tips page. TODO markers
  * flag API names still to verify against firmware. Full history is in GitHub commit history.
  *
+ * v1.6.16 -- Navigation (thanks @vurvantsev): Cancel, Add source and Remove are page links instead of buttons that
+ *    re-rendered another page in place, so repeated add/cancel no longer breaks navigation. Stale links show a
+ *    "no longer available" page with a way back.
  * v1.6.15 -- Version sync (setting descriptions are in the drivers).
  * v1.6.14 -- Hub load: backs off for a few minutes when the hub limits the app instead
  *    of retrying into it; event connections start one at a time, and a source isn't polled while its
@@ -95,7 +98,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.6.15"
+@Field static final String APP_VERSION = "1.6.16"
 
 // v1.6.5: power mode migration key; changing it re-runs migrateBatteryModes().
 @Field static final String POWER_MIGRATION_KEY = "batteryWired"

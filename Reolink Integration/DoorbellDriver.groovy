@@ -1,10 +1,11 @@
 /**
  * Reolink Doorbell (Component Driver)
- * Version: 1.6.15
+ * Version: 1.6.16
  *
  * Same delegation as Reolink Camera, plus a visitor (button press) event: "pushed 1" for a ring,
  * separate from person/motion detection.
  *
+ * v1.6.16 -- Version sync (navigation fix is in the app).
  * v1.6.15 -- Shorter battery/poll/snapshot setting descriptions that name the setting they depend on
  *            ("above"/"below" didn't match the grid or phone layout).
  * v1.6.14 -- parseReolinkState and markAsleep return true so the app can tell when the hub turns a call away.

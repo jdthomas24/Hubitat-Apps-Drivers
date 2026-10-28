@@ -1,10 +1,11 @@
 /**
  * Reolink Camera (Component Driver)
- * Version: 1.6.15
+ * Version: 1.6.16
  *
  * No HTTP of its own: everything goes through parent.componentX(this, ...), using the sourceId
  * and channel data values.
  *
+ * v1.6.16 -- Version sync (navigation fix is in the app).
  * v1.6.15 -- Shorter battery/poll/snapshot setting descriptions that name the setting they depend on
  *            ("above"/"below" didn't match the grid or phone layout).
  * v1.6.14 -- parseReolinkState and markAsleep return true so the app can tell when the hub turns a call away.
