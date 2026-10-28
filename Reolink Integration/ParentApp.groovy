@@ -230,10 +230,33 @@ mappings {
     }
 }
 
+/** Clear an abandoned add-source draft before the main page can commit it. */
+private void clearNewSourceSettings() {
+    ["newLabel", "newHost", "newPort", "newUser", "newPass", "newIsHub"].each { app.removeSetting(it) }
+}
+
+/** Keep stale links on their own route until native navigation reaches the destination. */
+private Map navigationRecoveryPage(String currentPage, String destination) {
+    dynamicPage(name: currentPage, title: "Page no longer available", nextPage: destination) {
+        section(sectionClass: "app-ui-links") {
+            paragraph "This source or discovery session is no longer available."
+            href name: "returnToConfiguration", page: destination, title: "Continue", description: "Return to configuration"
+        }
+    }
+}
+
 /** Renders the source list and clears abandoned editing/recovery sessions.
  * @return main configuration page
  */
-def mainPage() {
+def mainPage(params = null) {
+    // Process navigation actions before clearing the state that authorizes them.
+    if (params?.cancelAddSource) clearNewSourceSettings()
+    def pending = state.pendingSourceRemoval
+    if (params?.removeSourceId != null && pending?.sourceId?.toString() == params.removeSourceId.toString() &&
+        pending?.token && params?.token == pending.token) {
+        state.remove("pendingSourceRemoval")
+        removeSource(params.removeSourceId as Integer)
+    }
     state.remove("sourceDiscovery")
     state.remove("sourceDiscoverySelection")
     state.remove("ipRecovery")
@@ -908,7 +931,6 @@ private boolean supportsSourceDiscovery() {
 
 /** Finds LAN sources without authenticating or creating devices. */
 def discoverSourcesPage() {
-    if (state.remove("cancelSourceDiscoveryRequested")) return mainPage()
     if (!state.sourceDiscovery) startSourceDiscovery()
     // Initial setup apps cannot run scheduled jobs; page refresh also collects the scan.
     def pendingScan = state.sourceDiscovery
@@ -941,9 +963,9 @@ def discoverSourcesPage() {
         section(sectionClass: "app-ui-links reolink-recovery-actions") {
             input "rescanSources", "button", title: "<i class='fa-solid fa-rotate-right mr-2' aria-hidden='true'></i>Search again",
                 width: 4, submitOnChange: true, disabled: busy, inputClass: "app-ui-button"
-            input "cancelSourceDiscovery", "button",
+            href name: "cancelSourceDiscovery", page: "mainPage", description: "",
                 title: "<i class='fa-regular fa-xmark mr-2' aria-hidden='true'></i>Cancel",
-                width: 4, submitOnChange: true, inputClass: "app-ui-button"
+                width: 4
         }
     }
 }
@@ -1031,18 +1053,9 @@ private boolean prepareDiscoveredSource(params) {
 }
 
 def addSourcePage(params) {
-    def action = state.remove("addSourceAction")
-    if (params?.cancel || action == "cancel") {
-        app.removeSetting("newLabel")
-        app.removeSetting("newHost")
-        app.removeSetting("newPort")
-        app.removeSetting("newUser")
-        app.removeSetting("newPass")
-        app.removeSetting("newIsHub")
-        return mainPage()
+    if (params?.discoveryNonce && !prepareDiscoveredSource(params)) {
+        return navigationRecoveryPage("addSourcePage", "discoverSourcesPage")
     }
-    if (action == "add") return mainPage()
-    if (params?.discoveryNonce && !prepareDiscoveredSource(params)) return discoverSourcesPage()
     dynamicPage(name: "addSourcePage", title: "Add a Reolink Source") {
         section(sectionClass: "app-ui-links reolink-add-form") {
             paragraph rawHtml: true, recoveryStylesHtml() + addSourceStylesHtml()
@@ -1080,13 +1093,11 @@ def addSourcePage(params) {
                 "Leaving any of those blank returns to Sources without creating anything.</div>"
         }
         section(sectionClass: "app-ui-links reolink-recovery-actions reolink-add-actions") {
-            input "confirmAddSource", "button",
-                title: "<i class='fa-solid fa-plus mr-2' aria-hidden='true'></i>Add source",
-                width: 4, submitOnChange: true, styleClass: "reolink-recovery-primary",
-                inputClass: "app-ui-button app-ui-button-primary"
-            input "cancelAddSource", "button",
-                title: "<i class='fa-regular fa-xmark mr-2' aria-hidden='true'></i>Cancel",
-                width: 4, submitOnChange: true, inputClass: "app-ui-button"
+            href name: "confirmAddSource", page: "mainPage", description: "",
+                title: "<i class='fa-solid fa-plus mr-2' aria-hidden='true'></i>Add source", width: 4
+            href name: "cancelAddSource", page: "mainPage", params: [cancelAddSource: true],
+                description: "",
+                title: "<i class='fa-regular fa-xmark mr-2' aria-hidden='true'></i>Cancel", width: 4
         }
     }
 }
@@ -1342,8 +1353,7 @@ def discoverPage(params) {
 def editSourcePage(params) {
     def sourceId = params?.sourceId ?: state.editSourceId
     def src = sourceId != null ? getSource(sourceId) : null
-    if (!src) return mainPage()
-    if (state.remove("cancelSourceEditRequested")) return discoverPage([sourceId: src.id])
+    if (!src) return navigationRecoveryPage("editSourcePage", "mainPage")
     if (state.editSourceId?.toString() != sourceId.toString()) {
         state.editSourceId = src.id
         state.remove("editSourceMessage")
@@ -1369,9 +1379,9 @@ def editSourcePage(params) {
                 title: "<i class='fa-regular fa-floppy-disk mr-2' aria-hidden='true'></i>Save changes",
                 width: 4, submitOnChange: true, styleClass: "reolink-recovery-primary",
                 inputClass: "app-ui-button app-ui-button-primary"
-            input "cancelSourceEdit", "button",
-                title: "<i class='fa-regular fa-xmark mr-2' aria-hidden='true'></i>Cancel",
-                width: 4, submitOnChange: true, inputClass: "app-ui-button"
+            href name: "cancelSourceEdit", page: "discoverPage", params: [sourceId: src.id],
+                description: "",
+                title: "<i class='fa-regular fa-xmark mr-2' aria-hidden='true'></i>Cancel", width: 4
         }
     }
 }
@@ -1426,12 +1436,11 @@ def reconnectEditedSource(data) {
 def findChangedIpPage(params) {
     def sourceId = params?.sourceId ?: state.ipRecovery?.sourceId
     def src = sourceId != null ? getSource(sourceId) : null
-    if (!src) return mainPage()
+    if (!src) return navigationRecoveryPage("findChangedIpPage", "mainPage")
     if (state.ipRecovery?.sourceId?.toString() != src.id.toString()) {
         state.ipRecovery = [sourceId: src.id, revision: src.connectionRevision ?: 0,
             nonce: java.util.UUID.randomUUID().toString(), message: "Search the local network for this source."]
     }
-    if (state.ipRecovery?.cancelRequested) return discoverPage([sourceId: src.id])
     def recovery = state.ipRecovery
     boolean busy = recovery.phase in ["searching", "verifying"]
     boolean verified = recovery.phase == "verified"
@@ -1483,8 +1492,11 @@ def findChangedIpPage(params) {
                     width: 4, submitOnChange: true, disabled: busy, styleClass: verified ? "reolink-recovery-secondary" : "reolink-recovery-primary",
                     inputClass: verified ? "app-ui-button app-ui-button-secondary" : "app-ui-button app-ui-button-primary"
             }
-            input "cancelIp_${recovery.nonce}", "button", title: "<i class='fa-regular fa-xmark mr-2' aria-hidden='true'></i>Cancel",
-                width: 4, submitOnChange: true, disabled: busy, inputClass: "app-ui-button"
+            if (!busy) {
+                href name: "cancelIp_${recovery.nonce}", page: "discoverPage", params: [sourceId: src.id],
+                    description: "",
+                    title: "<i class='fa-regular fa-xmark mr-2' aria-hidden='true'></i>Cancel", width: 4
+            }
         }
         section(sectionClass: "app-ui-links reolink-recovery-footer") {
             paragraph rawHtml: true, "<div class='border-top-1 surface-border pt-3 text-sm text-color-secondary'>" +
@@ -1506,6 +1518,15 @@ private String recoveryStylesHtml() {
   .reolink-recovery-summary .reolink-status-heading i, .reolink-recovery-status .reolink-status-heading i { font-size: 1em; }
   .reolink-recovery-row { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 16px; padding: 14px 0; border-top: 1px solid var(--surface-border, rgba(0,0,0,.12)); }
   .reolink-recovery-summary code, .reolink-recovery-status code { font-size: 16px; overflow-wrap: anywhere; }
+  #formApp .reolink-recovery-actions button:is([name^='_action_href_cancelSourceDiscovery|'], [name^='_action_href_confirmAddSource|'], [name^='_action_href_cancelAddSource|'], [name^='_action_href_cancelSourceEdit|'], [name^='_action_href_cancelIp_']) {
+    background: rgba(158, 158, 158, .2); color: var(--app-action-color, #363636) !important;
+    border: 1px solid transparent; width: auto !important; min-width: 0; max-width: 100%; font-size: 14px !important;
+  }
+  #formApp .reolink-recovery-actions button:is([name^='_action_href_cancelSourceDiscovery|'], [name^='_action_href_confirmAddSource|'], [name^='_action_href_cancelAddSource|'], [name^='_action_href_cancelSourceEdit|'], [name^='_action_href_cancelIp_']) > span { font-size: inherit !important; }
+  #formApp .reolink-recovery-actions button:is([name^='_action_href_cancelSourceDiscovery|'], [name^='_action_href_confirmAddSource|'], [name^='_action_href_cancelAddSource|'], [name^='_action_href_cancelSourceEdit|'], [name^='_action_href_cancelIp_'])::before { display: none; }
+  #formApp .reolink-recovery-actions button:is([name^='_action_href_cancelSourceDiscovery|'], [name^='_action_href_confirmAddSource|'], [name^='_action_href_cancelAddSource|'], [name^='_action_href_cancelSourceEdit|'], [name^='_action_href_cancelIp_']) > br,
+  #formApp .reolink-recovery-actions button:is([name^='_action_href_cancelSourceDiscovery|'], [name^='_action_href_confirmAddSource|'], [name^='_action_href_cancelAddSource|'], [name^='_action_href_cancelSourceEdit|'], [name^='_action_href_cancelIp_']) > .state-incomplete-text { display: none; }
+  #formApp .reolink-add-actions { padding-left: 16px; box-sizing: border-box; }
   .reolink-recovery-actions button { min-width: 128px; min-height: 40px; padding: 0 16px; border-radius: 4px; font-family: inherit; font-size: 14px; }
   @media (max-width: 480px) { .reolink-recovery-row { grid-template-columns: 1fr; gap: 6px; } }
 </style>
@@ -1708,19 +1729,7 @@ def removeSourcePage(params) {
     def src = sourceId != null ? getSource(sourceId as Integer) : null
     if (!src) {
         state.remove("pendingSourceRemoval")
-        return mainPage()
-    }
-    if (params?.action == "cancel") {
-        state.remove("pendingSourceRemoval")
-        return discoverPage([sourceId: sourceId])
-    }
-    def pending = state.pendingSourceRemoval
-    if (params?.action == "remove" && pending?.sourceId?.toString() == sourceId.toString() &&
-        pending?.token && params?.token == pending.token) {
-        // Consume before deleting so refresh/back cannot repeat a confirmed operation.
-        state.remove("pendingSourceRemoval")
-        removeSource(sourceId)
-        return mainPage()
+        return navigationRecoveryPage("removeSourcePage", "mainPage")
     }
 
     String token = java.util.UUID.randomUUID().toString()
@@ -1740,11 +1749,11 @@ def removeSourcePage(params) {
                 }.join("") + "</ul>"
             }
             href name: "cancelSourceRemoval", title: "Cancel and keep this source",
-                description: "Return without removing anything", page: "removeSourcePage",
-                params: [sourceId: sourceId, action: "cancel"]
+                description: "Return without removing anything", page: "discoverPage",
+                params: [sourceId: sourceId]
             href name: "confirmSourceRemoval", title: "<span class='hub-text-danger font-semibold'>Yes, remove this source</span>",
                 description: "Permanently remove ${countText(devices.size(), 'device')} and this source",
-                page: "removeSourcePage", params: [sourceId: sourceId, action: "remove", token: token]
+                page: "mainPage", params: [removeSourceId: sourceId, token: token]
         }
     }
 }
@@ -2136,28 +2145,8 @@ void appButtonHandler(String buttonName) {
         }
         return
     }
-    if (buttonName == "cancelSourceDiscovery") {
-        state.cancelSourceDiscoveryRequested = true
-        return
-    }
-    if (buttonName in ["confirmAddSource", "cancelAddSource"]) {
-        state.addSourceAction = buttonName == "confirmAddSource" ? "add" : "cancel"
-        return
-    }
     if (buttonName == "rescanSources") {
         startSourceDiscovery()
-        return
-    }
-    if (buttonName == "cancelSourceEdit") {
-        state.cancelSourceEditRequested = true
-        return
-    }
-    if (state.ipRecovery && buttonName == "cancelIp_${state.ipRecovery.nonce}") {
-        if (!(state.ipRecovery.phase in ["searching", "verifying"])) {
-            def recovery = state.ipRecovery
-            recovery.cancelRequested = true
-            state.ipRecovery = recovery
-        }
         return
     }
     if (state.ipRecovery && buttonName == "findIp_${state.ipRecovery.nonce}") {
