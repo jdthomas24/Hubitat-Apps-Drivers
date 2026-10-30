@@ -292,7 +292,7 @@ def mainPage(params = null) {
     int totalDeviceCount = sources.collect { src -> childrenForSource(src.id).size() }.sum() ?: 0
 
     dynamicPage(name: "mainPage", install: true, uninstall: true) {
-        section {
+        section(sectionClass: "reolink-main-overview") {
             paragraph rawHtml: true, integrationOverviewHtml(sourceCount, totalDeviceCount)
         }
         section(sectionClass: "app-ui-links reolink-main-sources") {
@@ -358,6 +358,12 @@ private String integrationOverviewHtml(int sourceCount, int deviceCount) {
 <style>
   ${appPageSpacingCss()}
   ${tipsCardCss()}
+  #formApp .form > div:has(> h3:empty):has(+ .reolink-main-overview) { display: none; }
+  #formApp .form > .reolink-main-overview { margin-bottom: 0.429rem !important; }
+  .reolink-main-overview > .mdl-grid { padding-top: 0.286rem !important; padding-bottom: 0.286rem !important; }
+  .reolink-main-overview .mdl-cell { margin-top: 0.286rem !important; margin-bottom: 0.286rem !important; min-width: 0; }
+  .reolink-main-summary { overflow-wrap: anywhere; }
+  .reolink-main-sources > .mdl-grid:first-child > .mdl-cell:first-child { margin-top: 0.286rem !important; }
   .reolink-main-sources { float: left; width: calc(62% - 8px); }
   .reolink-main-settings {
     float: right; width: 38%; border-left: 1px solid var(--surface-border, rgba(0,0,0,.12));
@@ -371,10 +377,13 @@ private String integrationOverviewHtml(int sourceCount, int deviceCount) {
   @media (max-width: 1000px) {
     .reolink-main-sources, .reolink-main-settings { float: none; width: 100%; border-left: 0; padding-left: 0; }
   }
+  @media (max-width: 37.5rem) {
+    .reolink-main-summary { flex-direction: column; align-items: flex-start !important; }
+  }
 </style>
-<div class='flex align-items-center justify-content-between gap-3 ${tone} border-1 border-round p-3'>
+<div class='reolink-main-summary flex align-items-center justify-content-between gap-3 ${tone} border-round p-3'>
   <div class='flex align-items-center gap-3 min-w-0'>
-    <div class='flex-shrink-0'><i class='${icon} ${iconColor} text-2xl' aria-hidden='true'></i></div>
+    <div class='flex-shrink-0'><i class='${icon} ${iconColor} text-xl' aria-hidden='true'></i></div>
     <div class='min-w-0'>
       <div class='reolink-status-heading font-semibold'>${title}</div>
       <div class='text-color-secondary mt-1' style='font-size:14px;'>${summary}</div>
