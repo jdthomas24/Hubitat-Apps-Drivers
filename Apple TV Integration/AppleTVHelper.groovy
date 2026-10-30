@@ -30,7 +30,7 @@
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { "1.2.2" }
+def version() { "1.2.3" }
 
 metadata {
     definition(name: "Apple TV Helper", namespace: "jdthomas24", author: "jdthomas24",
