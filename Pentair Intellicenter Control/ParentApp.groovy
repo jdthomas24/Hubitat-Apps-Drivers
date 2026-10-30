@@ -33,7 +33,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Pentair IntelliCenter"
-@Field static final String APP_VERSION   = "1.7.1"
+@Field static final String APP_VERSION   = "1.7.2"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/release-pentair-intellicenter-controller-beta/162876/31"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -59,7 +59,7 @@ def mainPage() {
     Map eq = bridge ? syncEquipment(bridge) : [:]
     Map banner = bannerState(bridge)
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
-        section {
+        section(sectionClass: "app-main-overview") {
             paragraph rawHtml: true, statusBannerHtml(banner.ok, banner.title, banner.summary)
         }
         section(sectionClass: "app-ui-links app-main-content") {
@@ -267,6 +267,12 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
     """
 <style>
   ${appPageSpacingCss()}
+  #formApp .form > div:has(> h3:empty):has(+ .app-main-overview) { display: none; }
+  #formApp .form > .app-main-overview { margin-bottom: 0.429rem !important; }
+  .app-main-overview > .mdl-grid { padding-top: 0.286rem !important; padding-bottom: 0.286rem !important; }
+  .app-main-overview .mdl-cell { margin-top: 0.286rem !important; margin-bottom: 0.286rem !important; min-width: 0; }
+  .app-main-summary { overflow-wrap: anywhere; }
+  .app-main-content > .mdl-grid:first-child > .mdl-cell:first-child { margin-top: 0.286rem !important; }
   .app-main-content { float: left; width: calc(62% - 8px); }
   .app-main-settings { float: right; width: 38%; border-left: 1px solid var(--surface-border, rgba(0,0,0,.12)); padding-left: 8px; box-sizing: border-box; }
   .app-main-content > .mdl-grid, .app-main-settings > .mdl-grid { padding: 4px 0 !important; }
@@ -274,10 +280,13 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
   @media (max-width: 1000px) {
     .app-main-content, .app-main-settings { float: none; width: 100%; border-left: 0; padding-left: 0; }
   }
+  @media (max-width: 37.5rem) {
+    .app-main-summary { flex-direction: column; align-items: flex-start !important; }
+  }
 </style>
-<div class='flex align-items-center justify-content-between gap-3 ${tone} border-1 border-round p-3'>
+<div class='app-main-summary flex align-items-center justify-content-between gap-3 ${tone} border-round p-3'>
   <div class='flex align-items-center gap-3 min-w-0'>
-    <div class='flex-shrink-0'><i class='fa-solid fa-water-ladder text-2xl' aria-hidden='true'></i></div>
+    <div class='flex-shrink-0'><i class='fa-solid fa-water-ladder text-xl' aria-hidden='true'></i></div>
     <div class='min-w-0'>
       <div class='app-heading font-semibold'><i class='${icon} mr-2' aria-hidden='true'></i>${title}</div>
       <div class='text-color-secondary mt-1' style='font-size:14px;'>${summary}</div>
