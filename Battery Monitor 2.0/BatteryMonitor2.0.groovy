@@ -1,6 +1,6 @@
 /**
  * Battery Monitor 2.0
- * Version: 2.7.3
+ * Version: 2.7.4
  *
  * Tracks battery levels, drain, health, and replacements for selected devices.
  * Scans on a recurring schedule plus each device's own battery events. Health uses
@@ -8,6 +8,7 @@
  * and reacts faster to recent readings. Replacements are auto-detected from a confirmed upward jump.
  * Optional OAuth web portal serves a live dashboard.
  *
+ * v2.7.4 -- Main page banner spacing and size match Hubitat's built-in apps, stacks on phones (gopher.ny, Reolink 1.6.17).
  * v2.7.3 -- Info logging toggle (on by default) beside Debug logging. Off silences scan lines;
  *    warnings and errors always log.
  * v2.7.2 -- Web portal light mode: Portal theme setting (Dark default, Light, Follow device) plus a
@@ -45,7 +46,7 @@ definition(
     oauth: true
 )
 
-@Field static final String APP_VERSION = "2.7.3"
+@Field static final String APP_VERSION = "2.7.4"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/release-battery-monitor-2-0/162329"
 @Field static final String COFFEE_URL = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "best"
@@ -391,7 +392,7 @@ def mainPage() {
     def portalOn  = state.accessToken != null
 
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
-        section {
+        section(sectionClass: "app-main-overview") {
             paragraph rawHtml: true, bmStatusBannerHtml()
         }
 
@@ -2807,14 +2808,18 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
   .app-message .hub-text-success, .app-message .hub-text-danger { color: inherit !important; }
   .app-main-support button.hrefElem[name^='_action_href_tips'] { height: 61.5px; padding-bottom: 13.5px; box-sizing: border-box; }
   ${bmCardsCss()}
-  @media (max-width: 600px) {
-    .bm-banner { flex-wrap: wrap; }
-    .bm-banner > a { margin-left: 44px; }
+  #formApp .form > div:has(> h3:empty):has(+ .app-main-overview) { display: none; }
+  #formApp .form > .app-main-overview { margin-bottom: 0.429rem !important; }
+  .app-main-overview > .mdl-grid { padding-top: 0.286rem !important; padding-bottom: 0.286rem !important; }
+  .app-main-overview .mdl-cell { margin-top: 0.286rem !important; margin-bottom: 0.286rem !important; min-width: 0; }
+  .app-main-summary { overflow-wrap: anywhere; }
+  @media (max-width: 37.5rem) {
+    .app-main-summary { flex-direction: column; align-items: flex-start !important; }
   }
 </style>
-<div class='bm-banner flex align-items-center justify-content-between gap-3 ${tone} border-1 border-round p-3'>
+<div class='app-main-summary bm-banner flex align-items-center justify-content-between gap-3 ${tone} border-round p-3'>
   <div class='flex align-items-center gap-3 min-w-0'>
-    <div class='flex-shrink-0'><i class='${icon} text-2xl' aria-hidden='true'></i></div>
+    <div class='flex-shrink-0'><i class='${icon} text-xl' aria-hidden='true'></i></div>
     <div class='min-w-0'>
       <div class='app-heading font-semibold'>${title}</div>
       <div class='text-color-secondary mt-1' style='font-size:14px;'>${summary}</div>
