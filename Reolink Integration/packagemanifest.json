@@ -1,10 +1,10 @@
 {
     "packageName": "Reolink Integration",
-    "releaseNotes": "v1.6.16: Navigation fix. Cancel, Add source and Remove now go back through the hub's normal page navigation, so going into Add source and cancelling repeatedly no longer leaves the app's pages out of order. Thanks to vurvantsev. No Done needed. v1.6.15: Clearer device settings. The battery check, poll and snapshot descriptions are shorter and name the setting they depend on, instead of saying \"above\" or \"below\", which didn't match the device page layout on a computer or a phone. No Done needed.",
+    "releaseNotes": "v1.6.17: Tidier main page banner. Spacing and size now match Hubitat's built-in apps, and it stacks cleanly on a phone. Thanks to vurvantsev. No Done needed. v1.6.16: Navigation fix. Cancel, Add source and Remove now go back through the hub's normal page navigation, so going into Add source and cancelling repeatedly no longer leaves the app's pages out of order. Thanks to vurvantsev. No Done needed. v1.6.15: Clearer device settings. The battery check, poll and snapshot descriptions are shorter and name the setting they depend on, instead of saying \"above\" or \"below\", which didn't match the device page layout on a computer or a phone. No Done needed.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Reolink%20Integration",
     "communityLink": "https://community.hubitat.com/t/165352",
     "author": "jdthomas24",
-    "version": "1.6.16",
+    "version": "1.6.17",
     "minimumHEVersion": "2.3.0",
     "dateReleased": "2026-10-28",
     "category": "Integrations",
