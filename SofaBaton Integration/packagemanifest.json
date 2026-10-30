@@ -1,10 +1,10 @@
 {
     "packageName": "Sofabaton Integration",
-    "releaseNotes": "v1.1.5: Navigation fix. Edit, Cancel and Save on the Add and Edit pages now move between pages the normal way instead of drawing one page inside another, so going in and out of Add or Edit no longer leaves the app's pages out of order or stuck on an edit. Add and Edit pages also list anything still needed before Save. Same fix as Reolink 1.6.16, thanks to gopher.ny. No Done needed. v1.1.4: Quieter after a hub reboot. The hub's MQTT broker often starts a little after the integration, which logged a warning to run Force Reconnect even though the Bridge connects on its own. Now, for the first 5 minutes after startup it waits quietly, warns only if it still can't connect after that, and skips refreshes asked for while it's connecting, since every remote refreshes once connected. No Done needed.",
+    "releaseNotes": "v1.1.6: Tidier main page banner. Spacing and size now match Hubitat's built-in apps, and it stacks cleanly on a phone. Same change as Reolink 1.6.17, thanks to gopher.ny. No Done needed. v1.1.5: Navigation fix. Edit, Cancel and Save on the Add and Edit pages now move between pages the normal way instead of drawing one page inside another, so going in and out of Add or Edit no longer leaves the app's pages out of order or stuck on an edit. Add and Edit pages also list anything still needed before Save. Same fix as Reolink 1.6.16, thanks to gopher.ny. No Done needed. v1.1.4: Quieter after a hub reboot. The hub's MQTT broker often starts a little after the integration, which logged a warning to run Force Reconnect even though the Bridge connects on its own. Now, for the first 5 minutes after startup it waits quietly, warns only if it still can't connect after that, and skips refreshes asked for while it's connecting, since every remote refreshes once connected. No Done needed.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/SofaBaton%20Integration",
     "communityLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/SofaBaton%20Integration",
     "author": "jdthomas24",
-    "version": "1.1.5",
+    "version": "1.1.6",
     "minimumHEVersion": "2.5.2.126",
     "dateReleased": "2026-10-28",
     "category": "Integrations",
