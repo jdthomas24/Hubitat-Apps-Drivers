@@ -33,7 +33,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Pentair IntelliCenter"
-@Field static final String APP_VERSION   = "1.7.2"
+@Field static final String APP_VERSION   = "1.8.0"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/release-pentair-intellicenter-controller-beta/162876/31"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -67,6 +67,8 @@ def mainPage() {
             input "intellicenterIP", "text", title: "IntelliCenter IP address", description: "e.g. 192.168.1.50", required: true, width: 8
             input "intellicenterPort", "number", title: "Port", description: "6680, or 6681 on some IntelliCenter 2 systems",
                 defaultValue: 6680, required: true, width: 4
+            paragraph "<span class='text-color-secondary' style='font-size:13px;'>Supported firmware: IntelliCenter 1.064 and later, " +
+                "including 3.x. The 2.x firmware was withdrawn by Pentair and isn't supported; update to 3.x first.</span>"
             if (bridge) {
                 int total = (eq.catalog ?: [:]).size()
                 int on = (eq.catalog ?: [:]).keySet().count { !(eq.excluded ?: []).contains(it) } as int

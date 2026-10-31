@@ -8,6 +8,9 @@
      -Commands change the device only when the Bridge actually sent them; the controller's push confirms.
      -Heat Lock blocks every heat change (set point, source, Heat and Start); stopping heat still works.
      -Old emoji command names (1.6.x) stay as plain methods so existing rules keep working.
+     -Heat source choices come from the panel (heatSources); setHeatSource takes any of them, plus the 1.7.x names
+      Heater / Heat Pump / Heat Pump Preferred. heaterMode is what the body is doing: Heating, Idle or Off.
+      Heat and Start sends source and set point in one write, then turns the body on.
      -Units follow the hub's temperature scale. Log level comes from the app through the Bridge.
 */
 
@@ -23,14 +26,14 @@ metadata {
         attribute "maxSetTemp", "number"
         attribute "heaterMode", "string"
         attribute "heatSource", "string"
+        attribute "heatSources", "string"
         attribute "bodyStatus", "string"
         attribute "heatLock",   "string"
         attribute "tile",       "string"
 
         command "heatAndStart", [[name: "degrees*", type: "NUMBER", description: "Target temperature"]]
         command "stopHeat"
-        command "setHeatSource", [[name: "source*", type: "ENUM",
-            constraints: ["Off", "Heater", "Solar Only", "Solar Preferred", "Heat Pump", "Heat Pump Preferred"]]]
+        command "setHeatSource", [[name: "source*", type: "STRING", description: "Off, or one of the names in heatSources"]]
         command "setHeatLock", [[name: "lock*", type: "ENUM", constraints: ["locked", "unlocked"]]]
     }
 
@@ -43,7 +46,7 @@ metadata {
 
 import groovy.transform.Field
 
-@Field static final String VERSION     = "1.7.2"
+@Field static final String VERSION     = "1.8.0"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/t/release-pentair-intellicenter-controller-beta/162876/31"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -107,9 +110,9 @@ def heatAndStart(degrees) {
     Integer t = inRange(degrees)
     if (t == null) return
     String source = device.currentValue("heatSource")
-    if (!source || source in ["Off", "—"]) source = "Heater"
+    if (!source || source in ["Off", "—"]) source = state.lastSource ?: firstHeater() ?: "Heater"
     String dni = device.deviceNetworkId
-    if (parent?.setBodySetPoint(dni, t) && parent?.setBodyHeatSource(dni, source) && parent?.setBodyStatus(dni, "ON")) {
+    if (parent?.setBodyHeat(dni, source, t) && parent?.setBodyStatus(dni, "ON")) {
         sendEvent(name: "heatingSetpoint", value: t, unit: unit())
         sendEvent(name: "heatSource", value: source)
         sendEvent(name: "switch", value: "on")
@@ -119,6 +122,8 @@ def heatAndStart(degrees) {
 }
 
 def stopHeat() {
+    String cur = device.currentValue("heatSource")
+    if (cur && !(cur in ["Off", "—"])) state.lastSource = cur
     if (parent?.setBodyHeatSource(device.deviceNetworkId, "Off")) {
         sendEvent(name: "heatSource", value: "Off")
         sendEvent(name: "heaterMode", value: "Off")
@@ -128,7 +133,10 @@ def stopHeat() {
 
 def setHeatSource(source) {
     if (locked()) return
-    if (parent?.setBodyHeatSource(device.deviceNetworkId, source as String)) {
+    source = source?.toString()?.trim()
+    if (!source) return
+    if (source != "Off") state.lastSource = source
+    if (parent?.setBodyHeatSource(device.deviceNetworkId, source)) {
         sendEvent(name: "heatSource", value: source)
         debounceTile()
     }
@@ -175,6 +183,11 @@ private Integer inRange(v) {
     return t
 }
 
+private String firstHeater() {
+    List c = (device.currentValue("heatSources") ?: "").toString().split(", ").findAll { it && it != "Off" && !it.startsWith("Solar") }
+    return c ? c[0] : null
+}
+
 private String unit() { "°${location?.temperatureScale ?: 'F'}" }
 
 // ============================================================
@@ -192,7 +205,7 @@ def renderTile() {
     def htmode   = device.currentValue("heaterMode") ?: "Off"
     def htsrc    = device.currentValue("heatSource") ?: "Off"
     boolean isOn      = sw == "on"
-    boolean isHeating = isOn && htmode != "Off" && htmode != "0" && htsrc != "Off"
+    boolean isHeating = isOn && htmode == "Heating"
     String lock    = device.currentValue("heatLock") == "locked" ? " (LOCKED)" : ""
     String pumpClr = isOn ? "#4ade80" : "#ef4444"
     String heatClr = isHeating ? "#4ade80" : "#ef4444"

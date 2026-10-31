@@ -24,6 +24,13 @@
       back online logs once.
      -Commands return true only when sent. Devices update only then, so a dropped command never shows a
       state that didn't happen; the controller's push confirms it within about a second.
+     -Heat (method from the Home Assistant integration): a body's heat source is selected by writing HEATER
+      (the heater's objnam) and MODE, never HTSRC (status only; newer IC2 firmware rejects it with 404). Solar Only /
+      Solar Preferred are MODE 3/4 when the body has a solar heater; UltraTemp ETi (HCOMBO) is MODE 7-10 with
+      HEATER=00000; Off is HEATER=00000 + MODE=1. Sources are built from the panel's own heater list (HEATER BODY
+      lists the bodies it serves). HTMODE is activity (0 idle, >0 heating), shown as heaterMode Heating/Idle/Off.
+      Set point and source go in one SetParamList; turning heat on from Off restores the last active set point
+      (some firmware resets LOTMP while heat is off). Non-200 replies to a command are logged with what was sent.
      -Temperature units follow the hub's scale; values pass through as the controller reports them.
      -Log level comes from the app (setLogLevel) and is passed to the Body, Pump and Chlorinator.
       All log lines go up to the app's childLog().
@@ -52,18 +59,15 @@ metadata {
 
 import groovy.transform.Field
 
-@Field static final String VERSION     = "1.7.2"
+@Field static final String VERSION     = "1.8.0"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/t/release-pentair-intellicenter-controller-beta/162876/31"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
 @Field static final Map PREFIX = [body: "intellicenter-body-", pump: "intellicenter-pump-", circuit: "intellicenter-circuit-",
                                   sensor: "intellicenter-sensor-", chem: "intellicenter-chem-"]
-@Field static final Map HTMODE_NAMES = ["0": "Off", "1": "Heater", "2": "Solar Only", "3": "Solar Preferred",
-                                        "4": "Heat Pump", "5": "Heat Pump Preferred", "OFF": "Off"]
-@Field static final Map HTSRC_NAMES = ["00000": "Off", "H0001": "Heater", "S0001": "Solar Only",
-                                       "H0002": "Solar Preferred", "H0003": "Heat Pump", "H0004": "Heat Pump Preferred"]
-@Field static final Map HTSRC_IDS = ["Heater": "H0001", "Solar Only": "S0001", "Solar Preferred": "H0002",
-                                     "Heat Pump": "H0003", "Heat Pump Preferred": "H0004"]
+@Field static final String NULL_OBJ = "00000"
+@Field static final Map SOLAR_MODES = ["Solar Only": "3", "Solar Preferred": "4"]
+@Field static final Map HCOMBO_MODES = ["Gas Only": "7", "Heat Pump Only": "8", "Hybrid": "9", "Dual": "10"]
 // Per-device working data (last message time, expected close). Lost on a driver save, which is safe.
 @Field static final java.util.concurrent.ConcurrentHashMap RUNTIME = new java.util.concurrent.ConcurrentHashMap()
 
@@ -94,7 +98,7 @@ def updated() {
 }
 
 def initialize() {
-    ["msgBuffer", "objectMap", "pendingCmds", "lastPollTime", "htsrcIds"].each { state.remove(it) }
+    ["msgBuffer", "objectMap", "pendingCmds", "lastPollTime", "htsrcIds", "srcIds"].each { state.remove(it) }
     migrate()
     unschedule()
     schedule("0 0/2 * * * ?", "reconnectIfNeeded")
@@ -247,7 +251,7 @@ def pollState() {
 
 def pollBodies() {
     if (!state.connected) return
-    sendCommand(query("BODY", ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "TEMP", "LOTMP", "HITMP", "HTMODE", "HTSRC"]))
+    sendCommand(query("BODY", ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "TEMP", "LOTMP", "HITMP", "HTMODE", "HTSRC", "HEATER", "MODE"]))
     runIn(2, "pollPumps")
 }
 
@@ -281,16 +285,16 @@ private Map query(String type, List keys, String objnam = "ALL") {
 def requestEquipment() {
     logF "reading equipment"
     sendCommand(query("CIRCUIT", ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "FEATR"]))
-    runIn(2, "requestBodies")
-}
-
-def requestBodies() {
-    sendCommand(query("BODY", ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "TEMP", "LOTMP", "HITMP", "HTMODE", "HTSRC"]))
     runIn(2, "requestHeaters")
 }
 
 def requestHeaters() {
-    sendCommand(query("HEATER", ["OBJTYP", "SNAME"]))
+    sendCommand(query("HEATER", ["OBJTYP", "SUBTYP", "SNAME", "BODY", "LISTORD"]))
+    runIn(2, "requestBodies")
+}
+
+def requestBodies() {
+    sendCommand(query("BODY", ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "TEMP", "LOTMP", "HITMP", "HTMODE", "HTSRC", "HEATER", "MODE"]))
     runIn(2, "requestPumps")
 }
 
@@ -353,7 +357,9 @@ def parse(String message) {
             }
             break
         case "SetParamList":
-            logF "command accepted (response ${json.response})"
+            String what = mem().sent?.remove(json.messageID) as String
+            if (json.response?.toString() == "200") logF "command accepted${what ? ': ' + what : ''}"
+            else logE "IntelliCenter rejected ${what ?: 'a command'} (response ${json.response}${json.description ? ', ' + json.description : ''})"
             break
         case "Error":
             logE "IntelliCenter error ${json.response}: ${json.description}"
@@ -417,17 +423,17 @@ private void processBody(String objnam, Map p) {
     if (lo != null && sendIf(body, "heatingSetpoint", lo, u)) logN "${label} set point ${lo}${u}"
     Integer hi = toInt(p.HITMP)
     if (hi != null) sendIf(body, "maxSetTemp", hi, u)
-    if (p.HTMODE != null) {
-        String mode = HTMODE_NAMES[p.HTMODE.toString()] ?: p.HTMODE.toString()
-        sendIf(body, "heaterMode", mode)
-        if (mode == "Off" && p.HTSRC == null) sendIf(body, "heatSource", "Off")
+    Map h = bodyHeat(objnam)
+    boolean hChanged = false
+    [st: p.STATUS, h: p.HEATER, m: p.MODE, a: p.HTMODE, x: p.HTSRC].each { k, v ->
+        if (v != null && h[k] != v.toString()) { h[k] = v.toString(); hChanged = true }
     }
-    if (p.HTSRC != null) {
-        String src = HTSRC_NAMES[p.HTSRC] ?: state.heaterNames?.get(p.HTSRC) ?: p.HTSRC
-        if (sendIf(body, "heatSource", src)) logN "${label} heat source ${src}"
-        Map ids = (state.srcIds ?: [:]) as Map
-        if (ids[src] != p.HTSRC) { ids[src] = p.HTSRC; state.srcIds = ids }
-    }
+    if (hChanged) { Map all = (state.bodyHeat ?: [:]) as Map; all[objnam] = h; state.bodyHeat = all }
+    String src = currentSource(objnam, h)
+    if (sendIf(body, "heatSource", src)) logN "${label} heat source ${src}"
+    if (lo != null && src != "Off") rememberSetPoint(objnam, lo)
+    sendIf(body, "heaterMode", heatingStatus(h, src))
+    pushSources(body, objnam)
     // Pool and spa share the pump, so the pump shows the running body's water temperature.
     String status = p.STATUS ?: (body.currentValue("switch") == "on" ? "ON" : "OFF")
     if (temp != null && status == "ON") {
@@ -435,7 +441,7 @@ private void processBody(String objnam, Map p) {
             if (sendIf(pump, "temperature", temp, u)) pump.debounceTile()
         }
     }
-    logF "body ${label}: status=${p.STATUS} temp=${p.TEMP} setpoint=${p.LOTMP} mode=${p.HTMODE} source=${p.HTSRC}"
+    logF "body ${label}: status=${p.STATUS} temp=${p.TEMP} setpoint=${p.LOTMP} heater=${p.HEATER} mode=${p.MODE} htmode=${p.HTMODE} htsrc=${p.HTSRC}"
     body.debounceTile()
 }
 
@@ -483,12 +489,105 @@ private void processChem(String objnam, Map p) {
     logF "chlorinator ${label}: salt=${p.SALT} pool=${p.PRIM}% spa=${p.SEC}% super=${p.SUPER}"
 }
 
+// Heater catalog: objnam -> [n: name, s: subtype, b: bodies served, o: list order]. Read at each equipment scan.
 private void processHeater(String objnam, Map p) {
-    String label = p.SNAME
-    if (!label) return
-    Map names = (state.heaterNames ?: [:]) as Map
-    if (names[objnam] != label) { names[objnam] = label; state.heaterNames = names }
-    logF "heater ${objnam} = ${label}"
+    Map all = (state.heaters ?: [:]) as Map
+    Map old = (all[objnam] ?: [:]) as Map
+    Map e = [n: (p.SNAME ?: old.n ?: objnam).toString().trim(), s: (p.SUBTYP ?: old.s ?: "").toString().toUpperCase(),
+             b: p.BODY != null ? p.BODY.toString().trim().split(/\s+/).findAll { it }.join(" ") : (old.b ?: ""),
+             o: toInt(p.LISTORD) ?: old.o ?: 999]
+    if (old != e) { all[objnam] = e; state.heaters = all }
+    logF "heater ${objnam} = ${e.n} (${e.s}) serves ${e.b ?: 'no body'}"
+    runIn(1, "refreshBodySources")
+}
+
+def refreshBodySources() {
+    getChildDevices().findAll { it.deviceNetworkId.startsWith(PREFIX.body) }.each { body ->
+        String objnam = objnamFromDni(body.deviceNetworkId)
+        Map h = bodyHeat(objnam)
+        String src = currentSource(objnam, h)
+        sendIf(body, "heatSource", src)
+        sendIf(body, "heaterMode", heatingStatus(h, src))
+        pushSources(body, objnam)
+    }
+}
+
+// ============================================================
+// Heat sources
+// ============================================================
+
+private Map bodyHeat(String objnam) { new LinkedHashMap((state.bodyHeat?.get(objnam) ?: [:]) as Map) }
+
+// Heaters wired to a body, in the panel's list order.
+// If the panel reports no BODY on any heater (older firmware), every heater counts for every body.
+private List heatersFor(String bodyObj) {
+    Map all = (state.heaters ?: [:]) as Map
+    boolean noBodies = all && all.values().every { !it.b }
+    all.findAll { k, v -> noBodies || ((v.b ?: "") as String).split(" ").contains(bodyObj) }
+        .collect { k, v -> [id: k] + (v as Map) }.sort { it.o as int }
+}
+
+private boolean hasSolar(List hs) { hs.any { it.s == "SOLAR" } }
+private boolean hasCombo(List hs) { hs.any { it.s == "HCOMBO" } }
+
+// The choices this body really has, for the device page and the setHeatSource command.
+List heatSourcesFor(String bodyObj) {
+    List hs = heatersFor(bodyObj)
+    List out = ["Off"]
+    if (hasSolar(hs)) out += SOLAR_MODES.keySet() as List
+    if (hasCombo(hs)) out += HCOMBO_MODES.keySet() as List
+    hs.findAll { it.s != "HCOMBO" && !(it.n in out) }.each { out << it.n }
+    return out
+}
+
+private void pushSources(body, String objnam) {
+    if (!state.heaters) return
+    String v = heatSourcesFor(objnam).join(", ")
+    if (sendIf(body, "heatSources", v)) logN "${body.displayName} heat sources: ${v}"
+}
+
+// Same precedence as Home Assistant: a solar MODE, then the assigned standard heater, then an HCOMBO MODE, else Off.
+private String currentSource(String bodyObj, Map h) {
+    List hs = heatersFor(bodyObj)
+    if (!state.heaters || h.h == null) {   // no heater list yet, or firmware without HEATER: show HTSRC as before
+        if (h.x == null || h.x == NULL_OBJ) return "Off"
+        return state.heaters?.get(h.x)?.n ?: state.heaterNames?.get(h.x) ?: h.x
+    }
+    if (hasSolar(hs)) { String sm = SOLAR_MODES.find { k, v -> v == h.m }?.key; if (sm) return sm }
+    Map std = hs.find { it.id == h.h && it.s != "HCOMBO" }
+    if (std) return std.n
+    if (hasCombo(hs)) { String cm = HCOMBO_MODES.find { k, v -> v == h.m }?.key; if (cm) return cm }
+    return "Off"
+}
+
+// HTMODE is what the body is doing right now, not what was picked.
+private String heatingStatus(Map h, String src) {
+    if (h.st == "OFF" || src == "Off") return "Off"
+    if (h.a == null) return "Unknown"
+    return (h.a ==~ /0+/) ? "Idle" : "Heating"
+}
+
+private void rememberSetPoint(String objnam, Integer t) {
+    Map m = (state.lastSetPoint ?: [:]) as Map
+    if (m[objnam] != t) { m[objnam] = t; state.lastSetPoint = m }
+}
+
+// Resolves a source name to the body params that select it. Also takes the 1.7.x names (Heater, Heat Pump,
+// Heat Pump Preferred) so existing rules keep working.
+private Map sourceParams(String bodyObj, String source) {
+    List hs = heatersFor(bodyObj)
+    if (source == "Off") return [HEATER: NULL_OBJ, MODE: "1"]
+    if (SOLAR_MODES[source] && hasSolar(hs)) return [MODE: SOLAR_MODES[source]]
+    if (HCOMBO_MODES[source] && hasCombo(hs)) return [MODE: HCOMBO_MODES[source], HEATER: NULL_OBJ]
+    Map hit = hs.find { it.s != "HCOMBO" && it.n?.equalsIgnoreCase(source) }
+    if (!hit && source in ["Heater"]) hit = hs.find { !(it.s in ["SOLAR", "HCOMBO", "ULTRA", "HTPMP"]) } ?: hs.find { !(it.s in ["SOLAR", "HCOMBO"]) }
+    if (!hit && source in ["Heat Pump", "Heat Pump Preferred"]) hit = hs.find { it.s in ["ULTRA", "HTPMP"] }
+    if (!hit && source in ["Heater", "Heat Pump", "Heat Pump Preferred"] && hasCombo(hs))
+        return [MODE: source == "Heater" ? HCOMBO_MODES["Gas Only"] : HCOMBO_MODES["Heat Pump Only"], HEATER: NULL_OBJ]
+    if (!hit) return null
+    Map out = [HEATER: hit.id as String]
+    if (hasSolar(hs)) out.MODE = "2"   // clears a solar MODE so it doesn't stay in charge
+    return out
 }
 
 // ============================================================
@@ -576,11 +675,24 @@ boolean setBodySetPoint(String childDni, Integer temp) {
     setParam(childDni, [LOTMP: temp.toString()], "set point ${temp}")
 }
 
-boolean setBodyHeatSource(String childDni, String source) {
+boolean setBodyHeatSource(String childDni, String source) { setBodyHeat(childDni, source, null) }
+
+// Source and set point in one write. Turning heat on from Off with no set point restores the last active one.
+boolean setBodyHeat(String childDni, String source, Integer temp) {
     String objnam = objnamFromDni(childDni)
-    String id = source == "Off" ? "00000" : (state.srcIds?.get(source) ?: state.heaterNames?.find { k, v -> v?.equalsIgnoreCase(source) }?.key ?: HTSRC_IDS[source])
-    if (!id) { logE "unknown heat source '${source}' for ${objnam}"; return false }
-    setParam(childDni, [HTSRC: id], "heat source ${source} (${id})")
+    if (!state.heaters) { logE "heater list not read yet, try again in a minute (or Refresh the Bridge)"; return false }
+    Map params = sourceParams(objnam, source)
+    if (params == null) {
+        logE "'${source}' isn't a heat source for ${getChildDevice(childDni)?.displayName ?: objnam}. Choices: ${heatSourcesFor(objnam).join(', ')}"
+        return false
+    }
+    if (temp == null && source != "Off" && currentSource(objnam, bodyHeat(objnam)) == "Off") {
+        Integer last = state.lastSetPoint?.get(objnam) as Integer
+        if (last != null) temp = last
+    }
+    if (temp != null && source != "Off") params.LOTMP = temp.toString()
+    String desc = params.collect { k, v -> "${k}=${v}" }.join(" ")
+    setParam(childDni, params, "heat ${source}${params.LOTMP ? ' at ' + params.LOTMP : ''} (${desc})")
 }
 
 boolean setPumpSpeed(String childDni, Integer rpm) {
@@ -604,7 +716,7 @@ private boolean setParam(String childDni, Map params, String what) {
     String objnam = objnamFromDni(childDni)
     if (!objnam) { logE "no equipment for ${childDni}"; return false }
     String name = getChildDevice(childDni)?.displayName ?: objnam
-    boolean ok = sendCommand([command: "SetParamList", objectList: [[objnam: objnam, params: params]]])
+    boolean ok = sendCommand([command: "SetParamList", objectList: [[objnam: objnam, params: params]]], "${name}: ${what}")
     if (ok) logN "${name}: ${what}"
     return ok
 }
@@ -617,7 +729,7 @@ def componentRefresh(child) {
     String objnam = dni ? objnamFromDni(dni) : null
     if (!objnam) return
     Map keys = [(PREFIX.sensor): ["SENSE", ["OBJTYP", "SUBTYP", "SNAME", "SOURCE"]],
-                (PREFIX.body): ["BODY", ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "TEMP", "LOTMP", "HITMP", "HTMODE", "HTSRC"]],
+                (PREFIX.body): ["BODY", ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "TEMP", "LOTMP", "HITMP", "HTMODE", "HTSRC", "HEATER", "MODE"]],
                 (PREFIX.pump): ["PUMP", ["OBJTYP", "SNAME", "STATUS", "RPM", "GPM", "WATTS"]],
                 (PREFIX.circuit): ["CIRCUIT", ["OBJTYP", "SUBTYP", "SNAME", "STATUS", "FEATR"]],
                 (PREFIX.chem): ["CHEM", ["OBJTYP", "SUBTYP", "SNAME", "SALT", "PRIM", "SEC", "SUPER"]]]
@@ -625,12 +737,18 @@ def componentRefresh(child) {
     if (k) sendCommand(query(k[0] as String, k[1] as List, objnam))
 }
 
-private boolean sendCommand(Map payload) {
+private boolean sendCommand(Map payload, String what = null) {
     if (!state.connected) {
         logE "not connected to IntelliCenter, command not sent"
         return false
     }
     payload.messageID = UUID.randomUUID().toString()
+    if (what) {   // remembered so a rejected reply can say what it was for
+        Map sent = (mem().sent ?: new java.util.concurrent.ConcurrentHashMap()) as Map
+        if (sent.size() > 20) sent.clear()
+        sent[payload.messageID] = what
+        mem().sent = sent
+    }
     String json = groovy.json.JsonOutput.toJson(payload)
     logF "TX: ${json}"
     try {

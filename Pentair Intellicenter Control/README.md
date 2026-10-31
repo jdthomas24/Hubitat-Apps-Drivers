@@ -1,6 +1,6 @@
 # Pentair IntelliCenter for Hubitat
 
-> **Status: v1.7.1.** Local control of a Pentair IntelliCenter pool controller. No cloud, no account: Hubitat talks straight to the controller on your network.
+> **Status: v1.8.0.** Local control of a Pentair IntelliCenter pool controller. No cloud, no account: Hubitat talks straight to the controller on your network.
 
 ## What you get
 
@@ -16,11 +16,11 @@ You choose which of these Hubitat creates on the app's **Equipment** page.
 
 ## Requirements
 
-- IntelliCenter 1 (firmware 1.064 or later) or IntelliCenter 2
+- IntelliCenter firmware 1.064 or later, including 3.x
 - The controller and the hub on the same network
 - Hubitat 2.3.0 or later
 
-**IntelliCenter 2 firmware note:** tested up to 3.004. On 3.006 and later, some users have seen heat source and heater mode changes rejected by the controller. Everything else (pump, circuits, temperatures) works. Reports from 3.008 are welcome.
+**Firmware note:** the 2.x firmware line was withdrawn by Pentair and isn't supported. If your panel is on 2.x, update it to the current 3.x release first. Heat control was reworked in 1.8.0 for 3.x panels and confirmed on 3.014 with a gas heater.
 
 ## Install
 
@@ -44,11 +44,15 @@ You choose which of these Hubitat creates on the app's **Equipment** page.
 |---|---|
 | On / Off | Starts or stops the body (and its pump) |
 | Set Heating Setpoint | Changes the set point |
-| Heat And Start | Sets the set point, picks a heat source (keeps the current one, else Heater) and turns the body on |
+| Heat And Start | Sets the set point and heat source in one step (the last heater used, else the first one your panel lists) and turns the body on |
 | Stop Heat | Turns heat off and leaves the pump running |
-| Set Heat Source | Off, Heater, Solar Only, Solar Preferred, Heat Pump, Heat Pump Preferred |
+| Set Heat Source | Off, or any name in the device's **heatSources** list. Off stops heating and leaves the pump running |
 | Set Heat Lock | **locked** blocks every heat change from Hubitat (set point, source, Heat And Start). Stop Heat still works |
 | Refresh | Re-reads the body from the controller |
+
+**heatSources** lists the heat choices your panel offers for that body, using your heater names (for example `Off, Solar Only, Solar Preferred, Gas Heater`). UltraTemp ETi hybrids also get Gas Only, Heat Pump Only, Hybrid and Dual. The 1.7.x names Heater, Heat Pump and Heat Pump Preferred still work in Set Heat Source.
+
+**heaterMode** shows what the body is doing: **Heating**, **Idle** (heat is on but the heater isn't firing right now) or **Off**. **heatSource** shows the source that's selected.
 
 Rules made with the 1.6.x command names (🔥 Heat and Start Pump, ⚙ Set Heat Source, and so on) keep working.
 
@@ -76,7 +80,7 @@ One **Log level** in the app covers the app, the Bridge and every pool device, a
 
 **A device I deleted came back, or one is missing.** Use the app's **Equipment** page. Deleting a device from the Devices page turns it off there; turn it back on to recreate it.
 
-**Heat commands do nothing.** Check Heat Lock is unlocked, the heater is assigned to that body in the Pentair app (Settings → Advanced Settings → Heaters), and the IntelliCenter 2 firmware note above.
+**Heat commands do nothing.** Check Heat Lock is unlocked and the heater is assigned to that body in the Pentair app (Settings → Advanced Settings → Heaters). On 3.002 and later the heater type in the panel also has to match how it's wired, or it won't fire even from the Pentair app. If the controller turns a command down, the log shows exactly what was sent, so post those lines in the community thread.
 
 **No chlorinator device.** The controller has to report the salt cell. If the Pentair app shows salt but Hubitat doesn't, set Log level to Full, tap Initialize on the Bridge, and post the lines with `CHEM` in the community thread.
 
