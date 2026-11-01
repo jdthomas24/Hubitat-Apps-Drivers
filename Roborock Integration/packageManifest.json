@@ -1,0 +1,34 @@
+{
+    "packageName": "Roborock Integration",
+    "releaseNotes": "v0.1.0 (beta): First build. Local control of Roborock vacuums over the vacuum's own TCP port, no cloud after a one-time sign-in. Supports the newer L01 protocol (Qrevo Curv and similar) and the older 1.0 protocol. Attribute and command names match bloodtick's Roborock driver so existing rules carry over.",
+    "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Roborock%20Integration",
+    "communityLink": "",
+    "author": "jdthomas24",
+    "version": "0.1.0",
+    "minimumHEVersion": "2.3.0",
+    "dateReleased": "2026-11-01",
+    "category": "Integrations",
+    "tags": "Cleaning",
+    "apps": [
+        {
+            "id": "225ae65d-bff7-4fc4-8838-80bc232e036a",
+            "name": "Roborock Integration",
+            "namespace": "jdthomas24",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Roborock%20Integration/ParentApp.groovy",
+            "required": true,
+            "oauth": false,
+            "primary": true,
+            "description": "Signs in to Roborock once to bring in your vacuums, their local keys and room names, and creates a device for each."
+        }
+    ],
+    "drivers": [
+        {
+            "id": "ee0c60a4-5940-4600-b52b-d2fc23aec0df",
+            "name": "Roborock Vacuum",
+            "namespace": "jdthomas24",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Roborock%20Integration/VacuumDriver.groovy",
+            "required": true,
+            "description": "One vacuum, controlled locally: status, start, dock, pause, room cleaning, fan and mop modes, consumables."
+        }
+    ]
+}
