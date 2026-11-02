@@ -1,6 +1,6 @@
 # Roborock Integration for Hubitat (beta)
 
-> **Status: v0.1.4 beta.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
+> **Status: v0.1.5 beta.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
 
 ## What you get
 
@@ -33,7 +33,15 @@ Attribute and command names match bloodtick's Roborock driver, so rules and dash
 3. Your vacuums appear. Enter each one's **IP address** (set a DHCP reservation in your router so it doesn't change).
 4. Tap **Done**. Each vacuum gets a device and connects within a few seconds (`healthStatus: online`).
 
-Your account is only used to bring in the vacuums, their local keys, room names and scenes. Status and commands are local.
+## Local vs cloud
+
+| Local (works with the internet down) | Needs Roborock's cloud |
+|---|---|
+| All status: state, room, area, time, percent, battery, errors, modes, consumables | Sign-in and **Rescan** (vacuums, local keys, room names, scenes) |
+| Commands from Hubitat: Start, Dock, Pause, Resume, Vacuum Rooms, fan and mop settings, Execute | **Vacuum Scene** (scenes live in your Roborock account) |
+| | Jobs started from the Roborock app (Hubitat still tracks them locally once they start) |
+
+Signing out doesn't stop local control. The same table is on the app's **Tips & Troubleshooting** page.
 
 ## How it stays up to date
 
