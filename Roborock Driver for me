@@ -25,7 +25,7 @@
  *         connection is back, even if the live push that triggered the
  *         disconnect was missed.
  */
-public static String version() {return "1.1.14"}
+public static String version() {return "1.1.15"}
 
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
@@ -908,9 +908,7 @@ String encodeTimestamp(int timestamp) {
     return result
 }
 
-String.metaClass.isNumber = {
-    delegate ==~ /-?\d+(\.\d+)?/
-}
+private boolean isNumberStr(String s) { s ==~ /-?\d+(\.\d+)?/ }
 
 def convertNumbers(element) {
     if (element instanceof List) {
@@ -918,7 +916,7 @@ def convertNumbers(element) {
     } else if (element instanceof Map) {
         return element.collectEntries { key, value -> [(key): convertNumbers(value)] }
     } else if (element instanceof String) {
-        if (element.isNumber()) {
+        if (isNumberStr(element)) {
             return element.contains('.') ? element.toFloat() : element.toInteger()
         } else {
             return element
