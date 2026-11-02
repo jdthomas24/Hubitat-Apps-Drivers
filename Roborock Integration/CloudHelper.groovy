@@ -76,7 +76,7 @@ def sendRequest() {
     put32(f, 3, new Random().nextInt(100000)); put32(f, 7, 100000 + new Random().nextInt(900000)); put32(f, 11, ts)
     f[15] = 0; f[16] = 101
     f[17] = (byte) ((enc.length >> 8) & 0xFF); f[18] = (byte) (enc.length & 0xFF)
-    System.arraycopy(enc, 0, f, 19, enc.length)
+    for (int i = 0; i < enc.length; i++) f[19 + i] = enc[i]
     put32(f, f.length - 4, crc32(f, f.length - 4))
     dbg "asking ${r.duid} for its network info"
     interfaces.mqtt.publish(r.topicIn as String, f.encodeHex().toString())
@@ -93,7 +93,8 @@ def parse(String message) {
     if (proto != 102) return
     long ts = get32(b, 11)
     int len = ((b[17] & 0xFF) << 8) | (b[18] & 0xFF)
-    byte[] ct = new byte[len]; System.arraycopy(b, 19, ct, 0, len)
+    byte[] ct = new byte[len]
+    for (int i = 0; i < len; i++) ct[i] = b[19 + i]
     try {
         Map msg = new JsonSlurper().parseText(new String(aes(ct, r.key as String, ts, Cipher.DECRYPT_MODE), "UTF-8")) as Map
         msg?.dps?.each { k, v ->
