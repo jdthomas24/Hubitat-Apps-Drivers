@@ -7,6 +7,9 @@
       After that each vacuum runs locally (Roborock Vacuum driver); the cloud is only used for Rescan and scenes.
      -Sign-in and HomeData calls follow bloodtick's Roborock driver (Hawk auth, getUrlByEmail region lookup).
      -HomeData has no IP address, so each vacuum's IP is entered here (use a DHCP reservation).
+     -IP recovery (0.2.0): when a vacuum can't be reached past its grace period, the hidden Roborock Cloud Helper
+      asks Roborock's cloud for its current IP (get_network_info). A matching MAC updates the IP setting and the
+      driver reconnects locally. The MAC is learned locally on every connect. Needs a sign-in; signed out = no lookups.
      -Log level is the only logging control; children log through childLog(). Full turns off after 3 hours (beta).
 */
 
@@ -16,9 +19,12 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import java.security.MessageDigest
 
-@Field static final String APP_VERSION = "0.1.5"
+@Field static final String APP_VERSION = "0.2.0"
 @Field static final String APP_NAME = "Roborock Integration"
 @Field static final String DRIVER = "Roborock Vacuum"
+@Field static final String CLOUD_DRIVER = "Roborock Cloud Helper"
+@Field static final String CLOUD_DNI = "RR-CLOUD"
+@Field static final long IP_LOOKUP_GAP_MS = 600000L   // one cloud IP lookup per vacuum per 10 min
 @Field static final String NS = "jdthomas24"
 @Field static final String COFFEE_URL = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final Map REGIONS = ["https://usiot.roborock.com": "US", "https://euiot.roborock.com": "EU",
@@ -109,10 +115,11 @@ private String vacuumCardHtml(Map v) {
         child.currentValue("healthStatus") == "online" ? "<span class='p-tag p-tag-success border-round-xl px-2 py-1 text-xs font-bold'>Connected</span>" :
         "<span class='p-tag p-tag-danger border-round-xl px-2 py-1 text-xs font-bold'>Offline</span>"
     String proto = child?.currentValue("protocol") ?: "not connected"
+    String mac = state.macs?.get(v.duid) ? " &middot; MAC ${esc(state.macs[v.duid])}" : ""
     String link = child ? " &middot; <a href='/device/edit/${child.id}' target='_blank' class='hub-text-link no-underline'>device page " +
         "<i class='fa-regular fa-external-link' style='font-size:0.8em'></i></a>" : ""
     "<div class='flex align-items-center gap-2 mt-2'><span class='font-semibold'>${esc(v.name)}</span>${tag}</div>" +
-        "<div class='text-color-secondary' style='font-size:14px;'>${esc(v.model ?: '')} &middot; local protocol ${esc(proto)}${link}</div>"
+        "<div class='text-color-secondary' style='font-size:14px;'>${esc(v.model ?: '')} &middot; local protocol ${esc(proto)}${mac}${link}</div>"
 }
 
 private String currentLogLevel() { settings.logLevel ?: "Errors Only" }
@@ -140,7 +147,8 @@ def appButtonHandler(String btn) {
             case "rescan": scan(); break
             case "signOut":
                 ["auth", "homeId", "rooms", "scenes"].each { state.remove(it) }
-                state.msg = "Signed out. Vacuums keep running locally."
+                syncCloudHelper()
+                state.msg = "Signed out. Vacuums keep running locally, but a changed IP won't be found automatically."
                 break
         }
     } catch (e) {
@@ -168,6 +176,7 @@ private void verifyCode() {
     app.removeSetting("pin")
     logN "Signed in to Roborock"
     scan()
+    syncCloudHelper()
 }
 
 // Home detail -> HomeData (devices, products, rooms) -> scenes per vacuum.
@@ -202,7 +211,51 @@ private void scan() {
 
 // ---------- children ----------
 
+private void syncCloudHelper() {
+    def h = getChildDevice(CLOUD_DNI)
+    if (state.auth && !h) {
+        try { addChildDevice(NS, CLOUD_DRIVER, CLOUD_DNI, [name: CLOUD_DRIVER, label: "Roborock Cloud Helper", isComponent: true]) }
+        catch (e) { logE "Couldn't add the ${CLOUD_DRIVER}: ${e}. Update through HPM so the driver is installed." }
+    } else if (!state.auth && h) deleteChildDevice(CLOUD_DNI)
+}
+
+// Called by a vacuum that can't be reached. Throttled per vacuum.
+void componentIpLost(String dni) {
+    Map v = ((state.vacuums ?: []) as List).find { dniFor(it.duid) == dni } as Map
+    if (!v) return
+    Map last = (state.ipLookups ?: [:]) as Map
+    if (now() - ((last[v.duid] ?: 0L) as long) < IP_LOOKUP_GAP_MS) return
+    last[v.duid] = now(); state.ipLookups = last
+    def h = getChildDevice(CLOUD_DNI)
+    if (!state.auth || !h) { log.warn "${v.name} can't be reached at ${settings["ip_${v.duid}"]}. Sign in to Roborock in the app so its new IP can be found automatically, or update the IP by hand."; return }
+    logN "${v.name} can't be reached at ${settings["ip_${v.duid}"]}, asking Roborock's cloud for its current IP"
+    h.lookupNetworkInfo(v.duid as String, [rriot: state.auth.rriot, localKey: state.keys?.get(v.duid)])
+}
+
+// From the vacuum (via: local, on each connect) or the Cloud Helper (via: cloud, after a lookup).
+void componentNetworkInfo(String duid, Map info, String err, String via) {
+    Map v = ((state.vacuums ?: []) as List).find { it.duid == duid } as Map
+    if (!v) return
+    if (err) { log.warn "${v.name}: couldn't find its current IP through Roborock's cloud (${err}). Will try again in 10 minutes."; return }
+    String mac = info?.mac?.toString()?.toUpperCase()
+    Map macs = (state.macs ?: [:]) as Map
+    if (mac && macs[duid] && macs[duid] != mac) {
+        log.warn "${v.name}: the cloud reported MAC ${mac}, but this vacuum is ${macs[duid]}. IP not changed."
+        return
+    }
+    if (mac && macs[duid] != mac) { macs[duid] = mac; state.macs = macs }
+    if (via != "cloud") return
+    String ip = info?.ip?.toString()
+    String cur = settings["ip_${duid}"]?.toString()?.trim()
+    if (!ip) return
+    if (ip == cur) { logN "${v.name}: Roborock's cloud says the IP is still ${ip}. It may be off or out of Wi-Fi range."; return }
+    app.updateSetting("ip_${duid}", [type: "text", value: ip])
+    log.info "${v.name}: IP changed from ${cur} to ${ip} (found through Roborock's cloud). Reconnecting locally. A DHCP reservation for MAC ${macs[duid] ?: mac ?: '?'} will keep it from changing."
+    getChildDevice(dniFor(duid))?.configChanged()
+}
+
 private void syncChildren() {
+    syncCloudHelper()
     ((state.vacuums ?: []) as List).each { Map v ->
         String dni = dniFor(v.duid)
         def child = getChildDevice(dni)
@@ -330,13 +383,14 @@ private List tipsTopics() {
             body: "<p>These go through Roborock's servers and stop working if your internet or Roborock's cloud is down:</p>",
             checklist: [
                 [title: "Sign-in and Rescan", detail: "Brings in your vacuums, their local keys, room names and scenes. Only needed at setup or after you rename rooms or add scenes."],
+                [title: "IP recovery (automatic)", detail: "If a vacuum can't be reached for 90 seconds, the app asks Roborock's cloud for its current IP, checks the MAC matches, updates the IP and reconnects locally. At most once every 10 minutes per vacuum. Needs you to be signed in."],
                 [title: "Vacuum Scene", detail: "Roborock scenes live in your Roborock account, so running one goes through the cloud. It's the only device command that does."],
                 [title: "Jobs started from the Roborock app", detail: "The app sends its commands through Roborock's cloud. Hubitat still sees the job locally once it starts."]
             ],
             warning: "<b>Signing out doesn't stop local control.</b><br>Vacuums keep running locally. You only need to sign in again to Rescan or run scenes."],
         [id: "setup", label: "Setup", title: "Setting up a vacuum", group: "Getting started", icon: "pi-cog",
             body: "<p>Sign in with your Roborock email and the code they send you. Your vacuums appear on the main page.</p>" +
-                "<p>Enter each vacuum's <b>IP address</b>. Roborock doesn't share it, so find it in your router or the Roborock app (Device info). A DHCP reservation keeps it from changing.</p>" +
+                "<p>Enter each vacuum's <b>IP address</b>. Roborock doesn't share it, so find it in your router or the Roborock app (Device info). Once connected, the vacuum's card shows its <b>MAC</b> address for a DHCP reservation in your router. If the IP changes anyway, the app finds the new one through Roborock's cloud while you're signed in.</p>" +
                 "<p>Tap <b>Done</b>. Each vacuum gets a device and should show <b>healthStatus online</b> within a few seconds.</p>"],
         [id: "updates", label: "Status updates", title: "How status stays up to date", group: "Getting started", icon: "pi-refresh",
             body: "<p>The vacuum doesn't send updates on its own, so the driver checks it: every 20 seconds while it's cleaning, returning or busy at the dock, every 1, 2 or 5 minutes while docked (the <b>Docked poll</b> setting), and 3 seconds after any command.</p>" +

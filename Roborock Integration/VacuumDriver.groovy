@@ -17,6 +17,8 @@
       sent once connected (if within 60 s).
      -Diagnostics (beta only): logs one block with model code, firmware, protocol and the raw get_status /
       get_consumable replies, so testers can send everything in one paste. Never includes the local key.
+     -IP changes (0.2.0): get_network_info on each connect records the MAC (mac attribute). If the vacuum stays
+      unreachable past the grace period, the app asks Roborock's cloud for its current IP (see Cloud Helper).
      -Log level comes from the app.
 */
 
@@ -26,7 +28,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "0.1.5"
+@Field static final String VERSION = "0.2.0"
 @Field static final int GRACE_SEC = 90
 @Field static final int PORT = 58867
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'
@@ -102,6 +104,7 @@ metadata {
         attribute "roomsList", "string"
         attribute "scenesList", "string"
         attribute "ip", "string"
+        attribute "mac", "string"
         attribute "protocol", "string"
         attribute "currentRoom", "string"
     }
@@ -215,6 +218,7 @@ private void scheduleReconnect() {
     int n = ((state.retry ?: 0) as int) + 1
     state.retry = n
     int delay = graceActive() ? 5 : Math.min(300, 30 * n)
+    if (!graceActive() && device.currentValue("healthStatus") == "offline") parent?.componentIpLost(device.deviceNetworkId)   // app throttles
     logD "Reconnecting in ${delay} s"
     runIn(delay, "connect")
 }
@@ -288,8 +292,12 @@ private boolean graceActive() { state.graceUntil && now() < (state.graceUntil as
 
 def graceExpired() {
     state.remove("graceUntil")
-    if (!session()) setHealth(false, "Lost the local connection to ${state.cfgIp} and couldn't reconnect within ${GRACE_SEC} s. Still trying.")
+    if (session()) return
+    setHealth(false, "Lost the local connection to ${state.cfgIp} and couldn't reconnect within ${GRACE_SEC} s. Still trying.")
+    parent?.componentIpLost(device.deviceNetworkId)   // the app may look up a new IP through the cloud
 }
+
+def askNetworkInfo() { if (session()) rpc("get_network_info") }
 
 private void closeSocket() {
     unschedule("ping")
@@ -379,6 +387,7 @@ private void handleFrame(byte[] m) {
         state.lastConsumables = 0L
         state.lastRooms = 0L
         runIn(1, "poll")
+        runIn(4, "askNetworkInfo")
         return
     }
     if (proto == 3 || m.length <= 21 || !s?.open) return
@@ -404,6 +413,11 @@ private void handleRpc(Map r) {
         case "get_status": if (res instanceof List && res) processStatus(res[0] as Map); break
         case "get_consumable": if (res instanceof List && res) processConsumables(res[0] as Map); break
         case "get_room_mapping": processRooms(res as List); break
+        case "get_network_info":
+            Map ni = (res instanceof List ? res[0] : res) as Map
+            if (ni?.mac) sendIf("mac", ni.mac.toString().toUpperCase())
+            if (ni) parent?.componentNetworkInfo(cfg().duid as String, ni, null, "local")
+            break
         case null: logD "Reply to an unknown request: ${r}"; break
         default:
             if (res == ["ok"] || res == ["OK"] || res == 0) logN "${method} accepted"
