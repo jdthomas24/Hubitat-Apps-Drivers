@@ -21,7 +21,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "0.1.1"
+@Field static final String VERSION = "0.1.2"
 @Field static final int PORT = 58867
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'
 @Field static final Map life = [main: 300, side: 200, filter: 150, sensor: 30, highSpeed: 300]
@@ -130,19 +130,19 @@ def refresh() { if (session()) poll() else initialize() }
 def on() { vacuumStart() }
 def off() { vacuumDock() }
 def push(button) { sendEvent(name: "pushed", value: button, isStateChange: true) }
-def vacuumStart() { command("app_start") }
-def vacuumDock() { command("app_charge") }
-def vacuumPause() { command("app_pause") }
-def vacuumResume() { command("resume_segment_clean") }
+def vacuumStart() { vacCommand("app_start") }
+def vacuumDock() { vacCommand("app_charge") }
+def vacuumPause() { vacCommand("app_pause") }
+def vacuumResume() { vacCommand("resume_segment_clean") }
 
 def vacuumRooms(String rooms, String mopWater = null) {
     List ids = rooms.split(/[,\s]+/).findAll { it ==~ /\d+/ }.collect { it as int }
     if (!ids) { logE "No room IDs in '${rooms}'. Use the numbers from roomsList."; return }
     if (mopWater && mopWater.toUpperCase() != "DEFAULT") {
         def code = mopWaterModeCodes.find { it.value.toUpperCase() == mopWater.toUpperCase() }?.key
-        if (code != null) command("set_water_box_custom_mode", [code])
+        if (code != null) vacCommand("set_water_box_custom_mode", [code])
     }
-    command("app_segment_clean", ids)
+    vacCommand("app_segment_clean", ids)
 }
 
 def vacuumScene(String sceneId) { parent?.componentScene(device.deviceNetworkId, sceneId) }
@@ -150,10 +150,10 @@ def vacuumScene(String sceneId) { parent?.componentScene(device.deviceNetworkId,
 def execute(String cmd, params = null) {
     def p = params
     if (p instanceof String && p) p = new JsonSlurper().parseText(p)
-    command(cmd, p == null ? [] : p)
+    vacCommand(cmd, p == null ? [] : p)
 }
 
-private void command(String method, params = []) {
+private void vacCommand(String method, params = []) {
     if (!session()) { logE "Not connected, '${method}' not sent. Reconnecting."; initialize(); return }
     rpc(method, params)
     runIn(3, "poll")
