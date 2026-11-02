@@ -21,7 +21,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "0.1.0"
+@Field static final String VERSION = "0.1.1"
 @Field static final int PORT = 58867
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'
 @Field static final Map life = [main: 300, side: 200, filter: 150, sensor: 30, highSpeed: 300]
@@ -55,7 +55,8 @@ import javax.crypto.spec.SecretKeySpec
     44: "Dirty Tank Latch Open", 46: "No Dust Bin", 53: "Cleaning Tank Full Blocked"]
 
 metadata {
-    definition(name: "Roborock Vacuum", namespace: "jdthomas24", author: "jdthomas24") {
+    definition(name: "Roborock Vacuum", namespace: "jdthomas24", author: "jdthomas24", importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Roborock%20Integration/VacuumDriver.groovy")
+    {
         capability "Actuator"
         capability "Battery"
         capability "Initialize"
@@ -67,17 +68,17 @@ metadata {
         command "vacuumDock"
         command "vacuumPause"
         command "vacuumResume"
-        command "vacuumRooms", [[name: "Room IDs*", type: "STRING", description: "Comma or space delimited Room IDs (see roomsList)"],
-                                [name: "MopWater", type: "ENUM", description: "Mop water mode. Optional.", constraints: mopWaterModeCodes.values().collect { it.toUpperCase() }]]
-        command "vacuumScene", [[name: "Scene ID*", type: "STRING", description: "Scene ID (see scenesList). Runs through the Roborock cloud."]]
-        command "execute", [[name: "command*", type: "STRING", description: "Raw command, e.g. get_status"], [name: "params", type: "JSON_OBJECT", description: "Command parameters"]]
+        command "vacuumRooms", [[name: "Room IDs*", type: "STRING", description: "Comma or space delimited Room IDs"],
+                                [name: "MopWater",  type: "ENUM",   description: "Mop water mode. Optional.", constraints: mopWaterModeCodes.values().collect{ it.toUpperCase() }]]
+        command "vacuumScene",  [[name: "Scene ID*", type: "STRING", description: "Single Scene ID"]]
+        command "execute", [[name: "command*", type: "STRING", description: "Raw command"],[name: "params", type: "JSON_OBJECT", description: "Command parameters"]]
 
-        attribute "dustCollection", "enum", ["off", "on"]
-        attribute "dockError", "string"
+        attribute "dustCollection", "enum", ["off","on"]
+        attribute "dockError", "enum", dockErrorCodes.values().collect{ it.toLowerCase() }
         attribute "name", "string"
-        attribute "state", "string"
-        attribute "error", "string"
-        attribute "fanPower", "string"
+        attribute "state", "enum", stateCodes.values().collect{ it.toLowerCase() }
+        attribute "error", "enum", errorCodes.values().collect{ it.toLowerCase() }
+        attribute "fanPower", "enum", fanPowerCodes.values().collect{ it.toLowerCase() }
         attribute "cleanTime (min)", "number"
         attribute "cleanArea (sq ft)", "number"
         attribute "cleanPercent (%)", "number"
@@ -86,9 +87,9 @@ metadata {
         attribute "remainingSensors (%)", "number"
         attribute "remainingSideBrush (%)", "number"
         attribute "remainingHighSpeedMaintBrush (%)", "number"
-        attribute "locating", "enum", ["true", "false"]
-        attribute "mopMode", "string"
-        attribute "mopWaterMode", "string"
+        attribute "locating", "enum", ["true","false"]
+        attribute "mopMode", "enum", mopModeCodes.values().collect{ it.toLowerCase() }
+        attribute "mopWaterMode", "enum", mopWaterModeCodes.values().collect{ it.toLowerCase() }
         attribute "healthStatus", "enum", ["offline", "online"]
         attribute "roomsList", "string"
         attribute "scenesList", "string"
@@ -96,12 +97,13 @@ metadata {
         attribute "protocol", "string"
         attribute "currentRoom", "string"
     }
-    preferences {
-        input "dockedPoll", "enum", title: "Docked poll", description: "How often to check the vacuum while it's docked. Jobs started outside Hubitat show up within this time.",
-            options: ["60": "1 minute", "120": "2 minutes", "300": "5 minutes"], defaultValue: "120"
-        input "areaUnit", "enum", title: "Area unit", options: ["0": "Square feet", "1": "Square meters"], defaultValue: "0"
-        input "numberOfButtons", "number", title: "Number of buttons", defaultValue: 1
-    }
+}
+
+preferences {
+    input(name: "dockedPoll", type: "enum", title: "<b>Docked poll:</b>", options: ["60": "1 minute", "120": "2 minutes", "300": "5 minutes"], defaultValue: "120", required: true, width: 4,
+        description: "<i>How often to check the vacuum while docked. Jobs started outside Hubitat show up within this time.</i>")
+    input(name: "areaUnit", type: "enum", title: "<b>Device Area Unit:</b>", options: ["0": "Square Foot (ft²)", "1": "Square Meter (m²)"], defaultValue: "0", required: true, width: 4)
+    input(name: "numberOfButtons", type: "number", title: "<b>Set Number of Buttons:</b>", range: "1...", defaultValue: 1, required: true, width: 4)
 }
 
 def installed() { initialize() }
