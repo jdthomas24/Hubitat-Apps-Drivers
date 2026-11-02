@@ -16,7 +16,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import java.security.MessageDigest
 
-@Field static final String APP_VERSION = "0.1.0"
+@Field static final String APP_VERSION = "0.1.1"
 @Field static final String DRIVER = "Roborock Vacuum"
 @Field static final String NS = "jdthomas24"
 @Field static final String COFFEE_URL = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
@@ -29,7 +29,9 @@ definition(
     namespace: NS,
     author: "jdthomas24",
     description: "Local control of Roborock vacuums. Sign in once to bring in your vacuums.",
-    category: "Integrations",
+    category: "Convenience",
+    menu: "Integrations",
+    installOnOpen: true,
     iconUrl: "", iconX2Url: "",
     singleInstance: true
 )
