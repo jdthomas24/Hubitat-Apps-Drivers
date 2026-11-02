@@ -1,6 +1,6 @@
 # Roborock Integration for Hubitat (beta)
 
-> **Status: v0.1.0 beta.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
+> **Status: v0.1.4 beta.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
 
 ## What you get
 
@@ -52,7 +52,11 @@ A job started from the Roborock app or a schedule shows up within the docked pol
 
 ## Logging
 
-One **Log level** in the app covers every vacuum. **Full** includes every request and turns itself off after 30 minutes.
+One **Log level** in the app covers every vacuum. **Full** includes every request and turns itself off after 3 hours (during the beta).
+
+## Beta testers: Diagnostics
+
+Tap **Diagnostics** on the vacuum device. It logs one block (always shown, whatever the log level) with your model, model code, firmware, protocol and the raw status the vacuum reports. Copy everything from `DIAGNOSTICS` to `END` and send it along with any warnings or errors. It never includes your local key. If Model code or Firmware says "tap Rescan", tap **Rescan vacuums and rooms** in the app first.
 
 ## Troubleshooting
 

@@ -15,6 +15,8 @@
      -The vacuum closes the local connection now and then (reset by peer). A drop reconnects within a few seconds
       and healthStatus only goes offline if it isn't back within 90 s. A command sent while reconnecting is held and
       sent once connected (if within 60 s).
+     -Diagnostics (beta only): logs one block with model code, firmware, protocol and the raw get_status /
+      get_consumable replies, so testers can send everything in one paste. Never includes the local key.
      -Log level comes from the app.
 */
 
@@ -24,7 +26,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "0.1.3"
+@Field static final String VERSION = "0.1.4"
 @Field static final int GRACE_SEC = 90
 @Field static final int PORT = 58867
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'
@@ -33,6 +35,7 @@ import javax.crypto.spec.SecretKeySpec
 @Field static Map sess = [:]
 @Field static Map rxBuf = [:]
 @Field static Map pending = [:]
+@Field static Map diag = [:]
 
 @Field static final Map errorCodes = [
     0: "No error", 1: "Laser sensor fault", 2: "Collision sensor fault", 3: "Wheel floating",
@@ -75,6 +78,7 @@ metadata {
         command "vacuumRooms", [[name: "Room IDs*", type: "STRING", description: "Comma or space delimited Room IDs"],
                                 [name: "MopWater",  type: "ENUM",   description: "Mop water mode. Optional.", constraints: mopWaterModeCodes.values().collect{ it.toUpperCase() }]]
         command "vacuumScene",  [[name: "Scene ID*", type: "STRING", description: "Single Scene ID"]]
+        command "diagnostics"
         command "execute", [[name: "command*", type: "STRING", description: "Raw command"],[name: "params", type: "JSON_OBJECT", description: "Command parameters"]]
 
         attribute "dustCollection", "enum", ["off","on"]
@@ -219,6 +223,31 @@ def sendPending(Map pc) {
     if (!session() || !pc?.m) return
     logN "Sending '${pc.m}' now that the vacuum is connected"
     vacCommand(pc.m as String, pc.p ?: [])
+}
+
+def diagnostics() {
+    diag[device.id] = [:]
+    if (session()) {
+        rpc("get_status"); rpc("get_consumable"); rpc("get_room_mapping")
+        runIn(5, "diagReport")
+    } else diagReport()
+}
+
+def diagReport() {
+    Map dg = (diag.remove(device.id) ?: [:]) as Map
+    Map c = cfg()
+    def J = { v -> v == null ? "no reply" : groovy.json.JsonOutput.toJson(v) }
+    List rm = dg.get_room_mapping instanceof List ? dg.get_room_mapping as List : null
+    String out = "DIAGNOSTICS (copy everything from here to END)" +
+        "\nModel: ${c.model ?: '?'} | Model code: ${c.modelCode ?: 'tap Rescan in the app'} | Firmware: ${c.fw ?: 'tap Rescan in the app'}" +
+        "\nProtocol: ${device.currentValue('protocol') ?: '?'} (cloud pv ${c.pv ?: '?'}) | Health: ${device.currentValue('healthStatus')} | Connected: ${session() ? 'yes' : 'no'}" +
+        "\nDriver ${VERSION} | App ${c.appVersion ?: '?'} | Docked poll ${settings.dockedPoll ?: '120'} s | Reconnects since start: ${state.retry ?: 0}" +
+        "\nState: ${device.currentValue('state')} | Error: ${device.currentValue('error')} | Dock error: ${device.currentValue('dockError')}" +
+        "\nget_status: ${J(dg.get_status)}" +
+        "\nget_consumable: ${J(dg.get_consumable)}" +
+        "\nRooms mapped: ${rm != null ? rm.size() : 'no reply'} | Rooms named in app: ${((c.rooms ?: [:]) as Map).size()}" +
+        "\nEND"
+    parent ? parent.childLog("diag", device.displayName, out) : log.info(out)
 }
 
 def ping() {
@@ -369,6 +398,8 @@ private void handleRpc(Map r) {
     String method = req?.m
     if (r?.error) { logE "${method ?: 'Command'} rejected: ${r.error}"; return }
     def res = r?.result
+    Map dg = diag[device.id] as Map
+    if (dg != null && method in ["get_status", "get_consumable", "get_room_mapping"]) dg[method] = res
     switch (method) {
         case "get_status": if (res instanceof List && res) processStatus(res[0] as Map); break
         case "get_consumable": if (res instanceof List && res) processConsumables(res[0] as Map); break

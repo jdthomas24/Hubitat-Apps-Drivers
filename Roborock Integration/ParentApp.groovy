@@ -7,7 +7,7 @@
       After that each vacuum runs locally (Roborock Vacuum driver); the cloud is only used for Rescan and scenes.
      -Sign-in and HomeData calls follow bloodtick's Roborock driver (Hawk auth, getUrlByEmail region lookup).
      -HomeData has no IP address, so each vacuum's IP is entered here (use a DHCP reservation).
-     -Log level is the only logging control; children log through childLog(). Full turns off after 30 minutes.
+     -Log level is the only logging control; children log through childLog(). Full turns off after 3 hours (beta).
 */
 
 import groovy.transform.Field
@@ -16,7 +16,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import java.security.MessageDigest
 
-@Field static final String APP_VERSION = "0.1.3"
+@Field static final String APP_VERSION = "0.1.4"
 @Field static final String APP_NAME = "Roborock Integration"
 @Field static final String DRIVER = "Roborock Vacuum"
 @Field static final String NS = "jdthomas24"
@@ -24,11 +24,13 @@ import java.security.MessageDigest
 @Field static final Map REGIONS = ["https://usiot.roborock.com": "US", "https://euiot.roborock.com": "EU",
                                    "https://cniot.roborock.com": "CN", "https://ruiot.roborock.com": "RU"]
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
+@Field static final int FULL_LOG_SEC = 10800   // 3 hours while in beta
 
 definition(
     name: "Roborock Integration",
     namespace: NS,
     author: "jdthomas24",
+    importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Roborock%20Integration/ParentApp.groovy",
     description: "Local control of Roborock vacuums. Sign in once to bring in your vacuums.",
     category: "Convenience",
     menu: "Integrations",
@@ -118,11 +120,11 @@ def uninstalled() { getChildDevices().each { deleteChildDevice(it.deviceNetworkI
 
 def initialize() {
     unschedule("fullLogsOff")
-    if (settings.logLevel == "Full") runIn(1800, "fullLogsOff")
+    if (settings.logLevel == "Full") runIn(FULL_LOG_SEC, "fullLogsOff")
     syncChildren()
 }
 
-def fullLogsOff() { app.updateSetting("logLevel", [type: "enum", value: "Normal"]); logN "Full logging turned off after 30 minutes" }
+def fullLogsOff() { app.updateSetting("logLevel", [type: "enum", value: "Normal"]); logN "Full logging turned off after 3 hours" }
 
 // ---------- buttons ----------
 
@@ -176,9 +178,10 @@ private void scan() {
     state.homeId = homeId
     Map home = hawkGet("/v2/user/homes/${homeId}")?.result as Map
     if (!home) { state.msg = "<span style='color:#c62828;'>Couldn't read your vacuums.</span>"; return }
-    Map models = (home.products ?: []).collectEntries { [(it.id.toString()): (it.name ?: it.model)] }
+    Map prods = (home.products ?: []).collectEntries { [(it.id.toString()): it] }
     List devs = ((home.devices ?: []) + (home.receivedDevices ?: [])).findAll { it.localKey }
-    state.vacuums = devs.collect { [duid: it.duid, name: it.name, model: models[it.productId?.toString()], pv: it.pv] }
+    state.vacuums = devs.collect { Map p = (prods[it.productId?.toString()] ?: [:]) as Map
+        [duid: it.duid, name: it.name, model: p.name ?: p.model, modelCode: p.model, fw: it.fv, pv: it.pv] }
     Map keys = (state.keys ?: [:]) as Map
     devs.each { keys[it.duid] = it.localKey }
     state.keys = keys
@@ -219,7 +222,7 @@ Map componentConfig(String dni) {
     Map v = ((state.vacuums ?: []) as List).find { dniFor(it.duid) == dni } as Map
     if (!v) return [:]
     return [duid: v.duid, ip: settings["ip_${v.duid}"]?.toString()?.trim(), localKey: state.keys?.get(v.duid), model: v.model,
-            rooms: state.rooms ?: [:], scenes: state.scenes?.get(v.duid) ?: [:]]
+            modelCode: v.modelCode, fw: v.fw, pv: v.pv, appVersion: APP_VERSION, rooms: state.rooms ?: [:], scenes: state.scenes?.get(v.duid) ?: [:]]
 }
 
 void componentScene(String dni, String sceneId) {
@@ -239,6 +242,7 @@ void childLog(String level, String source, String msg) {
     String line = "${source}: ${msg}"
     if (level == "error") log.error line
     else if (level == "warn") log.warn line
+    else if (level == "diag") log.info line   // Diagnostics button: always shown
     else if (level == "info" && settings.logLevel in ["Normal", "Full"]) log.info line
     else if (level == "debug" && settings.logLevel == "Full") log.debug line
 }
@@ -384,7 +388,7 @@ private String loggingDetailsPopupHtml() {
   <div class='text-color-secondary text-base mb-3'>One setting for the app and every vacuum.</div>
   ${logLevelDetailHtml("Errors Only", "Warnings and errors only, such as a vacuum going offline or a command being rejected.", current)}
   ${logLevelDetailHtml("Normal", "Errors, plus connections, commands, state changes (cleaning, returning, charged) and vacuums added or removed.", current)}
-  ${logLevelDetailHtml("Full", "Everything, including every request to the vacuum. Use while troubleshooting. Turns off after 30 minutes.", current)}
+  ${logLevelDetailHtml("Full", "Everything, including every request to the vacuum. Use while troubleshooting. Turns off after 3 hours.", current)}
 </div>
 """
     String js = groovy.json.JsonOutput.toJson(details)
