@@ -12,6 +12,9 @@
      -The vacuum doesn't push status locally, so the driver polls get_status: every 20 s while working, the
       Docked poll setting otherwise, 3 s after a command. Ping every 30 s keeps the socket open (vacuum drops at 60 s).
      -Attribute and command names follow bloodtick's Roborock driver so rules carry over. Scenes run through the app (cloud).
+     -The vacuum closes the local connection now and then (reset by peer). A drop reconnects within a few seconds
+      and healthStatus only goes offline if it isn't back within 90 s. A command sent while reconnecting is held and
+      sent once connected (if within 60 s).
      -Log level comes from the app.
 */
 
@@ -21,7 +24,8 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "0.1.2"
+@Field static final String VERSION = "0.1.3"
+@Field static final int GRACE_SEC = 90
 @Field static final int PORT = 58867
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'
 @Field static final Map life = [main: 300, side: 200, filter: 150, sensor: 30, highSpeed: 300]
@@ -154,7 +158,12 @@ def execute(String cmd, params = null) {
 }
 
 private void vacCommand(String method, params = []) {
-    if (!session()) { logE "Not connected, '${method}' not sent. Reconnecting."; initialize(); return }
+    if (!session()) {
+        state.pendingCmd = [m: method, p: params, at: now()]
+        logN "Reconnecting, '${method}' will be sent once connected"
+        if (!graceActive()) { initialize(); startGrace() }
+        return
+    }
     rpc(method, params)
     runIn(3, "poll")
 }
@@ -201,16 +210,22 @@ private void scheduleReconnect() {
     closeSocket()
     int n = ((state.retry ?: 0) as int) + 1
     state.retry = n
-    int delay = Math.min(300, 30 * n)
+    int delay = graceActive() ? 5 : Math.min(300, 30 * n)
     logD "Reconnecting in ${delay} s"
     runIn(delay, "connect")
+}
+
+def sendPending(Map pc) {
+    if (!session() || !pc?.m) return
+    logN "Sending '${pc.m}' now that the vacuum is connected"
+    vacCommand(pc.m as String, pc.p ?: [])
 }
 
 def ping() {
     Map s = session()
     if (!s) return
     long last = (s.lastRx ?: 0L) as long
-    if (now() - last > 75000L) { logW "No reply from the vacuum for 75 s, reconnecting"; setHealth(false, null); scheduleReconnect(); return }
+    if (now() - last > 75000L) { logD "No reply from the vacuum for 75 s, reconnecting"; startGrace(); scheduleReconnect(); return }
     s.seq = (s.seq as long) + 1
     send(frame(s.ver as String, s.seq as long, 10000 + new Random().nextInt(89999), nowSec(), 2, null))
     runIn(30, "ping")
@@ -218,16 +233,38 @@ def ping() {
 
 def socketStatus(String msg) {
     logD "Socket: ${msg}"
-    if (msg?.toLowerCase()?.contains("error") || msg?.toLowerCase()?.contains("disconnect")) {
-        if (session()) logW "Connection lost (${msg})"
-        sess.remove(device.id)
+    String m = msg?.toLowerCase() ?: ""
+    if (!(m.contains("error") || m.contains("disconnect"))) return
+    boolean wasUp = session() != null
+    closeSocket()
+    if (wasUp) {   // the vacuum closed it; quick reconnect, offline only if it stays down
+        logD "Connection closed by the vacuum (${msg}), reconnecting"
+        startGrace()
+        state.retry = 0
+        runIn(2, "connect")
+    } else {
         setHealth(false, null)
         scheduleReconnect()
     }
 }
 
+// Offline is reported only if the connection isn't back within GRACE_SEC.
+private void startGrace() {
+    if (graceActive()) return
+    state.graceUntil = now() + GRACE_SEC * 1000L
+    runIn(GRACE_SEC, "graceExpired")
+}
+
+private boolean graceActive() { state.graceUntil && now() < (state.graceUntil as long) }
+
+def graceExpired() {
+    state.remove("graceUntil")
+    if (!session()) setHealth(false, "Lost the local connection to ${state.cfgIp} and couldn't reconnect within ${GRACE_SEC} s. Still trying.")
+}
+
 private void closeSocket() {
     unschedule("ping")
+    unschedule("connect")
     unschedule("helloTimeout")
     sess.remove(device.id)
     rxBuf[device.id] = ""
@@ -299,8 +336,16 @@ private void handleFrame(byte[] m) {
         state.ver = ver
         state.retry = 0
         sendIf("protocol", ver)
+        boolean quiet = graceActive()
+        unschedule("graceExpired")
+        state.remove("graceUntil")
+        boolean wasOnline = device.currentValue("healthStatus") == "online"
         setHealth(true, null)
-        logN "Connected locally (${ver})"
+        if (quiet && wasOnline) logD "Reconnected locally (${ver})"
+        else logN "Connected locally (${ver})"
+        Map pc = state.pendingCmd as Map
+        state.remove("pendingCmd")
+        if (pc && now() - (pc.at as long) < 60000L) runIn(2, "sendPending", [data: pc])
         runIn(30, "ping")
         state.lastConsumables = 0L
         state.lastRooms = 0L
@@ -412,6 +457,7 @@ private void pushLists(Map c) {
 }
 
 private void setHealth(boolean ok, String why) {
+    if (!ok && graceActive()) { if (why) logD why; return }   // still within the reconnect grace period
     if (sendIf("healthStatus", ok ? "online" : "offline") && !ok && why) logW why
     else if (!ok && why) logD why
 }
