@@ -16,7 +16,8 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import java.security.MessageDigest
 
-@Field static final String APP_VERSION = "0.1.1"
+@Field static final String APP_VERSION = "0.1.2"
+@Field static final String APP_NAME = "Roborock Integration"
 @Field static final String DRIVER = "Roborock Vacuum"
 @Field static final String NS = "jdthomas24"
 @Field static final String COFFEE_URL = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
@@ -42,47 +43,74 @@ preferences {
 
 def mainPage() {
     List vacs = (state.vacuums ?: []) as List
+    Map banner = bannerState(vacs)
+    String msg = state.msg
+    state.remove("msg")
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
-        section {
-            String msg = state.msg ? "<div style='margin-top:6px;'>${state.msg}</div>" : ""
-            String head = state.auth ? "<b style='color:#2e7d32;'>Signed in</b> as ${esc(settings.email)}. ${vacs.size()} vacuum${vacs.size() == 1 ? '' : 's'} found." :
-                "<b style='color:#b26a00;'>Sign in required</b>. Your Roborock account is only used to bring in your vacuums."
-            paragraph "<div style='padding:8px 12px;border-radius:8px;border:1px solid rgba(128,128,128,.35);'>${head}${msg}</div>"
+        section(sectionClass: "app-main-overview") {
+            paragraph rawHtml: true, statusBannerHtml(banner.ok, banner.title, banner.summary)
+            if (msg) paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;'>${msg}</div>"
         }
-        section("<b>Roborock account</b>") {
+        section(sectionClass: "app-ui-links app-main-content") {
+            paragraph rawHtml: true, columnHeader("Roborock account")
             if (!state.auth) {
                 input "email", "email", title: "Roborock account email", required: false, submitOnChange: true, width: 8
                 input "region", "enum", title: "Region", options: REGIONS, defaultValue: "https://usiot.roborock.com", width: 4
-                input "sendCode", "button", title: "Email me a sign-in code"
+                input "sendCode", "button", title: "Email me a sign-in code", width: 6
                 input "pin", "text", title: "Code from the email", required: false, width: 6
-                input "verify", "button", title: "Sign in"
+                input "verify", "button", title: "Sign in", width: 6
             } else {
-                input "rescan", "button", title: "Rescan vacuums and rooms"
-                input "signOut", "button", title: "Sign out"
+                paragraph "<span class='text-color-secondary' style='font-size:14px;'>Signed in as ${esc(settings.email)}. Only used to bring in vacuums, rooms and scenes.</span>"
+                input "rescan", "button", title: "Rescan vacuums and rooms", width: 6
+                input "signOut", "button", title: "Sign out", width: 6
             }
-        }
-        if (vacs) {
-            section("<b>Vacuums</b>") {
-                paragraph "<span style='font-size:13px;'>Enter each vacuum's IP address (a DHCP reservation keeps it from changing), " +
-                    "then tap <b>Done</b>. Turn a vacuum off to leave it out of Hubitat.</span>"
+            if (vacs) {
+                paragraph rawHtml: true, columnHeader("Vacuums")
+                paragraph "<span class='text-color-secondary' style='font-size:14px;'>Enter each vacuum's IP address (a DHCP reservation keeps it from changing), then tap <b>Done</b>.</span>"
                 vacs.each { Map v ->
-                    def child = getChildDevice(dniFor(v.duid))
-                    String link = child ? " · <a href='/device/edit/${child.id}' target='_blank'>device page</a>" : ""
-                    paragraph "<b>${esc(v.name)}</b> <span style='font-size:13px;'>${esc(v.model ?: '')} · protocol ${v.pv ?: '?'}${link}</span>"
-                    input "inc_${v.duid}", "bool", title: "Include", defaultValue: true, width: 3
-                    input "ip_${v.duid}", "text", title: "IP address", required: false, width: 9
+                    paragraph rawHtml: true, vacuumCardHtml(v)
+                    input "inc_${v.duid}", "bool", title: "Include", defaultValue: true, width: 4
+                    input "ip_${v.duid}", "text", title: "IP address", required: false, width: 8
                 }
             }
         }
-        section("<b>Settings</b>") {
-            input "logLevel", "enum", title: "Log level", options: LOG_LEVELS, defaultValue: "Errors Only", submitOnChange: true, width: 6
-            label title: "App name", required: false, width: 6
+        section(sectionClass: "app-ui-links app-main-settings") {
+            paragraph rawHtml: true, columnHeader("Quick Settings")
+            input "logLevel", "enum", title: "Log level", options: LOG_LEVELS, defaultValue: "Errors Only", submitOnChange: true, width: 12
+            paragraph rawHtml: true, loggingDetailsPopupHtml()
+            label title: "App name", required: false
         }
-        section("<b>Help & Support</b>") {
-            paragraph "<a href='${COFFEE_URL}' target='_blank'>Buy Me a Coffee</a> · Roborock Integration v${APP_VERSION} (beta)"
+        section(title: "<b>Help & Support</b>", sectionClass: "app-ui-links app-main-support") {
+            paragraph rawHtml: true, supportLinkHtml(COFFEE_URL, "fa-solid fa-mug-hot", "Buy Me a Coffee", "Support development"), width: 6
         }
+        versionFooterSection()
     }
 }
+
+private Map bannerState(List vacs) {
+    if (!state.auth && !vacs) return [ok: false, title: "Setup required", summary: "Sign in to your Roborock account below to bring in your vacuums."]
+    List kids = vacs.collect { getChildDevice(dniFor(it.duid)) }.findAll { it }
+    if (!kids) return [ok: false, title: "Setup required", summary: "Enter each vacuum's IP address below, then tap <b>Done</b>."]
+    List off = kids.findAll { it.currentValue("healthStatus") != "online" }
+    if (off) return [ok: false, title: off.size() == kids.size() ? "Vacuum offline" : "Some vacuums offline",
+        summary: "Can't reach ${off.collect { esc(it.displayName) }.join(', ')}. Retrying on its own."]
+    String proto = kids.collect { it.currentValue("protocol") }.findAll { it }.unique().join("/")
+    return [ok: true, title: "Integration ready", summary: "${countText(kids.size(), 'vacuum')} connected locally${proto ? ' &middot; ' + proto : ''}"]
+}
+
+private String vacuumCardHtml(Map v) {
+    def child = getChildDevice(dniFor(v.duid))
+    String tag = !child ? "<span class='p-tag p-tag-warning border-round-xl px-2 py-1 text-xs font-bold'>Not added</span>" :
+        child.currentValue("healthStatus") == "online" ? "<span class='p-tag p-tag-success border-round-xl px-2 py-1 text-xs font-bold'>Connected</span>" :
+        "<span class='p-tag p-tag-danger border-round-xl px-2 py-1 text-xs font-bold'>Offline</span>"
+    String proto = child?.currentValue("protocol") ?: "not connected"
+    String link = child ? " &middot; <a href='/device/edit/${child.id}' target='_blank' class='hub-text-link no-underline'>device page " +
+        "<i class='fa-regular fa-external-link' style='font-size:0.8em'></i></a>" : ""
+    "<div class='flex align-items-center gap-2 mt-2'><span class='font-semibold'>${esc(v.name)}</span>${tag}</div>" +
+        "<div class='text-color-secondary' style='font-size:14px;'>${esc(v.model ?: '')} &middot; local protocol ${esc(proto)}${link}</div>"
+}
+
+private String currentLogLevel() { settings.logLevel ?: "Errors Only" }
 
 def installed() { initialize() }
 def updated() { initialize() }
@@ -271,8 +299,176 @@ private Map asMap(data) {
 
 private String md5hex(String s) { MessageDigest.getInstance("MD5").digest(s.getBytes("UTF-8")).encodeHex().toString() }
 private String enc(s) { URLEncoder.encode(s.toString(), "UTF-8") }
-private String esc(s) { s == null ? "" : s.toString().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") }
+private String esc(v) { (v == null ? "" : v.toString()).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("'", "&#39;") }
 private String dniFor(duid) { "RR-${duid}" }
 
 private void logN(String m) { if (settings.logLevel in ["Normal", "Full"]) log.info m }
 private void logE(String m) { log.error m }
+
+// ---------- UI template (HubitatAppUiTemplate, from Pentair IntelliCenter) ----------
+
+private String statusBannerHtml(boolean ok, String title, String summary) {
+    String tone = ok ? "p-message p-message-success app-message" : "p-message p-message-warn app-message"
+    String icon = ok ? "pi pi-check-circle hub-text-success" : "fa-solid fa-exclamation-triangle hub-text-warning"
+    """
+<style>
+  ${appPageSpacingCss()}
+  #formApp .form > div:has(> h3:empty):has(+ .app-main-overview) { display: none; }
+  #formApp .form > .app-main-overview { margin-bottom: 0.429rem !important; }
+  .app-main-overview > .mdl-grid { padding-top: 0.286rem !important; padding-bottom: 0.286rem !important; }
+  .app-main-overview .mdl-cell { margin-top: 0.286rem !important; margin-bottom: 0.286rem !important; min-width: 0; }
+  .app-main-summary { overflow-wrap: anywhere; }
+  .app-main-content > .mdl-grid:first-child > .mdl-cell:first-child { margin-top: 0.286rem !important; }
+  .app-main-content { float: left; width: calc(62% - 8px); }
+  .app-main-settings { float: right; width: 38%; border-left: 1px solid var(--surface-border, rgba(0,0,0,.12)); padding-left: 8px; box-sizing: border-box; }
+  .app-main-content > .mdl-grid, .app-main-settings > .mdl-grid { padding: 4px 0 !important; }
+  .app-main-support { clear: both; }
+  @media (max-width: 1000px) {
+    .app-main-content, .app-main-settings { float: none; width: 100%; border-left: 0; padding-left: 0; }
+  }
+  @media (max-width: 37.5rem) {
+    .app-main-summary { flex-direction: column; align-items: flex-start !important; }
+  }
+</style>
+<div class='app-main-summary flex align-items-center justify-content-between gap-3 ${tone} border-round p-3'>
+  <div class='flex align-items-center gap-3 min-w-0'>
+    <div class='flex-shrink-0'><i class='fa-solid fa-robot text-xl' aria-hidden='true'></i></div>
+    <div class='min-w-0'>
+      <div class='app-heading font-semibold'><i class='${icon} mr-2' aria-hidden='true'></i>${title}</div>
+      <div class='text-color-secondary mt-1' style='font-size:14px;'>${summary}</div>
+    </div>
+  </div>
+  <a href='/logs?tab=past&amp;appId=${app.id}' target='_blank' class='hub-text-link font-semibold white-space-nowrap no-underline'>
+    View logs <i class='fa-regular fa-external-link'></i>
+  </a>
+</div>
+"""
+}
+
+private String columnHeader(String title) {
+    "<div class='app-heading font-semibold'>${title}</div>"
+}
+
+private String supportLinkHtml(String url, String iconClass, String title, String subtitle) {
+    """
+<a href='${url}' target='_blank' rel='noopener noreferrer'
+   class='flex align-items-center gap-3 border-1 surface-border border-round px-3 py-2 text-color no-underline'>
+  <i class='${iconClass} hub-text-link text-xl flex-shrink-0'></i>
+  <span class='min-w-0 flex-1'>
+    <span class='block hub-text-link font-semibold'>${title}</span>
+    <span class='block text-color-secondary mt-1' style='font-size:14px;'>${subtitle}</span>
+  </span>
+  <i class='fa-regular fa-external-link hub-text-link flex-shrink-0'></i>
+</a>
+"""
+}
+
+private void versionFooterSection() {
+    section {
+        paragraph "<div class='text-center text-color-secondary text-xs mt-2'>${APP_NAME} v${APP_VERSION}</div>"
+    }
+}
+
+
+
+
+private String countText(int count, String singular, String plural = null) {
+    "${count} ${count == 1 ? singular : (plural ?: singular + 's')}"
+}
+
+private String loggingDetailsPopupHtml() {
+    String current = currentLogLevel()
+    String details = """
+<div class='ic-dialog text-left text-color' style='max-width:520px;line-height:1.45;'>
+  <div class='text-xl font-bold mb-1'>Logging levels</div>
+  <div class='text-color-secondary text-base mb-3'>One setting for the app and every vacuum.</div>
+  ${logLevelDetailHtml("Errors Only", "Warnings and errors only, such as a vacuum going offline or a command being rejected.", current)}
+  ${logLevelDetailHtml("Normal", "Errors, plus connections, commands, state changes (cleaning, returning, charged) and vacuums added or removed.", current)}
+  ${logLevelDetailHtml("Full", "Everything, including every request to the vacuum. Use while troubleshooting. Turns off after 30 minutes.", current)}
+</div>
+"""
+    String js = groovy.json.JsonOutput.toJson(details)
+        .replace("&", "&amp;").replace("'", "&#39;").replace("<", "&lt;").replace(">", "&gt;")
+    """
+<a href='#' onclick='window.alertHubitat(${js}); return false;'
+   class='flex align-items-center justify-content-between gap-3 surface-ground border-1 surface-border border-round px-3 py-2 h-full text-color no-underline'>
+  <span>
+    <span class='block font-semibold'>Logging details</span>
+    <span class='block text-color-secondary mt-1' style='font-size:14px;'>What each level records</span>
+  </span>
+  <i class='pi pi-chevron-right hub-text-link'></i>
+</a>
+"""
+}
+
+private String logLevelDetailHtml(String name, String description, String current) {
+    String badge = name == current ? "<span class='hub-text-success text-xs font-bold'>Current</span>" : ""
+    String tone = name == "Errors Only" ? "p-tag p-tag-danger" :
+        name == "Full" ? "p-tag p-tag-warning" : "p-tag p-tag-info"
+    """
+<div class='border-1 surface-border border-round px-3 py-2 mb-2'>
+  <div class='flex align-items-center justify-content-between gap-3 mb-1'>
+    <span class='${tone} border-round-xl px-2 py-1 text-xs font-bold'>${name}${name == "Errors Only" ? " (default)" : ""}</span>
+    ${badge}
+  </div>
+  <div class='text-base text-color-secondary'>${description}</div>
+</div>
+"""
+}
+
+private String logLevelPill(String level) {
+    def tones = ["Errors Only": "p-tag p-tag-danger", "Normal": "surface-ground text-color-secondary", "Full": "p-tag p-tag-warning"]
+    "<span class='inline-block ${tones[level] ?: tones['Normal']} font-bold text-xs px-2 py-1 border-round-xl'>${level}</span>"
+}
+
+private String warningMessageHtml(String content, String extraClasses = "") {
+    "<div class='p-message p-message-warn app-message flex align-items-center gap-2 ${extraClasses}'>" +
+        "<div class='flex-shrink-0'><i class='fa-solid fa-exclamation-triangle text-xl' aria-hidden='true'></i></div>" +
+        "<div class='min-w-0 flex-1'>${content}</div></div>"
+}
+
+private String appPageSpacingCss() {
+    """
+  ${tileSecondaryTextCss()}
+  .app-heading { font-size: 16px; }
+  .p-message.app-message { padding: 0.75rem !important; margin: 0; border: 0 !important; }
+  .app-message .text-color-secondary, .app-message .hub-text-link, .app-message .hub-text-warning,
+  .app-message .hub-text-success, .app-message .hub-text-danger { color: inherit !important; }
+  div.panel-body { padding: 0 !important; margin-left: -0.5em; margin-right: -0.5em; }
+  fieldset#fieldsetAppButtons { margin-left: 0.5em; margin-right: 0.5em; }
+"""
+}
+
+// Light fallback for firmware without the hub's semantic app classes (pre-2.5.3); scoped to this app's form
+// and logging dialog. Capable firmware marks data-hubitat-app-ui-semantics="1" and these rules step aside.
+private String legacyLightThemeCss() {
+    """
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) .hub-text-link { color: var(--hubitat-link-color, #1565c0) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) .hub-text-success { color: var(--hubitat-success-color, #356700) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) .hub-text-warning { color: var(--hubitat-warning-color, #8a5a00) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) .hub-text-danger { color: var(--hubitat-validation-color, #b71c1c) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) .app-ui-links .hrefElem { color: var(--hubitat-link-color, #1565c0) !important; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) .app-ui-links .hrefElem > .state-incomplete-text,
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) .app-ui-links .hrefElem > .state-complete-text { color: var(--text-color-secondary, #616161); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) button.mdl-button.app-ui-button { background: var(--hubitat-control-background, rgba(158,158,158,.2)); color: var(--hubitat-control-text, #363636); border: 1px solid transparent; border-radius: 4px; box-shadow: 0 2px 2px rgba(0,0,0,.14); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) button.mdl-button.app-ui-button:enabled:hover { background: var(--hubitat-control-hover-background, #cacfdc); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) button.mdl-button.app-ui-button-primary,
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) button.mdl-button.app-ui-button-primary:enabled:hover { background: var(--hubitat-brand-background, #81bc00); color: var(--hubitat-on-brand, #fff); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) button.mdl-button.app-ui-button-secondary { background: var(--surface-card, #fff); color: var(--hubitat-link-color, #1565c0); border-color: var(--hubitat-control-border, #b0bec5); box-shadow: none; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) button.mdl-button.app-ui-button-danger,
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) button.mdl-button.app-ui-button-danger:enabled:hover { background: var(--hubitat-danger-background, #d32f2f); color: var(--hubitat-on-danger, #fff); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) button.mdl-button.app-ui-button:enabled:active { box-shadow: none; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) button.mdl-button.app-ui-button:disabled { background: var(--hubitat-control-background, #eee); color: var(--text-color-secondary, #616161); opacity: .6; cursor: not-allowed; box-shadow: none; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) .app-ui-navigation .hrefElem { background: transparent; color: var(--hubitat-link-color, #1565c0) !important; border: 0; border-left: 3px solid transparent; border-radius: 0; box-shadow: none; padding: 12px; font-family: inherit; font-size: 16px; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) .app-ui-navigation .hrefElem::before { display: none; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) .app-ui-navigation .hrefElem:not(:disabled):not(:has(.app-ui-navigation-selected)):hover { background: var(--surface-hover, #f3f6fa); }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) .app-ui-navigation .hrefElem:has(.app-ui-navigation-selected) { background: var(--hubitat-selection-background, #eaf2fc); border-left-color: var(--hubitat-link-color, #1565c0); font-weight: 600; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) .app-ui-navigation .hrefElem:disabled { opacity: .6; cursor: not-allowed; }
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) button.mdl-button.app-ui-button:focus-visible,
+  :root:not(:has([data-hubitat-app-ui-semantics="1"])) :is(#formApp, .ic-dialog) .app-ui-navigation .hrefElem:focus-visible { outline: 2px solid var(--hubitat-link-color, #1565c0); outline-offset: 2px; }
+"""
+}
+
+private String tileSecondaryTextCss() {
+    legacyLightThemeCss() + "#formApp .hrefElem > .state-incomplete-text, #formApp .hrefElem > .state-complete-text { font-size: 14px !important; }"
+}
