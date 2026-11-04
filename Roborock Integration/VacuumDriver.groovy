@@ -22,6 +22,8 @@
       unreachable past the grace period, the app asks Roborock's cloud for its current IP (see Cloud Helper).
      -Saros-style vacuums report water flow as 220 + slider level (1-30); mopWaterMode shows the app's name for it,
       mopWaterLevel the number. Older models keep the fixed 200-209 codes.
+     -Saving the driver code (HPM update or Repair) clears the in-memory connection. The next poll or ping,
+      Done in the app, or Diagnostics reconnects instead of stopping (0.2.3).
      -Log level comes from the app.
 */
 
@@ -31,7 +33,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "0.2.2"
+@Field static final String VERSION = "0.2.3"
 @Field static final int GRACE_SEC = 90
 @Field static final int PORT = 58867
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'
@@ -138,7 +140,7 @@ def initialize() {
 // Called by the app when sign-in data or the IP changes.
 void configChanged() {
     Map c = cfg()
-    if (c.ip != state.cfgIp || c.localKey != state.cfgKey) initialize()
+    if (c.ip != state.cfgIp || c.localKey != state.cfgKey || !sess[device.id]) initialize()
     else pushLists(c)
 }
 
@@ -239,10 +241,15 @@ def sendPending(Map pc) {
 
 def diagnostics() {
     diag[device.id] = [:]
-    if (session()) {
-        rpc("get_status"); rpc("get_consumable"); rpc("get_room_mapping")
-        runIn(5, "diagReport")
-    } else diagReport()
+    if (session()) diagRequest()
+    else { ensureConnected("Diagnostics"); runIn(10, "diagAfterConnect") }
+}
+
+def diagAfterConnect() { if (session()) diagRequest() else diagReport() }
+
+private void diagRequest() {
+    rpc("get_status"); rpc("get_consumable"); rpc("get_room_mapping")
+    runIn(5, "diagReport")
 }
 
 def diagReport() {
@@ -264,7 +271,7 @@ def diagReport() {
 
 def ping() {
     Map s = session()
-    if (!s) return
+    if (!s) { ensureConnected("keepalive"); return }
     long last = (s.lastRx ?: 0L) as long
     if (now() - last > 75000L) { logD "No reply from the vacuum for 75 s, reconnecting"; startGrace(); scheduleReconnect(); return }
     s.seq = (s.seq as long) + 1
@@ -305,6 +312,14 @@ def graceExpired() {
     parent?.componentIpLost(device.deviceNetworkId)   // the app may look up a new IP through the cloud
 }
 
+// No connection record at all (code was just saved) and nothing in progress: reconnect.
+private void ensureConnected(String why) {
+    if (session() || sess[device.id]) return
+    logD "${why}: not connected, reconnecting"
+    startGrace()
+    connect()
+}
+
 def askNetworkInfo() { if (session()) rpc("get_network_info") }
 
 private void closeSocket() {
@@ -322,7 +337,7 @@ private Map session() { Map s = sess[device.id] as Map; return s?.open ? s : nul
 
 def poll() {
     unschedule("poll")
-    if (!session()) return
+    if (!session()) { ensureConnected("poll"); return }
     rpc("get_status")
     long n = now()
     if (n - ((state.lastConsumables ?: 0L) as long) > 3600000L) { state.lastConsumables = n; rpc("get_consumable") }

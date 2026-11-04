@@ -19,7 +19,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import java.security.MessageDigest
 
-@Field static final String APP_VERSION = "0.2.2"
+@Field static final String APP_VERSION = "0.2.3"
 @Field static final String APP_NAME = "Roborock Integration"
 @Field static final String DRIVER = "Roborock Vacuum"
 @Field static final String CLOUD_DRIVER = "Roborock Cloud Helper"
