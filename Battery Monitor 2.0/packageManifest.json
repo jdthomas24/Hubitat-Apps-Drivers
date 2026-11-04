@@ -1,12 +1,12 @@
 {
     "packageName": "Battery Monitor 2.0",
-    "releaseNotes": "v2.7.4: Tidier main page banner. Spacing and size now match Hubitat's built-in apps, and it stacks cleanly on a phone. Same change as Reolink 1.6.17, thanks to gopher.ny. No Done needed. v2.7.3: New Info logging toggle at the bottom of the main page, on by default. Turn it off to quiet the scan started and scan complete lines. Warnings and errors still log. v2.7.2: Light mode for the web portal. Pick Dark, Light or Follow device under Web portal in the app, or tap the new ◐ button on the portal itself, which each browser remembers. Dark stays the default. No Done needed. v2.7.1: Dark mode. The app follows the hub's light or dark theme (Hubitat 2.5.3+) and keeps its current look on older firmware. The web portal keeps its own dark theme. No changes to monitoring.",
+    "releaseNotes": "v2.7.5: A new battery starts from the last battery's drain, so health shows right away instead of Pending for 5 days. History keeps every replacement and shows how long each battery lasted. Deleting a device's newest history entry now restores its previous battery data, so a false detection can be undone. A replacement is only confirmed by a newer battery report or after holding 12 hours, so a forced scan can't confirm it on the same reading. No Done needed. v2.7.4: Tidier main page banner. Spacing and size now match Hubitat's built-in apps, and it stacks cleanly on a phone. Same change as Reolink 1.6.17, thanks to gopher.ny. No Done needed. v2.7.3: New Info logging toggle at the bottom of the main page, on by default. Turn it off to quiet the scan started and scan complete lines. Warnings and errors still log. v2.7.2: Light mode for the web portal. Pick Dark, Light or Follow device under Web portal in the app, or tap the new ◐ button on the portal itself, which each browser remembers. Dark stays the default. No Done needed. v2.7.1: Dark mode. The app follows the hub's light or dark theme (Hubitat 2.5.3+) and keeps its current look on older firmware. The web portal keeps its own dark theme. No changes to monitoring.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Battery%20Monitor%202.0",
     "communityLink": "https://community.hubitat.com/t/release-battery-monitor-2-0/162329",
     "author": "jdthomas24",
-    "version": "2.7.4",
+    "version": "2.7.5",
     "minimumHEVersion": "2.3.0",
-    "dateReleased": "2026-10-27",
+    "dateReleased": "2026-11-04",
     "category": "Convenience",
     "tags": "Monitoring",
     "apps": [

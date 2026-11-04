@@ -1,6 +1,6 @@
 /**
  * Battery Monitor 2.0
- * Version: 2.7.4
+ * Version: 2.7.5
  *
  * Tracks battery levels, drain, health, and replacements for selected devices.
  * Scans on a recurring schedule plus each device's own battery events. Health uses
@@ -8,6 +8,10 @@
  * and reacts faster to recent readings. Replacements are auto-detected from a confirmed upward jump.
  * Optional OAuth web portal serves a live dashboard.
  *
+ * v2.7.5 -- Replacements keep the outgoing battery's data: the new cycle starts from its long-term
+ *    pace (no Pending if it had 7+ days), every entry is kept with how long each battery lasted, and
+ *    deleting a device's newest entry restores the previous cycle. A staged jump confirms only on a
+ *    newer battery report or after holding 12h, not a forced scan of the same reading.
  * v2.7.4 -- Main page banner spacing and size match Hubitat's built-in apps, stacks on phones (gopher.ny, Reolink 1.6.17).
  * v2.7.3 -- Info logging toggle (on by default) beside Debug logging. Off silences scan lines;
  *    warnings and errors always log.
@@ -46,7 +50,7 @@ definition(
     oauth: true
 )
 
-@Field static final String APP_VERSION = "2.7.4"
+@Field static final String APP_VERSION = "2.7.5"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/release-battery-monitor-2-0/162329"
 @Field static final String COFFEE_URL = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "best"
@@ -58,6 +62,8 @@ definition(
 @Field static final long RISE_HOLD_MS = 86400000L
 @Field static final int RECENT_DAYS = 30
 @Field static final int RECENT_MIN_LOWS = 3
+@Field static final long CONFIRM_WINDOW_MS = 172800000L
+@Field static final long CONFIRM_HOLD_MS = 43200000L
 @Field static final int RECENT_MIN_SPREAD_DAYS = 2
 
 // ============================================================
@@ -112,6 +118,8 @@ def updated() {
         def pruned = before - state.replacements.size()
         if (pruned > 0 && debugMode) log.debug "Purged ${pruned} orphaned replacement history entr${pruned == 1 ? 'y' : 'ies'}"
     }
+
+    if (state.cycleArchive) state.cycleArchive = state.cycleArchive.findAll { id, _ -> currentIds.contains(id as String) }
 
     if (state.pendingReplacement) {
         def pendingBefore = state.pendingReplacement.size()
@@ -995,7 +1003,7 @@ private void setAnchor(Map data, int lvl, boolean aligned) {
 /** Logged replacement level and time when known, else an unaligned anchor at the current level. */
 private void seedAnchor(String devId, Map data, int lvl) {
     def rt  = data.replacedTime ? safeTime(data.replacedTime) : null
-    def rep = rt ? (state.replacements ?: []).find { (it.deviceId as String) == devId } : null
+    def rep = rt ? latestReplacement(devId) : null
     def rl  = rep?.level != null ? (rep.level as Integer) : null
     if (rt && rl != null && rl >= lvl) {
         data.anchorLevel   = rl
@@ -1041,10 +1049,36 @@ def detectReplacement(device, newLevel, oldLevel) {
         state.trend[device.id] = "Stable"
     }
 
-    def data = state.history[device.id]
+    def data    = state.history[device.id]
+    def minJump = (settings?.detectionMinJump ?: 30).toInteger()
+    if (!state.pendingReplacement) state.pendingReplacement = [:]
 
-    // A jump up from a near-empty battery is unambiguous. Samples are cleared at ~0%, so the
-    // sample/age gates below would otherwise block detection of dead-battery swaps entirely.
+    // A staged jump is judged against its own pre-jump level (lastLevel already holds the new reading)
+    def pending = state.pendingReplacement[device.id]
+    if (pending) {
+        if (now() - (pending.stagedAt as Long) > CONFIRM_WINDOW_MS) {
+            if (debugMode) log.debug "${device.displayName}: pending replacement expired after 48h"
+            dropPending(device.id)
+        } else {
+            int sustainThresh = (pending.oldLevel as Integer) + minJump
+            if (newLevel < sustainThresh) {
+                if (debugMode) log.debug "${device.displayName}: pending replacement cancelled — level dropped back to ${newLevel}% (must hold ≥${sustainThresh}%)"
+                dropPending(device.id)
+                return
+            }
+            if (!pendingFresh(device, pending)) {
+                if (debugMode) log.debug "${device.displayName}: replacement staged, waiting for a newer battery report or a 12h hold"
+                return
+            }
+            dropPending(device.id)
+            data.zeroCount = 0
+            logReplacement(device, newLevel, false)
+            if (debugMode) log.debug "${device.displayName}: replacement CONFIRMED — ${pending.oldLevel}% → ${newLevel}%"
+            return
+        }
+    }
+
+    // A jump up from a near-empty battery is unambiguous; samples are cleared at ~0%, so skip the sample/age gates
     def fromEmpty = (oldLevel as Integer) <= 5
 
     def sampleCount = data?.samples?.size() ?: 0
@@ -1069,69 +1103,19 @@ def detectReplacement(device, newLevel, oldLevel) {
         }
     }
 
-    // v2.5.29→v2.5.30: Simplified detection — any upward jump of minJump% or more qualifies.
-    // Batteries only drain naturally; any significant upward jump means a new battery was installed.
-    def minJump   = (settings?.detectionMinJump ?: 30).toInteger()
+    // Batteries only drain on their own; a jump of minJump% or more means a new battery
     def largeJump = newLevel - oldLevel
+    if (largeJump < minJump) return
 
-    def qualifies = (largeJump >= minJump)
-    if (!qualifies) {
-        if (state.pendingReplacement?.containsKey(device.id)) {
-            if (debugMode) log.debug "${device.displayName}: pending replacement cleared — jump ${largeJump}% < threshold ${minJump}% (${oldLevel}% → ${newLevel}%)"
-            state.pendingReplacement.remove(device.id)
-            state.pendingReplacement = state.pendingReplacement
-        }
-        return
-    }
-
-    def requireConfirm   = true
-    def confirmWindowHrs = 48
-
-    if (!state.pendingReplacement) state.pendingReplacement = [:]
-
-    def pending = state.pendingReplacement[device.id]
-
-    if (!pending) {
-        state.pendingReplacement[device.id] = [
-            stagedAt: now(),
-            oldLevel: oldLevel,
-            newLevel: newLevel,
-            jumpSize: largeJump
-        ]
-        state.pendingReplacement = state.pendingReplacement
-        if (debugMode) log.debug "${device.displayName}: replacement staged (awaiting confirmation) — ${oldLevel}% → ${newLevel}%, jump=${largeJump}%"
-        return
-    }
-
-    def windowMs   = confirmWindowHrs * 60 * 60 * 1000
-    def pendingAge = now() - (pending.stagedAt as Long)
-
-    if (pendingAge > windowMs) {
-        if (debugMode) log.debug "${device.displayName}: pending replacement expired (${(pendingAge / 3600000).toInteger()}h > ${confirmWindowHrs}h window) — re-staging"
-        state.pendingReplacement[device.id] = [
-            stagedAt: now(),
-            oldLevel: oldLevel,
-            newLevel: newLevel,
-            jumpSize: largeJump
-        ]
-        state.pendingReplacement = state.pendingReplacement
-        return
-    }
-
-    // Gate 5: level must still be above (pre-jump level + minJump) on confirming read
-    def sustainThresh = (pending.oldLevel as Integer) + minJump
-    if (newLevel < sustainThresh) {
-        if (debugMode) log.debug "${device.displayName}: pending replacement cancelled — level dropped back to ${newLevel}% (must sustain ≥${sustainThresh}%)"
-        state.pendingReplacement.remove(device.id)
-        state.pendingReplacement = state.pendingReplacement
-        return
-    }
-
-    state.pendingReplacement.remove(device.id)
+    state.pendingReplacement[device.id] = [
+        stagedAt: now(),
+        evtTime:  batteryEventTime(device),
+        oldLevel: oldLevel,
+        newLevel: newLevel,
+        jumpSize: largeJump
+    ]
     state.pendingReplacement = state.pendingReplacement
-    data.zeroCount = 0
-    logReplacement(device, newLevel, false)
-    if (debugMode) log.debug "${device.displayName}: replacement CONFIRMED — ${pending.oldLevel}% → ${newLevel}%, staged ${(pendingAge / 60000).toInteger()}m ago"
+    if (debugMode) log.debug "${device.displayName}: replacement staged (awaiting confirmation) — ${oldLevel}% → ${newLevel}%, jump=${largeJump}%"
 }
 
 // ============================================================
@@ -1141,7 +1125,6 @@ def confirmPendingReplacements() {
     if (!state.pendingReplacement || state.pendingReplacement.isEmpty()) return
 
     def minJump  = (settings?.detectionMinJump ?: 30).toInteger()
-    def windowMs = 48 * 60 * 60 * 1000
     def toRemove = []
 
     state.pendingReplacement.each { deviceId, pending ->
@@ -1151,25 +1134,25 @@ def confirmPendingReplacements() {
         def currentLevel = device.currentValue("battery")?.toInteger()
         if (currentLevel == null) return
 
-        def pendingAge    = now() - (pending.stagedAt as Long)
-        def sustainThresh = (pending.oldLevel as Integer) + minJump
-
-        if (pendingAge > windowMs) {
-            if (debugMode) log.debug "${device.displayName}: pending replacement EXPIRED during scan (${(pendingAge / 3600000).toInteger()}h old)"
+        if (now() - (pending.stagedAt as Long) > CONFIRM_WINDOW_MS) {
+            if (debugMode) log.debug "${device.displayName}: pending replacement EXPIRED during scan"
             toRemove << deviceId
             return
         }
-
-        if (currentLevel >= sustainThresh) {
-            def histData = state.history[device.id]
-            if (histData) histData.zeroCount = 0
-            logReplacement(device, currentLevel, false)
+        int sustainThresh = (pending.oldLevel as Integer) + minJump
+        if (currentLevel < sustainThresh) {
+            if (debugMode) log.debug "${device.displayName}: pending replacement DISCARDED by scan — level ${currentLevel}% below ${sustainThresh}%"
             toRemove << deviceId
-            if (debugMode) log.debug "${device.displayName}: replacement CONFIRMED by scan — level ${currentLevel}% sustained ≥${sustainThresh}%"
-        } else {
-            if (debugMode) log.debug "${device.displayName}: pending replacement DISCARDED by scan — level ${currentLevel}% dropped below sustain threshold ${sustainThresh}%"
-            toRemove << deviceId
+            return
         }
+        // Same reading that staged it is not a confirmation
+        if (!pendingFresh(device, pending)) return
+
+        def histData = state.history[device.id]
+        if (histData) histData.zeroCount = 0
+        logReplacement(device, currentLevel, false)
+        toRemove << deviceId
+        if (debugMode) log.debug "${device.displayName}: replacement CONFIRMED by scan — level ${currentLevel}% held ≥${sustainThresh}%"
     }
 
     if (toRemove) {
@@ -1265,7 +1248,7 @@ def health(device) {
     }
 
     def slowReporter = (daysSinceReplaced >= 14 && samples >= 2)
-    if (!slowReporter && (samples < minSamples || daysSinceReplaced < 5)) return "Pending"
+    if (!slowReporter && (samples < minSamples || (daysSinceReplaced < 5 && !hist?.seeded))) return "Pending"
 
     def rawDrain      = getDrain(device)
     def adjustedDrain = isLock ? rawDrain * 0.4 : isSensor ? rawDrain * 0.5 : isSlowSensor ? rawDrain * 0.5 : rawDrain
@@ -1414,6 +1397,7 @@ def getBatteryLevelDisplay(level, device = null) {
 // ============================================================
 def logReplacement(device, newLevel, manual = false) {
     if (!device) return
+    String devId = device.id as String
 
     def data = state.history[device.id]
     if (!data) {
@@ -1430,33 +1414,42 @@ def logReplacement(device, newLevel, manual = false) {
         state.trend[device.id] = "Stable"
     }
 
-    data.drain                 = 0.3
-    data.samples               = []
+    // Archive the outgoing cycle (deleting this entry restores it) and seed the new one from its pace
+    long t = now()
+    Double seed = priorCycleDrain(data)
+    def archive = state.cycleArchive ?: [:]
+    archive[devId] = [entryTime: t, trend: state.trend[device.id], data: copyCycle(data)]
+    state.cycleArchive = archive
+
+    data.drain                 = seed != null ? seed : 0.3
+    data.samples               = seed != null ? (1..minSamplesFor(device)).collect { seed } : []
+    data.seeded                = seed != null
+    data.ewmaDrain             = seed
     data.lastLevel             = newLevel
-    data.lastDate              = now()
-    data.lastScanDate          = now()
-    data.firstSeenDate         = now()
+    data.lastDate              = t
+    data.lastScanDate          = t
+    data.firstSeenDate         = t
     data.justReplaced          = true
-    data.replacedTime          = now()
+    data.replacedTime          = t
     data.zeroCount             = 0
     state.trend[device.id]     = "Stable"
-    data.lastReplacementLogged = now()
+    data.lastReplacementLogged = t
     setAnchor(data, (newLevel != null ? newLevel : 100) as Integer, true)
 
-    state.replacements = state.replacements?.findAll { it.device != device.displayName } ?: []
+    state.replacements = state.replacements ?: []
     state.replacements << [
         deviceId: device.id,
         device:   device.displayName,
         level:    newLevel,
-        date:     new Date().format("MM/dd/yyyy", location.timeZone),
+        date:     new Date(t).format("MM/dd/yyyy", location.timeZone),
+        time:     t,
         type:     manual ? "manual" : "auto"
     ]
     state.replacements = state.replacements.sort { a, b -> replacementTime(b) <=> replacementTime(a) }.take(100)
 
     state.history[device.id] = data
     state.history = state.history
-
-    def typeStr = manual ? "Manual" : "Auto-detected"
+    if (seed != null) updateTrend(device, seed)
 }
 
 // ============================================================
@@ -1662,6 +1655,7 @@ private List buildSummaryRows() {
                 r.trendNote = [label: trend == "Moderate" ? "Moderate Drain" : trend, warn: tR > hR, heavy: trend == "Heavy Drain"]
             }
             if (!r.dead && r.h == "Pending") r.pendingNote = getHealthDisplay(device)
+            r.seedNote  = !r.dead && r.h != "Pending" && seededRecently(device)
         } catch (e) {
             log.warn "Battery Monitor: summary row failed for ${device.displayName}: ${e.message}"
         }
@@ -1879,6 +1873,7 @@ private String summaryHtml(List rows, String hubIp, boolean portal = false) {
 
         def healthCell = bmPill(r.h, hTone[r.h] ?: "gray")
         if (r.pendingNote) healthCell += "<div class='bm-note'>${r.pendingNote}</div>"
+        if (r.seedNote) healthCell += "<div class='bm-note bm-muted'>From last battery</div>"
         if (r.trendNote) {
             def c = r.trendNote.heavy ? "bm-c-red" : r.trendNote.label == "Stable" ? "bm-c-green" : "bm-c-amber"
             healthCell += "<div class='bm-note ${c}'>${r.trendNote.warn ? '⚠ ' : ''}${r.trendNote.label}</div>"
@@ -1984,6 +1979,7 @@ private Integer currentLevel(device) {
 private List ignoredIdList() { (settings?.ignoredDevices?.collect { it as String }) ?: [] }
 
 private void resetDrainHistory(device) {
+    dropArchive(device.id)
     def existing = state.history[device.id] ?: [:]
     state.history[device.id] = [
         lastLevel:     existing.lastLevel ?: currentLevel(device),
@@ -2003,8 +1999,16 @@ private void resetDrainHistory(device) {
     state.history = state.history
 }
 
+private void dropArchive(id) {
+    if (state.cycleArchive?.containsKey(id as String)) {
+        state.cycleArchive.remove(id as String)
+        state.cycleArchive = state.cycleArchive
+    }
+}
+
 /** Fresh start after un-ignoring: history reset plus a Restored entry. */
 private void markRestored(device) {
+    dropArchive(device.id)
     def lvl = currentLevel(device)
     state.history[device.id] = [
         lastLevel: lvl, lastDate: now(), lastScanDate: now(),
@@ -2016,7 +2020,7 @@ private void markRestored(device) {
     state.history = state.history
     state.replacements = state.replacements ?: []
     state.replacements << [deviceId: device.id, device: device.displayName, level: lvl,
-        date: new Date().format("MM/dd/yyyy", location.timeZone), type: "restored"]
+        date: new Date().format("MM/dd/yyyy", location.timeZone), time: now(), type: "restored"]
     state.replacements = state.replacements.sort { a, b -> replacementTime(b) <=> replacementTime(a) }.take(100)
 }
 
@@ -2125,6 +2129,7 @@ private String bmPageCss() {
 
 /** Sort key for history entries. Dates are stored as MM/dd/yyyy text, which sorts by month, not year. */
 private long replacementTime(r) {
+    if (r?.time instanceof Number) return r.time as long
     def d = r?.date?.toString()
     if (!d) return 0L
     try {
@@ -2132,6 +2137,104 @@ private long replacementTime(r) {
     } catch (e) {
         return 0L
     }
+}
+
+private Map latestReplacement(String devId) {
+    def mine = (state.replacements ?: []).findAll { (it.deviceId as String) == devId }
+    return mine ? mine.max { replacementTime(it) } : null
+}
+
+private Long batteryEventTime(device) {
+    try { return device.currentState("battery")?.date?.time } catch (e) { return null }
+}
+
+/** Confirmed by a battery report newer than the one that staged it, or by holding 12h. */
+private boolean pendingFresh(device, Map pending) {
+    Long et   = batteryEventTime(device)
+    Long base = (pending.evtTime ?: pending.stagedAt) as Long
+    if (et != null && base != null && et > base) return true
+    return now() - (pending.stagedAt as Long) >= CONFIRM_HOLD_MS
+}
+
+private void dropPending(id) {
+    state.pendingReplacement?.remove(id)
+    state.pendingReplacement = state.pendingReplacement
+}
+
+private Map copyCycle(Map d) {
+    def c = [:]
+    d?.each { k, v -> c[k] = (v instanceof List) ? v.collect { it instanceof Map ? new HashMap(it) : it } : v }
+    return c
+}
+
+/** Outgoing battery's long-term pace (anchor to lowest reading over 7+ days), or null if not known yet. */
+private Double priorCycleDrain(Map d) {
+    if (!d?.anchorAligned || d.anchorDate == null || d.anchorLevel == null) return null
+    double days = (now() - (d.anchorDate as Long)) / (DAY_MS as double)
+    if (days < DRAIN_MIN_SPAN_DAYS) return null
+    int aLvl = d.anchorLevel as Integer
+    int low  = d.lowMark != null ? (d.lowMark as Integer) : aLvl
+    double pace = (Math.max(0, aLvl - low) as double) / days
+    return Math.min(pace, 3.0d)
+}
+
+private int minSamplesFor(device) {
+    def t = (device?.name ?: device?.typeName ?: "").toLowerCase()
+    return (t.contains("lock") || t.contains("smoke") || t.contains("carbonmonoxide")) ? 7 : 5
+}
+
+private boolean seededRecently(device) {
+    def h = state.history?.get(device.id)
+    return h?.seeded == true && h.replacedTime != null && now() - safeTime(h.replacedTime) < 7 * DAY_MS
+}
+
+private boolean sameDevice(a, b) {
+    return (a.deviceId && b.deviceId) ? (a.deviceId as String) == (b.deviceId as String) : a.device == b.device
+}
+
+/** Days a logged battery lasted (to the device's next logged replacement); null while in use. */
+private Integer lastedDays(Map r, List all) {
+    long t = replacementTime(r)
+    if (!t || r?.type == "restored") return null
+    def later = all.findAll { o -> o.type != "restored" && sameDevice(o, r) && replacementTime(o) > t }
+    if (!later) return null
+    long nt = replacementTime(later.min { replacementTime(it) })
+    return Math.round((nt - t) / (DAY_MS as double)) as Integer
+}
+
+private String lastedCell(Map r, List all) {
+    if (r?.type == "restored") return "<span class='bm-muted'>—</span>"
+    Integer d = lastedDays(r, all)
+    return d != null ? "${d} day${d == 1 ? '' : 's'}" : "<span class='bm-muted'>In use</span>"
+}
+
+/** True when deleting this entry can restore the battery data it replaced. */
+private boolean canRestore(Map r) {
+    def arc = r?.deviceId ? state.cycleArchive?.get(r.deviceId as String) : null
+    return arc != null && r.time != null && (arc.entryTime as Long) == (r.time as Long)
+}
+
+private String entryKey(Map r) { return "${r.deviceId ?: r.device}|${r.time ?: r.date}|${r.level}|${r.type}" }
+
+/** Puts back the archived cycle, continuing from the current reading so the jump isn't detected again. */
+private boolean restoreCycle(String devId) {
+    def arc = state.cycleArchive?.get(devId)
+    if (!arc?.data) return false
+    def device = autoDevices?.find { (it.id as String) == devId }
+    def d = copyCycle(arc.data)
+    def cur = null
+    try { cur = device?.currentValue("battery") } catch (e) { }
+    if (cur != null) d.lastLevel = cur as Integer
+    d.lastScanDate          = now()
+    d.justReplaced          = false
+    d.lastReplacementLogged = now()
+    state.history[devId] = d
+    state.history = state.history
+    if (arc.trend) { state.trend[devId] = arc.trend; state.trend = state.trend }
+    state.cycleArchive.remove(devId)
+    state.cycleArchive = state.cycleArchive
+    dropPending(devId)
+    return true
 }
 
 private String historyTypePill(String type) {
@@ -2214,7 +2317,7 @@ def detectionSettingsPage() {
     dynamicPage(name: "detectionSettingsPage", title: "Auto-Detection Settings", install: false) {
         section {
             paragraph rawHtml: true, bmPageCss() + "<div class='bm-h'>Replacement detection</div>" +
-                "<div class='bm-hint'>A confirmed upward jump of at least this much is logged as a replacement automatically.</div>"
+                "<div class='bm-hint'>An upward jump of at least this much is logged as a replacement once a newer report confirms it, or after it holds 12 hours.</div>"
             input "detectionMinJump", "number",
                   title: "Minimum upward jump (%)",
                   description: "Default 30. 25 to 30 works well; under 15 risks false positives.",
@@ -2527,8 +2630,9 @@ ${bmMsgHtml(msg)}
             def hist = (state.replacements ?: []).findAll { r ->
                 (r.deviceId as String) == idStr || r.device == device.displayName
             }.sort { a, b -> replacementTime(b) <=> replacementTime(a) }
+            def allReps  = state.replacements ?: []
             def histHtml = hist ? "<table class='bm-table'>" + hist.collect { r ->
-                "<tr><td>${r.date}</td><td>${r.level}%</td><td style='text-align:right;'>${historyTypePill(r.type)}</td></tr>"
+                "<tr><td>${r.date}</td><td>${r.level}%</td><td>${lastedCell(r, allReps)}</td><td style='text-align:right;'>${historyTypePill(r.type)}</td></tr>"
             }.join("") + "</table>" : "<div class='bm-hint'>No replacements logged yet.</div>"
             paragraph rawHtml: true, "<div class='bm-h' style='margin-top:6px;'>Replacement history</div>${histHtml}"
         }
@@ -2639,6 +2743,7 @@ def historyPage() {
                 paragraph "No battery replacements have been logged yet."
                 return
             }
+            def allReps  = state.replacements
             def rowsHtml = state.replacements.sort { a, b -> replacementTime(b) <=> replacementTime(a) }.take(100).collect { r ->
                 def dev = r.deviceId
                     ? autoDevices?.find { it.id == r.deviceId }
@@ -2654,10 +2759,10 @@ def historyPage() {
                     }
                 } catch (e) { }
                 "<tr${dev ? '' : " style='opacity:0.6;'"}><td>${nameHtml}${info ? bmPill(bmEsc(info), 'gray') : ''}</td>" +
-                    "<td>${r.level}%</td><td>${dateDisplay}</td><td style='text-align:right;'>${historyTypePill(r.type)}</td></tr>"
+                    "<td>${r.level}%</td><td>${dateDisplay}</td><td>${lastedCell(r, allReps)}</td><td style='text-align:right;'>${historyTypePill(r.type)}</td></tr>"
             }.join("")
             paragraph rawHtml: true, "<div style='overflow-x:auto;'><table class='bm-table'>" +
-                "<thead><tr><th>Device</th><th>Level</th><th>Date</th><th style='text-align:right;'>Type</th></tr></thead>" +
+                "<thead><tr><th>Device</th><th>Level</th><th>Date</th><th>Lasted</th><th style='text-align:right;'>Type</th></tr></thead>" +
                 "<tbody>${rowsHtml}</tbody></table></div>" +
                 hubLinkScript()
         }
@@ -2681,9 +2786,11 @@ def deleteHistoryPage() {
         } else {
             def options = [:]
             state.replacements.sort { a, b -> replacementTime(b) <=> replacementTime(a) }.take(100).eachWithIndex { r, i ->
-                options["${i}"] = "🗑️ ${r.device} — ${r.date}"
+                options["${i}"] = "🗑️ ${r.device} — ${r.date}${canRestore(r) ? ' (restores previous battery data)' : ''}"
             }
             section("<b>Select Entry to Delete</b>") {
+                paragraph "Deleting a device's newest entry also restores the data from its previous battery, " +
+                          "so a false detection can be undone. Older entries only remove the history line."
                 input "deleteEntrySelection", "enum",
                       title: "Choose entry",
                       options: options,
@@ -2716,12 +2823,16 @@ def deleteHistoryConfirmPage() {
                 def sorted = state.replacements.sort { a, b -> replacementTime(b) <=> replacementTime(a) }.take(100)
                 def idx    = deleteEntrySelection.toInteger()
                 if (idx >= 0 && idx < sorted.size()) {
-                    def entry = sorted[idx]
-                    state.replacements = state.replacements.findAll {
-                        !(it.device == entry.device && it.date == entry.date)
+                    def entry    = sorted[idx]
+                    def restored = canRestore(entry) && restoreCycle(entry.deviceId as String)
+                    def key      = entryKey(entry)
+                    boolean gone = false
+                    state.replacements = state.replacements.findAll { r ->
+                        if (!gone && entryKey(r) == key) { gone = true; return false }
+                        return true
                     }
                     app.updateSetting("confirmEntryDelete", [value: false, type: "bool"])
-                    paragraph "✅ Deleted entry for ${entry.device} on ${entry.date}."
+                    paragraph "✅ Deleted entry for ${entry.device} on ${entry.date}." + (restored ? " Previous battery data restored." : "")
                 } else {
                     paragraph "⚠️ Entry not found — it may have already been deleted."
                 }
@@ -2965,14 +3076,17 @@ private List tipsTopics() {
                 "Battery Monitor watches for these jumps and logs the replacement automatically.</p>",
             checklist: [
                 [title: "Jump meets the minimum", detail: "Default 30%, set under Device management, Auto-detection."],
-                [title: "Confirmed by a second reading", detail: "Must hold within 48 hours, so a single spike isn't logged."],
+                [title: "Confirmed by a newer reading", detail: "A newer battery report must hold the jump within 48 hours, or the level must hold 12 hours. A forced scan of the same reading doesn't count."],
                 [title: "Enough history", detail: "Device needs 3+ drain samples and must be at least 3 days old, unless the old battery was near empty (5% or below)."],
-                [title: "Cooldown", detail: "12 hours between detections prevents duplicates."]
+                [title: "Cooldown", detail: "12 hours between detections prevents duplicates."],
+                [title: "Undo", detail: "Deleting a device's newest history entry restores its previous battery data."]
             ],
             warning: "<b>Setting the minimum below 15% can cause false positives.</b><br>25&ndash;30% works well for most setups."],
         [id: "manage", label: "Device management", title: "Device battery management", group: "Replacements", icon: "pi-cog",
             body: "<p>Assign battery types, log replacements, reset drain history, and view per-device history from " +
                 "<b>Device Battery Management</b>.</p>" +
+                "<p>A new battery starts from the last battery's drain, so health shows right away, then updates from its own readings. " +
+                "History keeps every replacement and shows how long each battery lasted.</p>" +
                 "<p><b>Bulk Actions</b> apply to several devices at once, with a 60-second cooldown to prevent accidental repeats.</p>" +
                 "<p><b>Ignored devices</b> are excluded from reports, notifications, stale checks, health scoring, and the portal. " +
                 "Restoring one resets its history, logs a <b>Restored</b> entry, and shows Recently Replaced for up to 24 hours.</p>"],

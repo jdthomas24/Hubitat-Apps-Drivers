@@ -1,12 +1,12 @@
 # Battery Monitor 2.0 for Hubitat
 
-> **Status: v2.7.3.** Tracks battery levels, drain, health and replacements for the devices you pick, with Li-ion cliff-drop alerts and an optional web portal. Companion to [Device Health Monitor](../Device%20Health%20Monitor), which watches connectivity.
+> **Status: v2.7.5.** Tracks battery levels, drain, health and replacements for the devices you pick, with Li-ion cliff-drop alerts and an optional web portal. Companion to [Device Health Monitor](../Device%20Health%20Monitor), which watches connectivity.
 
 ## What it does
 
 - **Levels and health** for every monitored device. Health comes from how fast the battery drains, not just its percentage, so a fast-draining battery is caught while it still reads Good.
 - **Trend** next to health, which reacts faster. When Trend is worse than Health, a warning appears; that's the most useful early signal.
-- **Replacements detected automatically** from a confirmed upward jump, with a replacement history.
+- **Replacements detected automatically** from a confirmed upward jump, with a history of every battery and how long it lasted.
 - **Li-ion cliff-drop alerts** for rechargeable cells that fail suddenly instead of draining slowly.
 - **Notifications** on a schedule you choose, with snooze for when you're away.
 - **Web portal** with every device on one page, for any phone, tablet or computer (optional).
@@ -28,7 +28,7 @@ then Save.
 3. Tap **Done**. That's required before the reports fill in.
 4. Optional: set up **Notifications**, the **Scan interval**, and battery types under **Device management**.
 
-Give new batteries about a week. Health shows **Pending** until it has 5 samples over 5 days (7 for locks, smoke and CO detectors).
+New devices take about a week. Health shows **Pending** until it has 5 samples over 5 days (7 for locks, smoke and CO detectors). A replacement battery starts from the last battery's drain instead, so health shows right away as long as the old battery was tracked for at least a week.
 
 ## Reading the report
 
@@ -55,7 +55,9 @@ Give new batteries about a week. Health shows **Pending** until it has 5 samples
 
 ## Replacements
 
-A new battery is logged on its own when the level jumps by at least the minimum (default 30%), holds on a second reading within 48 hours, and the device has some history (or the old battery was at 5% or below). Detections are at least 12 hours apart. Log anything it misses (integrated batteries, unreliable reporters) from **Device actions**.
+A new battery is logged on its own when the level jumps by at least the minimum (default 30%), is confirmed by a newer battery report within 48 hours (or holds for 12 hours), and the device has some history (or the old battery was at 5% or below). Detections are at least 12 hours apart. Log anything it misses (integrated batteries, unreliable reporters) from **Device actions**.
+
+History keeps every replacement and shows how long each battery lasted. If a replacement was logged by mistake, delete that device's newest history entry: the previous battery's data comes back with it.
 
 ## Li-ion cliff alerts
 
