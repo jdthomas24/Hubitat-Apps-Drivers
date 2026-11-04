@@ -1,6 +1,6 @@
 # Roborock Integration for Hubitat (beta)
 
-> **Status: v0.1.3 beta.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
+> **Status: v0.2.1 beta.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
 
 ## What you get
 
@@ -33,7 +33,18 @@ Attribute and command names match bloodtick's Roborock driver, so rules and dash
 3. Your vacuums appear. Enter each one's **IP address** (set a DHCP reservation in your router so it doesn't change).
 4. Tap **Done**. Each vacuum gets a device and connects within a few seconds (`healthStatus: online`).
 
-Your account is only used to bring in the vacuums, their local keys, room names and scenes. Status and commands are local.
+The vacuum's **MAC** shows on its card and device page once connected. Set a DHCP reservation for it in your router. If the IP changes anyway and you're signed in, the app finds the new one through Roborock's cloud and reconnects.
+
+## Local vs cloud
+
+| Local (works with the internet down) | Needs Roborock's cloud |
+|---|---|
+| All status: state, room, area, time, percent, battery, errors, modes, consumables | Sign-in and **Rescan** (vacuums, local keys, room names, scenes) |
+| Commands from Hubitat: Start, Dock, Pause, Resume, Vacuum Rooms, fan and mop settings, Execute | **Vacuum Scene** (scenes live in your Roborock account) |
+| | **IP recovery**: finds a vacuum's new IP if it changes (automatic, only when it can't be reached) |
+| | Jobs started from the Roborock app (Hubitat still tracks them locally once they start) |
+
+Signing out doesn't stop local control. The same table is on the app's **Tips & Troubleshooting** page.
 
 ## How it stays up to date
 
@@ -52,7 +63,11 @@ A job started from the Roborock app or a schedule shows up within the docked pol
 
 ## Logging
 
-One **Log level** in the app covers every vacuum. **Full** includes every request and turns itself off after 30 minutes.
+One **Log level** in the app covers every vacuum. **Full** includes every request and turns itself off after 3 hours (during the beta).
+
+## Beta testers: Diagnostics
+
+Tap **Diagnostics** on the vacuum device. It logs one block (always shown, whatever the log level) with your model, model code, firmware, protocol and the raw status the vacuum reports. Copy everything from `DIAGNOSTICS` to `END` and send it along with any warnings or errors. It never includes your local key. If Model code or Firmware says "tap Rescan", tap **Rescan vacuums and rooms** in the app first.
 
 ## Troubleshooting
 

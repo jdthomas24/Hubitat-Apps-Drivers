@@ -7,7 +7,10 @@
       After that each vacuum runs locally (Roborock Vacuum driver); the cloud is only used for Rescan and scenes.
      -Sign-in and HomeData calls follow bloodtick's Roborock driver (Hawk auth, getUrlByEmail region lookup).
      -HomeData has no IP address, so each vacuum's IP is entered here (use a DHCP reservation).
-     -Log level is the only logging control; children log through childLog(). Full turns off after 30 minutes.
+     -IP recovery (0.2.0): when a vacuum can't be reached past its grace period, the hidden Roborock Cloud Helper
+      asks Roborock's cloud for its current IP (get_network_info). A matching MAC updates the IP setting and the
+      driver reconnects locally. The MAC is learned locally on every connect. Needs a sign-in; signed out = no lookups.
+     -Log level is the only logging control; children log through childLog(). Full turns off after 3 hours (beta).
 */
 
 import groovy.transform.Field
@@ -16,19 +19,24 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import java.security.MessageDigest
 
-@Field static final String APP_VERSION = "0.1.3"
+@Field static final String APP_VERSION = "0.2.1"
 @Field static final String APP_NAME = "Roborock Integration"
 @Field static final String DRIVER = "Roborock Vacuum"
+@Field static final String CLOUD_DRIVER = "Roborock Cloud Helper"
+@Field static final String CLOUD_DNI = "RR-CLOUD"
+@Field static final long IP_LOOKUP_GAP_MS = 600000L   // one cloud IP lookup per vacuum per 10 min
 @Field static final String NS = "jdthomas24"
 @Field static final String COFFEE_URL = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final Map REGIONS = ["https://usiot.roborock.com": "US", "https://euiot.roborock.com": "EU",
                                    "https://cniot.roborock.com": "CN", "https://ruiot.roborock.com": "RU"]
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
+@Field static final int FULL_LOG_SEC = 10800   // 3 hours while in beta
 
 definition(
     name: "Roborock Integration",
     namespace: NS,
     author: "jdthomas24",
+    importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Roborock%20Integration/ParentApp.groovy",
     description: "Local control of Roborock vacuums. Sign in once to bring in your vacuums.",
     category: "Convenience",
     menu: "Integrations",
@@ -39,6 +47,7 @@ definition(
 
 preferences {
     page(name: "mainPage")
+    page(name: "tipsPage")
 }
 
 def mainPage() {
@@ -60,7 +69,7 @@ def mainPage() {
                 input "pin", "text", title: "Code from the email", required: false, width: 6
                 input "verify", "button", title: "Sign in", width: 6
             } else {
-                paragraph "<span class='text-color-secondary' style='font-size:14px;'>Signed in as ${esc(settings.email)}. Only used to bring in vacuums, rooms and scenes.</span>"
+                paragraph "<span class='text-color-secondary' style='font-size:14px;'>Signed in as ${esc(settings.email)}. Status and commands from Hubitat are local; the cloud is only used for sign-in, Rescan and scenes.</span>"
                 input "rescan", "button", title: "Rescan vacuums and rooms", width: 6
                 input "signOut", "button", title: "Sign out", width: 6
             }
@@ -81,6 +90,8 @@ def mainPage() {
             label title: "App name", required: false
         }
         section(title: "<b>Help & Support</b>", sectionClass: "app-ui-links app-main-support") {
+            href name: "tips", title: "<i class='pi pi-info-circle' aria-hidden='true'></i>Tips & Troubleshooting", page: "tipsPage",
+                description: "Local vs cloud, setup and diagnostics", width: 6, style: "margin:8px;"
             paragraph rawHtml: true, supportLinkHtml(COFFEE_URL, "fa-solid fa-mug-hot", "Buy Me a Coffee", "Support development"), width: 6
         }
         versionFooterSection()
@@ -104,10 +115,11 @@ private String vacuumCardHtml(Map v) {
         child.currentValue("healthStatus") == "online" ? "<span class='p-tag p-tag-success border-round-xl px-2 py-1 text-xs font-bold'>Connected</span>" :
         "<span class='p-tag p-tag-danger border-round-xl px-2 py-1 text-xs font-bold'>Offline</span>"
     String proto = child?.currentValue("protocol") ?: "not connected"
+    String mac = state.macs?.get(v.duid) ? " &middot; MAC ${esc(state.macs[v.duid])}" : ""
     String link = child ? " &middot; <a href='/device/edit/${child.id}' target='_blank' class='hub-text-link no-underline'>device page " +
         "<i class='fa-regular fa-external-link' style='font-size:0.8em'></i></a>" : ""
     "<div class='flex align-items-center gap-2 mt-2'><span class='font-semibold'>${esc(v.name)}</span>${tag}</div>" +
-        "<div class='text-color-secondary' style='font-size:14px;'>${esc(v.model ?: '')} &middot; local protocol ${esc(proto)}${link}</div>"
+        "<div class='text-color-secondary' style='font-size:14px;'>${esc(v.model ?: '')} &middot; local protocol ${esc(proto)}${mac}${link}</div>"
 }
 
 private String currentLogLevel() { settings.logLevel ?: "Errors Only" }
@@ -118,11 +130,11 @@ def uninstalled() { getChildDevices().each { deleteChildDevice(it.deviceNetworkI
 
 def initialize() {
     unschedule("fullLogsOff")
-    if (settings.logLevel == "Full") runIn(1800, "fullLogsOff")
+    if (settings.logLevel == "Full") runIn(FULL_LOG_SEC, "fullLogsOff")
     syncChildren()
 }
 
-def fullLogsOff() { app.updateSetting("logLevel", [type: "enum", value: "Normal"]); logN "Full logging turned off after 30 minutes" }
+def fullLogsOff() { app.updateSetting("logLevel", [type: "enum", value: "Normal"]); logN "Full logging turned off after 3 hours" }
 
 // ---------- buttons ----------
 
@@ -135,7 +147,8 @@ def appButtonHandler(String btn) {
             case "rescan": scan(); break
             case "signOut":
                 ["auth", "homeId", "rooms", "scenes", "base", "country", "countryCode", "lookupFor"].each { state.remove(it) }
-                state.msg = "Signed out. Vacuums keep running locally."
+                syncCloudHelper()
+                state.msg = "Signed out. Vacuums keep running locally, but a changed IP won't be found automatically."
                 break
         }
     } catch (e) {
@@ -193,6 +206,7 @@ private void verifyCode() {
     app.removeSetting("pin")
     logN "Signed in to Roborock"
     scan()
+    syncCloudHelper()
 }
 
 private Map agreementVersion() {
@@ -218,9 +232,10 @@ private void scan() {
     state.homeId = homeId
     Map home = hawkGet("/v2/user/homes/${homeId}")?.result as Map
     if (!home) { state.msg = "<span style='color:#c62828;'>Couldn't read your vacuums.</span>"; return }
-    Map models = (home.products ?: []).collectEntries { [(it.id.toString()): (it.name ?: it.model)] }
+    Map prods = (home.products ?: []).collectEntries { [(it.id.toString()): it] }
     List devs = ((home.devices ?: []) + (home.receivedDevices ?: [])).findAll { it.localKey }
-    state.vacuums = devs.collect { [duid: it.duid, name: it.name, model: models[it.productId?.toString()], pv: it.pv] }
+    state.vacuums = devs.collect { Map p = (prods[it.productId?.toString()] ?: [:]) as Map
+        [duid: it.duid, name: it.name, model: p.name ?: p.model, modelCode: p.model, fw: it.fv, pv: it.pv] }
     Map keys = (state.keys ?: [:]) as Map
     devs.each { keys[it.duid] = it.localKey }
     state.keys = keys
@@ -238,7 +253,51 @@ private void scan() {
 
 // ---------- children ----------
 
+private void syncCloudHelper() {
+    def h = getChildDevice(CLOUD_DNI)
+    if (state.auth && !h) {
+        try { addChildDevice(NS, CLOUD_DRIVER, CLOUD_DNI, [name: CLOUD_DRIVER, label: "Roborock Cloud Helper", isComponent: true]) }
+        catch (e) { logE "Couldn't add the ${CLOUD_DRIVER}: ${e}. Update through HPM so the driver is installed." }
+    } else if (!state.auth && h) deleteChildDevice(CLOUD_DNI)
+}
+
+// Called by a vacuum that can't be reached. Throttled per vacuum.
+void componentIpLost(String dni) {
+    Map v = ((state.vacuums ?: []) as List).find { dniFor(it.duid) == dni } as Map
+    if (!v) return
+    Map last = (state.ipLookups ?: [:]) as Map
+    if (now() - ((last[v.duid] ?: 0L) as long) < IP_LOOKUP_GAP_MS) return
+    last[v.duid] = now(); state.ipLookups = last
+    def h = getChildDevice(CLOUD_DNI)
+    if (!state.auth || !h) { log.warn "${v.name} can't be reached at ${settings["ip_${v.duid}"]}. Sign in to Roborock in the app so its new IP can be found automatically, or update the IP by hand."; return }
+    logN "${v.name} can't be reached at ${settings["ip_${v.duid}"]}, asking Roborock's cloud for its current IP"
+    h.lookupNetworkInfo(v.duid as String, [rriot: state.auth.rriot, localKey: state.keys?.get(v.duid)])
+}
+
+// From the vacuum (via: local, on each connect) or the Cloud Helper (via: cloud, after a lookup).
+void componentNetworkInfo(String duid, Map info, String err, String via) {
+    Map v = ((state.vacuums ?: []) as List).find { it.duid == duid } as Map
+    if (!v) return
+    if (err) { log.warn "${v.name}: couldn't find its current IP through Roborock's cloud (${err}). Will try again in 10 minutes."; return }
+    String mac = info?.mac?.toString()?.toUpperCase()
+    Map macs = (state.macs ?: [:]) as Map
+    if (mac && macs[duid] && macs[duid] != mac) {
+        log.warn "${v.name}: the cloud reported MAC ${mac}, but this vacuum is ${macs[duid]}. IP not changed."
+        return
+    }
+    if (mac && macs[duid] != mac) { macs[duid] = mac; state.macs = macs }
+    if (via != "cloud") return
+    String ip = info?.ip?.toString()
+    String cur = settings["ip_${duid}"]?.toString()?.trim()
+    if (!ip) return
+    if (ip == cur) { logN "${v.name}: Roborock's cloud says the IP is still ${ip}. It may be off or out of Wi-Fi range."; return }
+    app.updateSetting("ip_${duid}", [type: "text", value: ip])
+    log.info "${v.name}: IP changed from ${cur} to ${ip} (found through Roborock's cloud). Reconnecting locally. A DHCP reservation for MAC ${macs[duid] ?: mac ?: '?'} will keep it from changing."
+    getChildDevice(dniFor(duid))?.configChanged()
+}
+
 private void syncChildren() {
+    syncCloudHelper()
     ((state.vacuums ?: []) as List).each { Map v ->
         String dni = dniFor(v.duid)
         def child = getChildDevice(dni)
@@ -261,7 +320,7 @@ Map componentConfig(String dni) {
     Map v = ((state.vacuums ?: []) as List).find { dniFor(it.duid) == dni } as Map
     if (!v) return [:]
     return [duid: v.duid, ip: settings["ip_${v.duid}"]?.toString()?.trim(), localKey: state.keys?.get(v.duid), model: v.model,
-            rooms: state.rooms ?: [:], scenes: state.scenes?.get(v.duid) ?: [:]]
+            modelCode: v.modelCode, fw: v.fw, pv: v.pv, appVersion: APP_VERSION, rooms: state.rooms ?: [:], scenes: state.scenes?.get(v.duid) ?: [:]]
 }
 
 void componentScene(String dni, String sceneId) {
@@ -281,6 +340,7 @@ void childLog(String level, String source, String msg) {
     String line = "${source}: ${msg}"
     if (level == "error") log.error line
     else if (level == "warn") log.warn line
+    else if (level == "diag") log.info line   // Diagnostics button: always shown
     else if (level == "info" && settings.logLevel in ["Normal", "Full"]) log.info line
     else if (level == "debug" && settings.logLevel == "Full") log.debug line
 }
@@ -362,6 +422,138 @@ private String dniFor(duid) { "RR-${duid}" }
 private void logN(String m) { if (settings.logLevel in ["Normal", "Full"]) log.info m }
 private void logE(String m) { log.error m }
 
+// ---------- Tips & Troubleshooting ----------
+@Field static final String DEFAULT_TIP_TOPIC = "local"
+
+/** Tips topics. Fields: id, label, title, group, icon (PrimeIcons), body; optional checklist, warning, append. */
+private List tipsTopics() {
+    [
+        [id: "local", label: "Local vs cloud", title: "What runs locally, and what needs the cloud", group: "How it works", icon: "pi-home",
+            body: "<p>After the one-time sign-in, Hubitat talks straight to each vacuum on your network (TCP port 58867). Roborock's servers aren't involved for status or commands from Hubitat.</p>" +
+                "<p><b>Local</b> (keeps working with your internet down):</p>",
+            checklist: [
+                [title: "Status", detail: "State, current room, clean area, time and percent, battery, errors, fan and mop modes, consumables."],
+                [title: "Commands from Hubitat", detail: "Start, Dock, Pause, Resume, Vacuum Rooms, fan and mop settings, and Execute."]
+            ],
+            append: "cloud"],
+        [id: "cloud", label: "Cloud only", title: "What still needs Roborock's cloud", group: "How it works", icon: "pi-cloud",
+            body: "<p>These go through Roborock's servers and stop working if your internet or Roborock's cloud is down:</p>",
+            checklist: [
+                [title: "Sign-in and Rescan", detail: "Brings in your vacuums, their local keys, room names and scenes. Only needed at setup or after you rename rooms or add scenes."],
+                [title: "IP recovery (automatic)", detail: "If a vacuum can't be reached for 90 seconds, the app asks Roborock's cloud for its current IP, checks the MAC matches, updates the IP and reconnects locally. At most once every 10 minutes per vacuum. Needs you to be signed in."],
+                [title: "Vacuum Scene", detail: "Roborock scenes live in your Roborock account, so running one goes through the cloud. It's the only device command that does."],
+                [title: "Jobs started from the Roborock app", detail: "The app sends its commands through Roborock's cloud. Hubitat still sees the job locally once it starts."]
+            ],
+            warning: "<b>Signing out doesn't stop local control.</b><br>Vacuums keep running locally. You only need to sign in again to Rescan or run scenes."],
+        [id: "setup", label: "Setup", title: "Setting up a vacuum", group: "Getting started", icon: "pi-cog",
+            body: "<p>Sign in with your Roborock email and the code they send you. Your vacuums appear on the main page.</p>" +
+                "<p>Enter each vacuum's <b>IP address</b>. Roborock doesn't share it, so find it in your router or the Roborock app (Device info). Once connected, the vacuum's card shows its <b>MAC</b> address for a DHCP reservation in your router. If the IP changes anyway, the app finds the new one through Roborock's cloud while you're signed in.</p>" +
+                "<p>Tap <b>Done</b>. Each vacuum gets a device and should show <b>healthStatus online</b> within a few seconds.</p>"],
+        [id: "updates", label: "Status updates", title: "How status stays up to date", group: "Getting started", icon: "pi-refresh",
+            body: "<p>The vacuum doesn't send updates on its own, so the driver checks it: every 20 seconds while it's cleaning, returning or busy at the dock, every 1, 2 or 5 minutes while docked (the <b>Docked poll</b> setting), and 3 seconds after any command.</p>" +
+                "<p>The vacuum closes its connection now and then. The driver reconnects within seconds and only shows offline if it stays down for 90 seconds.</p>"],
+        [id: "rooms", label: "Rooms and scenes", title: "Rooms and scenes", group: "Using it", icon: "pi-th-large",
+            body: "<p><b>roomsList</b> on the device shows <i>ID: Room name</i> pairs. Use the IDs with <b>Vacuum Rooms</b>, for example <code>16, 17</code>.</p>" +
+                "<p><b>scenesList</b> shows your Roborock scenes for <b>Vacuum Scene</b> (cloud).</p>" +
+                "<p>Renamed a room or added a scene? Tap <b>Rescan vacuums and rooms</b> on the main page.</p>"],
+        [id: "diag", label: "Diagnostics (beta)", title: "Sending a diagnostics report", group: "Troubleshooting", icon: "pi-file",
+            body: "<p>Tap <b>Diagnostics</b> on the vacuum device. One block appears in the logs from <b>DIAGNOSTICS</b> to <b>END</b> with your model, firmware, protocol and the raw status from the vacuum. Copy all of it. It never includes your vacuum's local key.</p>" +
+                "<p>For a problem, set Log level to <b>Full</b> (stays on for 3 hours during the beta), repeat it, and send those lines too.</p>"]
+    ]
+}
+
+def tipsPage(params = null) {
+    def topics = tipsTopics()
+    def topic = topics.find { it.id == params?.topic } ?: topics.find { it.id == DEFAULT_TIP_TOPIC } ?: topics[0]
+    int i = topics.indexOf(topic)
+    def next = i + 1 < topics.size() ? topics[i + 1] : null
+    dynamicPage(name: "tipsPage", title: "Tips & Troubleshooting") {
+        section(sectionClass: "app-ui-links app-tips-index app-ui-navigation") {
+            paragraph rawHtml: true, tipsStylesHtml()
+            topics.groupBy { it.group }.each { group, entries ->
+                paragraph rawHtml: true, "<div class='app-heading font-semibold mt-2'>${group}</div>"
+                entries.each { entry ->
+                    String selected = entry.id == topic.id ? "app-ui-navigation-selected" : ""
+                    href name: "tip_${entry.id}",
+                        title: "<span class='${selected}'><i class='pi ${entry.icon} mr-3' aria-hidden='true'></i>${entry.label}</span>",
+                        description: "", page: "tipsPage", params: [topic: entry.id], width: 12, style: "margin:0 8px;"
+                }
+            }
+        }
+        section(sectionClass: "app-ui-links app-tips-article") {
+            paragraph rawHtml: true, tipsArticleHtml(topic)
+            if (topic.append) {
+                def extra = topics.find { it.id == topic.append }
+                if (extra) paragraph rawHtml: true, tipsArticleHtml(extra)
+            }
+            if (next) {
+                href name: "nextTip", title: "<span class='hub-text-link'>${next.label}</span>",
+                    description: "Next topic", page: "tipsPage", params: [topic: next.id], width: 12, style: "margin:8px;"
+            }
+        }
+    }
+}
+
+private String tipsArticleHtml(Map topic) {
+    String extra = ""
+    if (topic.checklist) {
+        extra += "<div class='border-1 surface-border border-round p-3 mb-3'>" + topic.checklist.collect { item ->
+            "<div class='flex align-items-center gap-3 py-2'><i class='pi pi-check-circle hub-text-link text-xl' aria-hidden='true'></i>" +
+            "<div><div class='font-semibold'>${item.title}</div><div class='text-sm text-color-secondary'>${item.detail}</div></div></div>"
+        }.join("") + "</div>"
+    }
+    if (topic.warning) extra += warningMessageHtml(topic.warning)
+    """
+<article class='app-tip-card'>
+  <div class='app-tip-card-header flex align-items-center gap-3'>
+    <i class='pi ${topic.icon} hub-text-link text-xl' aria-hidden='true'></i>
+    <h4 class='app-heading font-semibold m-0'>${topic.title}</h4>
+  </div>
+  <div class='app-tip-copy'>${topic.body}${extra}</div>
+</article>
+"""
+}
+
+private String tipsStylesHtml() {
+    """
+<style>
+  ${appPageSpacingCss()}
+  .app-tips-index { float: left; width: calc(27% - 8px); box-sizing: border-box; }
+  .app-tips-article { float: right; width: 73%; border-left: 1px solid var(--surface-border, rgba(0,0,0,.12)); padding-left: 8px; box-sizing: border-box; }
+  .app-tips-index > .mdl-grid, .app-tips-article > .mdl-grid { padding: 4px 0 !important; }
+  .app-tips-index .mdl-cell:has(> style) { display: none; }
+  .app-tip-card { border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 4px; overflow: hidden; }
+  .app-tip-card-header { padding: 16px; background: var(--surface-ground, #fafafa); border-bottom: 1px solid var(--surface-border, rgba(0,0,0,.12)); }
+  .app-tip-copy { padding: 16px; line-height: 1.55; overflow-wrap: anywhere; }
+  .app-tip-copy p { margin: 0 0 16px; }
+  .app-tip-copy p:last-child { margin-bottom: 0; }
+  .app-tips-article button.hrefElem { background: var(--surface-card, #fff); box-shadow: none; border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 4px; font-family: inherit; }
+  .app-tips-article button.hrefElem::before { color: var(--hubitat-link-color, #1565c0); }
+  .form:has(> .app-tips-index) + fieldset,
+  #formApp:has(.app-tips-index) #fieldsetAppButtons { clear: both; }
+  @media (max-width: 1000px) {
+    .app-tips-index, .app-tips-article { float: none; width: 100%; padding: 0; border-left: 0; }
+  }
+</style>
+"""
+}
+
+private String tipsCardCss() {
+    """
+  button.hrefElem[name^='_action_href_tips'] {
+    position: relative; background: var(--surface-card, #fff); border: 1px solid var(--surface-border, rgba(0,0,0,.12));
+    border-radius: 4px; box-shadow: none; color: var(--text-color, rgba(0,0,0,.87)); min-height: 56px;
+    font-family: inherit; font-size: 16px; font-weight: 500; line-height: 1.4; padding: 8px 28px 8px 46px;
+  }
+  button.hrefElem[name^='_action_href_tips'] > span:first-child { color: var(--hubitat-link-color, #1565c0); font-weight: 600; font-size: 16px !important; }
+  button.hrefElem[name^='_action_href_tips'] > span.state-incomplete-text { color: var(--text-color-secondary, rgba(0,0,0,.6)); font-size: 14px; font-weight: 500; line-height: 1.4; }
+  button.hrefElem[name^='_action_href_tips'] i.pi {
+    position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--hubitat-link-color, #1565c0); font-size: 20px;
+  }
+  button.hrefElem[name^='_action_href_tips']::before { color: var(--hubitat-link-color, #1565c0); }
+"""
+}
+
 // ---------- UI template (HubitatAppUiTemplate, from Pentair IntelliCenter) ----------
 
 private String statusBannerHtml(boolean ok, String title, String summary) {
@@ -370,6 +562,8 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
     """
 <style>
   ${appPageSpacingCss()}
+  ${tipsCardCss()}
+  .app-main-support button.hrefElem[name^='_action_href_tips'] { min-height: 61.5px; padding-bottom: 13.5px; box-sizing: border-box; }
   #formApp .form > div:has(> h3:empty):has(+ .app-main-overview) { display: none; }
   #formApp .form > .app-main-overview { margin-bottom: 0.429rem !important; }
   .app-main-overview > .mdl-grid { padding-top: 0.286rem !important; padding-bottom: 0.286rem !important; }
@@ -441,7 +635,7 @@ private String loggingDetailsPopupHtml() {
   <div class='text-color-secondary text-base mb-3'>One setting for the app and every vacuum.</div>
   ${logLevelDetailHtml("Errors Only", "Warnings and errors only, such as a vacuum going offline or a command being rejected.", current)}
   ${logLevelDetailHtml("Normal", "Errors, plus connections, commands, state changes (cleaning, returning, charged) and vacuums added or removed.", current)}
-  ${logLevelDetailHtml("Full", "Everything, including every request to the vacuum. Use while troubleshooting. Turns off after 30 minutes.", current)}
+  ${logLevelDetailHtml("Full", "Everything, including every request to the vacuum. Use while troubleshooting. Turns off after 3 hours.", current)}
 </div>
 """
     String js = groovy.json.JsonOutput.toJson(details)
