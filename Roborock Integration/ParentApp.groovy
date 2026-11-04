@@ -434,7 +434,7 @@ private List tipsTopics() {
                 "<p><b>Local</b> (keeps working with your internet down):</p>",
             checklist: [
                 [title: "Status", detail: "State, current room, clean area, time and percent, battery, errors, fan and mop modes, consumables."],
-                [title: "Commands from Hubitat", detail: "Start, Dock, Pause, Resume, Vacuum Rooms, fan and mop settings, and Execute."]
+                [title: "Commands from Hubitat", detail: "Start, Dock, Pause, Resume, Vacuum Rooms, and fan and mop settings through Execute."]
             ],
             append: "cloud"],
         [id: "cloud", label: "Cloud only", title: "What still needs Roborock's cloud", group: "How it works", icon: "pi-cloud",
@@ -459,6 +459,17 @@ private List tipsTopics() {
                 "<p>Renamed a room or added a scene? Tap <b>Rescan vacuums and rooms</b> on the main page.</p>" +
                 "<p><b>mopMode</b> and <b>mopWaterMode</b> show the vacuum's saved settings. A one-time choice in the Roborock app (like a Deep+ route for one run) isn't saved, so it won't show here. " +
                 "Vacuums with a water flow slider (like the Saros) also show the slider number in <b>mopWaterLevel</b>.</p>"],
+        [id: "execute", label: "Execute (advanced)", title: "Sending a raw command with Execute", group: "Using it", icon: "pi-code",
+            body: "<p><b>Execute</b> sends a Roborock command straight to the vacuum. Type the command, and any parameters as a JSON list (leave blank if none). " +
+                "It also works from a Rule Machine custom action, for example to set fan power before a room clean.</p>",
+            checklist: [
+                [title: "find_me", detail: "No parameters. The vacuum announces itself."],
+                [title: "set_custom_mode", detail: "Fan power: [101] Quiet, [102] Balanced, [103] Turbo, [104] Max, [108] Max+."],
+                [title: "set_mop_mode", detail: "Mop route: [300] Standard, [301] Deep, [303] Deep+, [304] Fast."],
+                [title: "set_water_box_custom_mode", detail: "Water flow on older models: [200] Off, [201] Low, [202] Medium, [203] High. Not tested on slider models like the Saros yet."],
+                [title: "get_status", detail: "No parameters. With Log level on Full, the vacuum's raw reply shows in the logs."]
+            ],
+            warning: "Nothing is checked before sending. A wrong command or parameter is rejected by the vacuum and the reason shows in the logs."],
         [id: "diag", label: "Diagnostics (beta)", title: "Sending a diagnostics report", group: "Troubleshooting", icon: "pi-file",
             body: "<p>Tap <b>Diagnostics</b> on the vacuum device. One block appears in the logs from <b>DIAGNOSTICS</b> to <b>END</b> with your model, firmware, protocol and the raw status from the vacuum. Copy all of it. It never includes your vacuum's local key.</p>" +
                 "<p>For a problem, set Log level to <b>Full</b> (stays on for 3 hours during the beta), repeat it, and send those lines too.</p>"]

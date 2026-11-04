@@ -86,7 +86,8 @@ metadata {
                                 [name: "MopWater",  type: "ENUM",   description: "Mop water mode. Optional.", constraints: mopWaterModeCodes.values().collect{ it.toUpperCase() }]]
         command "vacuumScene",  [[name: "Scene ID*", type: "STRING", description: "Single Scene ID"]]
         command "diagnostics"
-        command "execute", [[name: "command*", type: "STRING", description: "Raw command"],[name: "params", type: "JSON_OBJECT", description: "Command parameters"]]
+        command "execute", [[name: "command*", type: "STRING", description: "Advanced. e.g. find_me, set_custom_mode, set_mop_mode (see Tips & Troubleshooting)"],
+                            [name: "params", type: "JSON_OBJECT", description: "JSON list, e.g. [104]. Leave blank if none."]]
 
         attribute "dustCollection", "enum", ["off","on"]
         attribute "dockError", "enum", dockErrorCodes.values().collect{ it.toLowerCase() }

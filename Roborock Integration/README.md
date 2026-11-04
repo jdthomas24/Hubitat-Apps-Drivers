@@ -40,7 +40,7 @@ The vacuum's **MAC** shows on its card and device page once connected. Set a DHC
 | Local (works with the internet down) | Needs Roborock's cloud |
 |---|---|
 | All status: state, room, area, time, percent, battery, errors, modes, consumables | Sign-in and **Rescan** (vacuums, local keys, room names, scenes) |
-| Commands from Hubitat: Start, Dock, Pause, Resume, Vacuum Rooms, fan and mop settings, Execute | **Vacuum Scene** (scenes live in your Roborock account) |
+| Commands from Hubitat: Start, Dock, Pause, Resume, Vacuum Rooms, fan and mop settings through Execute | **Vacuum Scene** (scenes live in your Roborock account) |
 | | **IP recovery**: finds a vacuum's new IP if it changes (automatic, only when it can't be reached) |
 | | Jobs started from the Roborock app (Hubitat still tracks them locally once they start) |
 
@@ -62,6 +62,20 @@ A job started from the Roborock app or a schedule shows up within the docked pol
 - Renamed rooms or new scenes: tap **Rescan vacuums and rooms** in the app.
 - **mopMode** and **mopWaterMode** show the vacuum's saved settings, not a one-time choice made in the Roborock app for a single run.
 - Vacuums with a water flow slider (like the Saros) show the app's name in **mopWaterMode** and the slider number (1 to 30) in **mopWaterLevel**.
+
+## Execute (advanced)
+
+**Execute** sends a Roborock command straight to the vacuum. Type the command, and any parameters as a JSON list (leave blank if none). It works from Rule Machine custom actions too, for example to set fan power before a room clean.
+
+| Command | Params | What it does |
+|---|---|---|
+| `find_me` | (blank) | The vacuum announces itself |
+| `set_custom_mode` | `[104]` | Fan power: 101 Quiet, 102 Balanced, 103 Turbo, 104 Max, 108 Max+ |
+| `set_mop_mode` | `[301]` | Mop route: 300 Standard, 301 Deep, 303 Deep+, 304 Fast |
+| `set_water_box_custom_mode` | `[202]` | Water flow on older models: 200 Off, 201 Low, 202 Medium, 203 High (not tested on slider models like the Saros yet) |
+| `get_status` | (blank) | With Log level on Full, the raw reply shows in the logs |
+
+Nothing is checked before sending. A wrong command or parameter is rejected by the vacuum, and the reason shows in the logs.
 
 ## Moving from bloodtick's driver
 
