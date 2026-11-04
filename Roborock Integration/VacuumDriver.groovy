@@ -496,8 +496,12 @@ private void processRooms(List mapping) {
     Map segs = [:]
     (mapping ?: []).each { m -> segs[m[0].toString()] = names[m[1].toString()] ?: "Room ${m[0]}" }
     state.segRooms = segs
-    String v = segs.sort { a, b -> (a.key as int) <=> (b.key as int) }.collect { k, n -> "( ${n}: ${k} )" }.join(" ")
-    sendIf("roomsList", v ?: "none")
+    sendIf("roomsList", roomsText(segs))
+}
+
+private String roomsText(Map segs) {
+    String v = (segs ?: [:]).sort { a, b -> (a.key as int) <=> (b.key as int) }.collect { k, n -> "( ${n}: ${k} )" }.join(" ")
+    return v ?: "none"
 }
 
 private String roomName(int seg) { state.segRooms?.get(seg.toString()) as String }
@@ -506,6 +510,7 @@ private void pushLists(Map c) {
     if (c.model) sendIf("name", c.model as String)
     Map sc = (c.scenes ?: [:]) as Map
     sendIf("scenesList", sc ? sc.collect { k, n -> "( ${n}: ${k} )" }.join(" ") : "none")
+    if (state.segRooms) sendIf("roomsList", roomsText(state.segRooms as Map))
     if (c.tipsUrl) sendIf("help", "<a href='${c.tipsUrl}' target='_blank'>Tips &amp; Troubleshooting</a>", "${device.displayName} help link updated")
 }
 
