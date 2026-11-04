@@ -11,7 +11,8 @@
      -GCM is built from AES/ECB plus GHASH (the hub sandbox blocks GCMParameterSpec).
      -The vacuum doesn't push status locally, so the driver polls get_status: every 20 s while working, the
       Docked poll setting otherwise, 3 s after a command. Ping every 30 s keeps the socket open (vacuum drops at 60 s).
-     -Attribute and command names follow bloodtick's Roborock driver so rules carry over. Scenes run through the app (cloud).
+     -Attribute names follow bloodtick's Roborock driver; command names differ (vacuumStart vs appClean, see README).
+      Scenes run through the app (cloud).
      -The vacuum closes the local connection now and then (reset by peer). A drop reconnects within a few seconds
       and healthStatus only goes offline if it isn't back within 90 s. A command sent while reconnecting is held and
       sent once connected (if within 60 s).
@@ -19,6 +20,8 @@
       get_consumable replies, so testers can send everything in one paste. Never includes the local key.
      -IP changes (0.2.0): get_network_info on each connect records the MAC (mac attribute). If the vacuum stays
       unreachable past the grace period, the app asks Roborock's cloud for its current IP (see Cloud Helper).
+     -Saros-style vacuums report water flow as 220 + slider level (1-30); mopWaterMode shows the app's name for it,
+      mopWaterLevel the number. Older models keep the fixed 200-209 codes.
      -Log level comes from the app.
 */
 
@@ -28,7 +31,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "0.2.1"
+@Field static final String VERSION = "0.2.2"
 @Field static final int GRACE_SEC = 90
 @Field static final int PORT = 58867
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'
@@ -58,6 +61,8 @@ import javax.crypto.spec.SecretKeySpec
 @Field static final Map fanPowerCodes = [101: "Quiet", 102: "Balanced", 103: "Turbo", 104: "Max", 105: "Off", 106: "Auto", 108: "Max+", 110: "Smart"]
 @Field static final Map mopModeCodes = [300: "Standard", 301: "Deep", 302: "Custom", 303: "Deep+", 304: "Fast", 306: "Smart"]
 @Field static final Map mopWaterModeCodes = [0: "Default", 200: "Off", 201: "Low", 202: "Medium", 203: "High", 204: "Auto", 207: "Custom", 209: "Smart"]
+// Saros slider names by level (Roborock app): 1-3 Slight, 4-7 Low, 8-12 Gentle, 13-17 Medium, 18-22 Moderate, 23-27 High, 28-30 Extreme
+@Field static final List waterLevelNames = [[3, "Slight"], [7, "Low"], [12, "Gentle"], [17, "Medium"], [22, "Moderate"], [27, "High"], [30, "Extreme"]]
 @Field static final Map dockErrorCodes = [
     0: "No error", 34: "Duct Blockage", 38: "Water Empty", 39: "Waste Water Tank Full",
     40: "Water Filter Not Installed", 42: "Check the Water Filter Has Been Correctly Installed",
@@ -99,7 +104,9 @@ metadata {
         attribute "remainingHighSpeedMaintBrush (%)", "number"
         attribute "locating", "enum", ["true","false"]
         attribute "mopMode", "enum", mopModeCodes.values().collect{ it.toLowerCase() }
-        attribute "mopWaterMode", "enum", mopWaterModeCodes.values().collect{ it.toLowerCase() }
+        attribute "mopWaterMode", "enum", (mopWaterModeCodes.values() + waterLevelNames.collect { it[1] }).collect{ it.toLowerCase() }.unique()
+        attribute "mopWaterLevel", "number"
+        attribute "help", "string"
         attribute "healthStatus", "enum", ["offline", "online"]
         attribute "roomsList", "string"
         attribute "scenesList", "string"
@@ -444,7 +451,7 @@ private void processStatus(Map r) {
     }
     codeAttr("fanPower", fanPowerCodes, r.fan_power)
     codeAttr("mopMode", mopModeCodes, r.mop_mode)
-    codeAttr("mopWaterMode", mopWaterModeCodes, r.water_box_mode)
+    processWater(r.water_box_mode)
     if (r.dust_collection_status != null) sendIf("dustCollection", (r.dust_collection_status as int) == 0 ? "off" : "on")
     if (r.is_locating != null) sendIf("locating", (r.is_locating as int) == 0 ? "false" : "true")
     if (r.clean_time != null) sendIf("cleanTime (min)", Math.ceil((r.clean_time as int) / 60.0) as int)
@@ -473,7 +480,7 @@ private void processConsumables(Map r) {
     pct("remainingMainBrush (%)", r.main_brush_work_time, life.main * 3600)
     pct("remainingSideBrush (%)", r.side_brush_work_time, life.side * 3600)
     pct("remainingSensors (%)", r.sensor_dirty_time, life.sensor * 3600)
-    pct("remainingFilter (%)", r.strainer_work_times, life.filter)
+    pct("remainingFilter (%)", r.filter_work_time, life.filter * 3600)
     pct("remainingHighSpeedMaintBrush (%)", r.cleaning_brush_work_times, life.highSpeed)
 }
 
@@ -489,7 +496,7 @@ private void processRooms(List mapping) {
     Map segs = [:]
     (mapping ?: []).each { m -> segs[m[0].toString()] = names[m[1].toString()] ?: "Room ${m[0]}" }
     state.segRooms = segs
-    String v = segs.sort { a, b -> (a.key as int) <=> (b.key as int) }.collect { k, n -> "${k}: ${n}" }.join(" | ")
+    String v = segs.sort { a, b -> (a.key as int) <=> (b.key as int) }.collect { k, n -> "( ${n}: ${k} )" }.join(" ")
     sendIf("roomsList", v ?: "none")
 }
 
@@ -498,7 +505,21 @@ private String roomName(int seg) { state.segRooms?.get(seg.toString()) as String
 private void pushLists(Map c) {
     if (c.model) sendIf("name", c.model as String)
     Map sc = (c.scenes ?: [:]) as Map
-    sendIf("scenesList", sc ? sc.collect { k, n -> "${k}: ${n}" }.join(" | ") : "none")
+    sendIf("scenesList", sc ? sc.collect { k, n -> "( ${n}: ${k} )" }.join(" ") : "none")
+    if (c.tipsUrl) sendIf("help", "<a href='${c.tipsUrl}' target='_blank'>Tips &amp; Troubleshooting</a>", "${device.displayName} help link updated")
+}
+
+private void processWater(v) {
+    if (v == null) return
+    int c = v as int
+    if (c >= 221 && c <= 250) {
+        int lvl = c - 220
+        sendIf("mopWaterMode", (waterLevelNames.find { lvl <= (it[0] as int) }[1] as String).toLowerCase())
+        sendIf("mopWaterLevel", lvl)
+    } else {
+        sendIf("mopWaterMode", (mopWaterModeCodes[c] ?: "custom (${c})").toString().toLowerCase())
+        if (device.currentValue("mopWaterLevel") != null) device.deleteCurrentState("mopWaterLevel")
+    }
 }
 
 private void setHealth(boolean ok, String why) {

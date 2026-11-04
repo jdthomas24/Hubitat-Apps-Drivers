@@ -19,7 +19,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import java.security.MessageDigest
 
-@Field static final String APP_VERSION = "0.2.1"
+@Field static final String APP_VERSION = "0.2.2"
 @Field static final String APP_NAME = "Roborock Integration"
 @Field static final String DRIVER = "Roborock Vacuum"
 @Field static final String CLOUD_DRIVER = "Roborock Cloud Helper"
@@ -320,7 +320,8 @@ Map componentConfig(String dni) {
     Map v = ((state.vacuums ?: []) as List).find { dniFor(it.duid) == dni } as Map
     if (!v) return [:]
     return [duid: v.duid, ip: settings["ip_${v.duid}"]?.toString()?.trim(), localKey: state.keys?.get(v.duid), model: v.model,
-            modelCode: v.modelCode, fw: v.fw, pv: v.pv, appVersion: APP_VERSION, rooms: state.rooms ?: [:], scenes: state.scenes?.get(v.duid) ?: [:]]
+            modelCode: v.modelCode, fw: v.fw, pv: v.pv, appVersion: APP_VERSION, rooms: state.rooms ?: [:], scenes: state.scenes?.get(v.duid) ?: [:],
+            tipsUrl: "/installedapp/configure/${app.id}/tipsPage"]
 }
 
 void componentScene(String dni, String sceneId) {
@@ -453,9 +454,11 @@ private List tipsTopics() {
             body: "<p>The vacuum doesn't send updates on its own, so the driver checks it: every 20 seconds while it's cleaning, returning or busy at the dock, every 1, 2 or 5 minutes while docked (the <b>Docked poll</b> setting), and 3 seconds after any command.</p>" +
                 "<p>The vacuum closes its connection now and then. The driver reconnects within seconds and only shows offline if it stays down for 90 seconds.</p>"],
         [id: "rooms", label: "Rooms and scenes", title: "Rooms and scenes", group: "Using it", icon: "pi-th-large",
-            body: "<p><b>roomsList</b> on the device shows <i>ID: Room name</i> pairs. Use the IDs with <b>Vacuum Rooms</b>, for example <code>16, 17</code>.</p>" +
+            body: "<p><b>roomsList</b> on the device shows each room as <i>( Room name: ID )</i>. Use the IDs with <b>Vacuum Rooms</b>, for example <code>16, 17</code>.</p>" +
                 "<p><b>scenesList</b> shows your Roborock scenes for <b>Vacuum Scene</b> (cloud).</p>" +
-                "<p>Renamed a room or added a scene? Tap <b>Rescan vacuums and rooms</b> on the main page.</p>"],
+                "<p>Renamed a room or added a scene? Tap <b>Rescan vacuums and rooms</b> on the main page.</p>" +
+                "<p><b>mopMode</b> and <b>mopWaterMode</b> show the vacuum's saved settings. A one-time choice in the Roborock app (like a Deep+ route for one run) isn't saved, so it won't show here. " +
+                "Vacuums with a water flow slider (like the Saros) also show the slider number in <b>mopWaterLevel</b>.</p>"],
         [id: "diag", label: "Diagnostics (beta)", title: "Sending a diagnostics report", group: "Troubleshooting", icon: "pi-file",
             body: "<p>Tap <b>Diagnostics</b> on the vacuum device. One block appears in the logs from <b>DIAGNOSTICS</b> to <b>END</b> with your model, firmware, protocol and the raw status from the vacuum. Copy all of it. It never includes your vacuum's local key.</p>" +
                 "<p>For a problem, set Log level to <b>Full</b> (stays on for 3 hours during the beta), repeat it, and send those lines too.</p>"]

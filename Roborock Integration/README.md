@@ -1,6 +1,6 @@
 # Roborock Integration for Hubitat (beta)
 
-> **Status: v0.2.1 beta.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
+> **Status: v0.2.2 beta.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
 
 ## What you get
 
@@ -9,13 +9,13 @@ One device per vacuum with:
 - **Commands:** Start, Dock, Pause, Resume, clean selected rooms (with optional mop water level), run a Roborock scene, raw commands
 - **Connection:** healthStatus, IP and the local protocol in use
 
-Attribute and command names match bloodtick's Roborock driver, so rules and dashboards built on it carry over.
+Attribute names match bloodtick's Roborock driver, so dashboards carry over. Command names are different (see **Moving from bloodtick's driver** below).
 
 ## Supported vacuums
 
 | Vacuum | Local protocol | Status |
 |---|---|---|
-| Newer models (Qrevo Curv / Curv X, S8 MaxV Ultra, likely Saros) | L01 | Tested on a Qrevo Curv X |
+| Newer models (Qrevo Curv / Curv X, Saros, S8 MaxV Ultra) | L01 | Tested on a Qrevo Curv X and Saros 10R |
 | Older models (S5 to S8, earlier Qrevo and Q Max) | 1.0 | Built in, needs testers |
 | Dyad, Zeo, Q7 / Q10 family | A01 / B01 | Not supported |
 
@@ -24,7 +24,7 @@ Attribute and command names match bloodtick's Roborock driver, so rules and dash
 **HPM:** Install → From a URL:
 `https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Roborock%20Integration/packageManifest.json`
 
-**By hand:** add `VacuumDriver.groovy` in **Drivers Code** and `ParentApp.groovy` in **Apps Code**.
+**By hand:** add `VacuumDriver.groovy` and `CloudHelper.groovy` in **Drivers Code** and `ParentApp.groovy` in **Apps Code**.
 
 ## Set up
 
@@ -57,9 +57,27 @@ A job started from the Roborock app or a schedule shows up within the docked pol
 
 ## Rooms and scenes
 
-- **roomsList** shows `ID: Room name` pairs. Use the IDs with **Vacuum Rooms**, e.g. `16, 17`.
+- **roomsList** shows each room as `( Room name: ID )`. Use the IDs with **Vacuum Rooms**, e.g. `16, 17`.
 - **scenesList** shows your Roborock scenes. **Vacuum Scene** runs one through the Roborock cloud (the only command that does).
 - Renamed rooms or new scenes: tap **Rescan vacuums and rooms** in the app.
+- **mopMode** and **mopWaterMode** show the vacuum's saved settings, not a one-time choice made in the Roborock app for a single run.
+- Vacuums with a water flow slider (like the Saros) show the app's name in **mopWaterMode** and the slider number (1 to 30) in **mopWaterLevel**.
+
+## Moving from bloodtick's driver
+
+Attributes are the same, apart from `rooms` and `scenes`, which are `roomsList` and `scenesList` here. Commands take the same parameters, but the names changed, so update your rules:
+
+| bloodtick | Roborock Integration |
+|---|---|
+| appClean | vacuumStart |
+| appDock | vacuumDock |
+| appPause | vacuumPause |
+| appRoomResume | vacuumResume |
+| appRoomClean | vacuumRooms |
+| appScene | vacuumScene |
+| execute | execute |
+
+Both can run side by side while you move rules over.
 
 ## Logging
 
@@ -70,6 +88,8 @@ One **Log level** in the app covers every vacuum. **Full** includes every reques
 Tap **Diagnostics** on the vacuum device. It logs one block (always shown, whatever the log level) with your model, model code, firmware, protocol and the raw status the vacuum reports. Copy everything from `DIAGNOSTICS` to `END` and send it along with any warnings or errors. It never includes your local key. If Model code or Firmware says "tap Rescan", tap **Rescan vacuums and rooms** in the app first.
 
 ## Troubleshooting
+
+**Need help on the device?** Each vacuum device has a **help** link to the app's Tips & Troubleshooting page.
 
 **healthStatus stays offline.** Check the IP in the app, and that the vacuum is on the same network as the hub. Set Log level to Full, tap **Initialize** on the device, and look for "HELLO" lines.
 
