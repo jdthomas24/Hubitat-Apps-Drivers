@@ -19,6 +19,8 @@
      -Times move in 5 minute steps; wifiSignal in 5 dB steps; AMS humidity in 5% steps.
      -Preferences (0.1.3): check interval, temperature step and units. adoptOptions() copies the app's old
       shared values in once on update.
+     -Any status received marks the printer Connected (0.1.4), so the label can't stay on Connecting while data
+      flows. statusAge() tells the app how long the label has been unchanged. model comes from get_version.
      -Mode is per printer, from the app. Monitor only (default): works alongside Bambu Cloud and the Bambu
       apps; chamberLight is read-only and commands are refused locally. Monitor and control: needs Developer
       Mode (LAN Only, no Bambu Cloud); adds the chamber light switch device and Printer Control. Stop only
@@ -62,6 +64,7 @@ metadata {
         attribute "errors",           "string"
         attribute "wifiSignal",       "string"
         attribute "firmware",         "string"
+        attribute "model",            "string"
         attribute "connectionStatus", "string"
         attribute "tile",             "string"
 
@@ -83,7 +86,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.1.3"
+@Field static final String VERSION     = "0.1.4"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -168,7 +171,10 @@ def initialize() {
 }
 
 def refresh() {
-    if (!state.connected) { logN "not connected, refresh skipped"; return }
+    boolean up = false
+    try { up = interfaces.mqtt.isConnected() } catch (e) { }
+    if (!state.connected && !up) { logN "not connected, reconnecting"; connect(); return }
+    if (!state.connected) state.connected = true
     logN "refresh requested"
     unschedule("startSample")
     startSample()
@@ -326,7 +332,7 @@ private void endSample() {
     m.missed = 0
     try { interfaces.mqtt.unsubscribe(m.subTopic as String) } catch (e) { }
     unschedule("sampleTimeout")
-    if (device.currentValue("connectionStatus") == "Waiting for printer") setStatus("Connected")
+    markAlive()
     int secs = nextSecs()
     m.nextSampleAt = now() + secs * 1000L
     runIn(secs, "startSample")
@@ -444,6 +450,7 @@ def parse(String raw) {
         Map pr = j.print as Map
         checkResult(pr, "print")
         if (pr.command == "push_status" || pr.containsKey("gcode_state") || pr.containsKey("mc_percent")) {
+            markAlive()
             merge(m.rep as Map, pr)
             render()
             if (pr.containsKey("gcode_state") && now() >= ((m.holdUntil ?: 0L) as long)) endSample()
@@ -501,6 +508,8 @@ private void checkResult(Map r, String kind) {
 private void readVersion(Map info) {
     def mod = (info.module instanceof List) ? info.module.find { it.name == "ota" } : null
     if (mod?.sw_ver) report("firmware", mod.sw_ver.toString())
+    String pn = mod?.product_name?.toString()
+    if (pn) report("model", pn.replaceFirst(/^Bambu Lab\s+/, ""))
 }
 
 // Merged report -> attributes, children and tile.
@@ -858,7 +867,17 @@ private boolean moved(cur, val, delta) {
 }
 
 private void setStatus(String v) {
-    if (device.currentValue("connectionStatus") != v) sendEvent(name: "connectionStatus", value: v)
+    if (device.currentValue("connectionStatus") != v) { sendEvent(name: "connectionStatus", value: v); state.statusAt = now() }
+}
+
+// For the app: ms since connectionStatus last changed.
+Long statusAge() { state.statusAt ? now() - (state.statusAt as long) : null }
+
+// A status arrived, so the link is up whatever the label says.
+private void markAlive() {
+    if (!state.connected) state.connected = true
+    if (state.downSince != null) { state.remove("downSince"); state.remove("downWarned") }
+    setStatus("Connected")
 }
 
 private BigDecimal num(v) {

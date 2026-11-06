@@ -37,7 +37,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.1.3"
+@Field static final String APP_VERSION   = "0.1.4"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -90,7 +90,7 @@ def mainPage() {
             if (!sl) paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;'>No printers yet. Tap <b>Add printer</b>.</div>"
             sl.eachWithIndex { int i, int n -> printerCard(i, n + 1) }
             input "addPrinter", "button", title: "Add printer", width: 4, inputClass: "app-ui-button"
-            if (printerDevices().any { it.currentValue("connectionStatus") != "Connected" } || !printerDevices()) {
+            if (!printerDevices() || printerDevices().any { d -> String sn = null; try { sn = d.getSerial() } catch (e) { }; !sn }) {
                 paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;'>On the printer, <b>Settings, Network</b> (<b>WLAN</b> on some models) " +
                     "shows the IP address and access code. Just read them there: Monitor only doesn't need LAN Only or Developer Mode. " +
                     "A DHCP reservation in your router keeps the IP from changing.</div>"
@@ -171,8 +171,10 @@ private String printerCardHtml(int i, dev) {
     String conn = dev.currentValue("connectionStatus") ?: "Connecting"
     String ps = dev.currentValue("printState")
     boolean ok = conn == "Connected"
+    boolean busy = reconnecting(dev)
     String line
-    if (!ok) line = conn == "Waiting for printer" ? "Connected, waiting for the printer's first status" : conn
+    if (busy) line = "Reconnecting&hellip;"
+    else if (!ok) line = conn == "Waiting for printer" ? "Connected, waiting for the printer's first status" : conn
     else if (ps in ["Printing", "Paused", "Preparing"]) {
         def pct = dev.currentValue("progress"), left = dev.currentValue("timeRemaining")
         line = ps + (pct != null ? " &middot; ${pct}%" : "") + (left ? " &middot; ${hm(left as int)} left" : "") +
@@ -181,11 +183,14 @@ private String printerCardHtml(int i, dev) {
     int errs = (dev.currentValue("errorCount") ?: 0) as int
     StringBuilder c = new StringBuilder()
     c << "<div style='border:1px solid var(--surface-border, rgba(0,0,0,.12));border-radius:10px;padding:12px 14px;margin:4px 0 0;background:var(--surface-card, #fff)'>"
-    c << "<div><i class='fa-solid fa-cube hub-text-link' aria-hidden='true' style='margin-right:6px'></i>"
+    String model = dev.currentValue("model")
+    c << "<div>" + (model ? "<span style='background:#00ae42;color:#fff;border-radius:8px;padding:2px 9px;font-size:0.9em;font-weight:bold;margin-right:6px'>${esc(model)}</span>" :
+        "<i class='fa-solid fa-cube hub-text-link' aria-hidden='true' style='margin-right:6px'></i>")
     c << "<a href='/device/edit/${dev.id}' target='_blank' class='bb-link' style='font-weight:600'>${esc(dev.displayName)}" +
         "<i class='fa-regular fa-external-link' style='margin-left:5px;font-size:0.8em'></i></a> "
     c << "<span class='text-color-secondary' style='font-size:0.8em'>${serial ? esc(serial) + ' &middot; ' : ''}${esc(settings["p${i}_ip"] ?: '')}</span></div>"
-    c << "<div class='${ok ? 'hub-text-success' : 'hub-text-warning'}' style='margin-top:6px;font-size:0.85em'>${esc(line).replace('&amp;middot;', '&middot;')}</div>"
+    String tone = ok ? "hub-text-success" : busy ? "text-color-secondary" : "hub-text-warning"
+    c << "<div class='${tone}' style='margin-top:6px;font-size:0.85em'>${esc(line).replace('&amp;middot;', '&middot;').replace('&amp;hellip;', '&hellip;')}</div>"
     if (errs > 0) c << "<div class='hub-text-warning' style='margin-top:4px;font-size:0.85em'>&#9888; ${errs} printer error${errs == 1 ? '' : 's'}: ${esc(dev.currentValue('errors') ?: '')}</div>"
     c << "<div style='margin-top:10px;display:flex;flex-wrap:wrap;gap:8px'>"
     c << "<span class='bb-chip'>${settings["p${i}_mode"] == 'control' ? 'Monitor and control' : 'Monitor only'}</span>"
@@ -321,8 +326,11 @@ private Map bannerState() {
     if (!cfg) return [ok: false, title: "Setup required", summary: "Enter a printer's IP address and LAN access code, then tap <b>Done</b>."]
     List devs = printerDevices()
     if (!devs) return [ok: false, title: "Not connected yet", summary: "Tap <b>Done</b> to connect."]
-    List bad = devs.findAll { !(it.currentValue("connectionStatus") in ["Connected", "Waiting for printer"]) }
+    List bad = devs.findAll { !(it.currentValue("connectionStatus") in ["Connected", "Waiting for printer"]) && !reconnecting(it) }
     String counts = countText(devs.size(), "printer")
+    List busy = devs.findAll { reconnecting(it) }
+    if (!bad && busy) return [ok: true, title: busy.size() == 1 ? "${esc(busy[0].displayName)} reconnecting" : "${busy.size()} printers reconnecting",
+                              summary: "${counts} &middot; this takes a few seconds after an update"]
     if (!bad) {
         List printing = devs.findAll { it.currentValue("printState") == "Printing" }
         return [ok: true, title: "Integration ready", summary: "${counts}${printing ? ' &middot; ' + printing.size() + ' printing' : ''}"]
@@ -332,6 +340,14 @@ private Map bannerState() {
     }
     return [ok: false, title: bad.size() == 1 ? "${esc(bad[0].displayName)} offline" : "${bad.size()} printers offline",
             summary: "${counts} &middot; reconnecting on its own. Check the printer is on and on the network."]
+}
+
+// Connecting or Reconnecting for under 2 minutes is normal (after an update or Done), not an outage.
+private boolean reconnecting(dev) {
+    if (!(dev.currentValue("connectionStatus") in ["Connecting", "Reconnecting"])) return false
+    Long age = null
+    try { age = dev.statusAge() } catch (e) { }
+    return age == null || age < 120000L
 }
 
 // ============================================================================
