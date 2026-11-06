@@ -1,12 +1,12 @@
 # Bambu Lab Integration for Hubitat
 
-> **Status: v0.1.0 beta, not yet tested on a printer.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
+> **Status: v0.1.1 beta, tested on an H2D.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
 
 ## What you get
 
 | Device | What it does |
 |---|---|
-| **Printer** (one per printer) | Print state and stage, progress, time left and ETA, layers, file name, nozzle, bed and chamber temperatures (both nozzles on the H2D), speed, chamber light, active filament, HMS errors, firmware, dashboard tile |
+| **Printer** (one per printer) | Print state and stage, progress, elapsed time, time left and ETA, layers, file name, heater status (Heating, At temp, Cooling, Off) with targets and temperatures for the nozzle, bed and chamber (both nozzles on the H2D), speed, chamber light, active filament, HMS errors, firmware, dashboard tile |
 | **Chamber light** (control mode only) | A switch for the printer's chamber light |
 | **AMS** (one per unit) | Humidity, temperature, and filament type, color and amount for each tray |
 
@@ -15,7 +15,7 @@ You choose which light and AMS devices Hubitat creates on the app's **Equipment*
 ## Requirements
 
 - A Bambu Lab printer on the same network as the hub (X1, P1, A1 and H2 series)
-- The printer's IP address, serial number and LAN access code
+- The printer's IP address and LAN access code (the serial is found automatically)
 - Hubitat 2.2.5 or later
 - Monitor only needs nothing else. Monitor and control needs Developer Mode (see **Modes**).
 
@@ -29,7 +29,7 @@ You choose which light and AMS devices Hubitat creates on the app's **Equipment*
 ## Set up
 
 1. Open **Integrations** in the left menu and add **Bambu Lab Integration**.
-2. For each printer, enter a name, the IP address, the serial number and the LAN access code, and pick a **Mode**. On the printer, **Settings, WLAN** (or **LAN Only**) shows the IP and access code, and **Settings, Device** shows the serial.
+2. For each printer, enter a name, the IP address and the LAN access code, and pick a **Mode**. On the printer, **Settings, Network** (**WLAN** on some models) shows the IP and access code. Just read them: Monitor only doesn't need LAN Only or Developer Mode, and the Bambu Handy app keeps working. Leave the serial blank; the integration reads it from the printer.
 3. Tap **Done**. Each printer connects and adds its light and AMS devices within a few seconds.
 4. Open the app again and tap **Equipment** to turn off anything you don't want in Hubitat.
 
@@ -44,7 +44,7 @@ Each printer has its own mode.
 | Hubitat sees status, temperatures, AMS, errors, tile | ✅ | ✅ |
 | Bambu Cloud and the Bambu Handy app | ✅ | ❌ |
 | Bambu Studio on your network | ✅ | ✅ |
-| Pause, Resume, Stop, Set Speed and the light from Hubitat | ❌ (use the Bambu apps) | ✅ |
+| **Printer Control** (Pause, Resume, Stop, speed) and the light from Hubitat | ❌ (use the Bambu apps) | ✅ |
 | Printer setting needed | None | Developer Mode (Settings, LAN Only, Developer Mode) |
 
 Bambu's newer firmware only accepts control commands signed by Bambu's own software, unless Developer Mode is on, and Developer Mode keeps the printer off Bambu Cloud. That's why control is a separate mode. If the printer refuses a command, the log says so once, with the fix.
@@ -55,13 +55,17 @@ Bambu's newer firmware only accepts control commands signed by Bambu's own softw
 
 | Option | Default | What it does |
 |---|---|---|
-| Update busy printers every | 5 seconds | X1 and H2 printers send a full report every second while printing; this processes one at most every 5 seconds. Print state changes always go through right away. |
-| Report temperature changes of | 1° | Smaller changes are skipped to keep hub load down |
+| Check printing printers every | 30 seconds | How often Hubitat asks a printing printer for its status. Idle printers are checked every 5 minutes. A finished print or an error shows up within this time. |
+| At temperature, report changes of | 5° | While a heater warms up or cools down only its status changes. Once it's at temperature (or off), smaller changes are skipped. |
+
+**Why sampling:** X1 and H2 printers push an 8 KB status every second while printing, which adds up on a long print. The integration stays connected but only listens for one status per check, so a 30 hour print costs the hub about 3,600 messages instead of over 100,000.
 
 ## Dashboards and rules
 
 - **Tile:** add the Printer as an Attribute tile and pick **tile**. It shows state, file, a progress bar, layers, time left, temperatures and errors.
 - **printState** is Idle, Preparing, Printing, Paused, Finished or Failed, so a rule can announce a finished print or a failure.
+- **nozzleStatus** and **bedStatus** are Heating, At temp, Cooling or Off. "bedStatus becomes At temp" is a clean trigger, with no watching numbers climb.
+- **timeRemaining** and **elapsedTime** are in minutes and move in 5 minute steps.
 - **stage** shows what the printer is doing right now (Heating hotend, Changing filament, Paused: filament runout and so on).
 - **errors** lists HMS codes in Bambu's format (HMS_0700_8000_0002_0001). Search the code on the Bambu Lab Wiki for what it means.
 
@@ -78,6 +82,10 @@ One **Log level** in the app covers the app, every printer and every light and A
 **Access code rejected.** The code changes if you reset the printer's network settings. Check it on the printer, update it in the app and tap **Done**.
 
 **Printer offline.** The printer reconnects on its own, waiting a little longer each try (up to 5 minutes). Check it is on and on the same network, and that nothing blocks port 8883.
+
+**Waiting for printer.** Connected, but the printer hasn't sent a status yet, so its serial isn't known. Some printers stay quiet while idle. Enter the serial in the app (printer **Settings, Device**), or start anything on the printer.
+
+**The serial in the app doesn't match.** The integration uses the serial the printer reports and logs a warning. Clear the serial field in the app.
 
 **Commands do nothing.** In Monitor only they're refused on purpose; use the Bambu apps. In Monitor and control, turn on Developer Mode on the printer.
 

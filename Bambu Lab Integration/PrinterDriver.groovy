@@ -3,17 +3,19 @@
     Copyright 2026 JDThomas. All Rights Reserved
 
     Notes:
-     -Created by the app, one per printer. Local only: MQTT over TLS to ssl://IP:8883, user bblp, password =
-      the printer's LAN access code (asked from the app at connect time, never stored here). The printer's
-      certificate is self-signed, so ignoreSSLIssues (Hubitat 2.2.5+).
-     -Topics: device/<serial>/report (in), device/<serial>/request (out). On connect: pushall + get_version.
-      P1/A1 send only changes after a pushall; X1/H2 send the full status about once a second while printing.
-     -Full reports (over 3000 chars) are processed at most once per update interval unless gcode_state changed,
-      checked by a cheap text match before parsing. Small change reports are always merged. The merged
-      report lives in memory (RUNTIME); a driver save clears it and the next pushall rebuilds it.
+     -Created by the app, one per printer slot (DNI bambu-pN). Local only: MQTT over TLS to ssl://IP:8883, user
+      bblp, password = the printer's LAN access code (asked from the app at connect time, never stored here).
+      The printer's certificate is self-signed, so ignoreSSLIssues (Hubitat 2.2.5+).
+     -Topics: device/<serial>/report (in), device/<serial>/request (out). The serial is learned from the first
+      report on device/+/report (the printer accepts the wildcard; H2D confirmed), so setup needs no serial.
+     -Sampling, not streaming (0.1.1): X1/H2 push an 8 KB status every second while printing. The connection
+      stays up, but the driver only subscribes for one report per cycle (pushall, first full report, unsubscribe):
+      every 30 s (app setting) while active, every 5 min idle. Unsubscribed, the printer sends the hub nothing.
+      3 cycles without a reply reconnect. The merged report lives in memory (RUNTIME); a driver save clears it.
      -Temperatures: classic print.* fields first; H2 series fall back to print.device (extruder.info[n].temp,
-      ctc.info.temp), packed as current = low 16 bits, target = high 16 bits. Unconfirmed until a real H2 log.
-      Reported in the hub's scale, only when they move by the app's temperature step.
+      ctc.info.temp), packed as current = low 16 bits, target = high 16 bits. Heaters report a status (Heating,
+      At temp, Cooling, Off) and their target; the current temperature only at temp or off, in the app's step.
+     -Times move in 5 minute steps; wifiSignal in 5 dB steps; AMS humidity in 5% steps.
      -Mode is per printer, from the app. Monitor only (default): works alongside Bambu Cloud and the Bambu
       apps; chamberLight is read-only and commands are refused locally. Monitor and control: needs Developer
       Mode (LAN Only, no Bambu Cloud); adds the chamber light switch device and Pause, Resume, Stop, Set Speed.
@@ -37,16 +39,20 @@ metadata {
         attribute "stage",            "string"
         attribute "progress",         "number"
         attribute "timeRemaining",    "number"
+        attribute "elapsedTime",      "number"
         attribute "eta",              "string"
         attribute "currentLayer",     "number"
         attribute "totalLayers",      "number"
         attribute "fileName",         "string"
         attribute "nozzleTemp",       "number"
         attribute "nozzleTarget",     "number"
+        attribute "nozzleStatus",     "string"
         attribute "nozzle2Temp",      "number"
         attribute "nozzle2Target",    "number"
+        attribute "nozzle2Status",    "string"
         attribute "bedTemp",          "number"
         attribute "bedTarget",        "number"
+        attribute "bedStatus",        "string"
         attribute "chamberTemp",      "number"
         attribute "speed",            "string"
         attribute "chamberLight",     "string"
@@ -59,10 +65,8 @@ metadata {
         attribute "connectionStatus", "string"
         attribute "tile",             "string"
 
-        command "pause"
-        command "resume"
-        command "stop"
-        command "setSpeed", [[name: "Speed*", type: "ENUM", constraints: ["Silent", "Standard", "Sport", "Ludicrous"]]]
+        command "printerControl", [[name: "Action*", type: "ENUM", description: "Needs Monitor and control mode in the app",
+                                    constraints: ["Pause", "Resume", "Stop", "Speed: Silent", "Speed: Standard", "Speed: Sport", "Speed: Ludicrous"]]]
     }
 
     preferences {
@@ -74,12 +78,16 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.1.0"
+@Field static final String VERSION     = "0.1.1"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
 @Field static final List BACKOFF       = [5, 15, 30, 60, 120, 300]
-@Field static final int FULL_REPORT    = 3000
+@Field static final int IDLE_SECS      = 300
+@Field static final int SAMPLE_WAIT    = 20
+@Field static final BigDecimal AT_TEMP_C = 5      // within this of the target = At temp
+@Field static final BigDecimal OFF_C     = 45     // no target and below this = Off
+@Field static final List ACTIVE        = ["Printing", "Paused", "Preparing", "Starting", "Slicing"]
 @Field static final Map STATES = [IDLE: "Idle", INIT: "Starting", PREPARE: "Preparing", SLICING: "Slicing", RUNNING: "Printing",
                                   PAUSE: "Paused", FINISH: "Finished", FAILED: "Failed", OFFLINE: "Offline"]
 @Field static final List SPEEDS = ["", "Silent", "Standard", "Sport", "Ludicrous"]
@@ -128,11 +136,9 @@ def initialize() {
     Map m = mem()
     m.attempt = 0
     m.reconnectPending = false
-    m.remove("opts")
-    m.remove("cat")
-    m.remove("skip")
+    ["opts", "cat", "skip", "sampling", "missed", "nextSampleAt", "holdUntil"].each { m.remove(it) }
     if (state.connected) state.connected = false
-    if (!state.printer?.serial || !state.printer?.ip) {
+    if (!state.printer?.ip) {
         setStatus("Not Configured")
         logE "not set up. Open the Bambu Lab Integration app and tap Done."
         return
@@ -141,7 +147,15 @@ def initialize() {
     runIn(1, "connect")
 }
 
-def refresh() { pushAll() }
+def refresh() {
+    if (!state.connected) { logN "not connected, refresh skipped"; return }
+    logN "refresh requested"
+    unschedule("startSample")
+    startSample()
+}
+
+// For the app's status line.
+String getSerial() { serial() }
 
 def uninstalled() {
     mem().closingAt = now()
@@ -151,7 +165,10 @@ def uninstalled() {
 
 // From the app on Done: printer identity (no access code) and options.
 void configure(Map printer, Map opts) {
-    if (state.printer != printer) state.printer = printer
+    if (state.printer != printer) {
+        if (printer?.ip != state.printer?.ip) state.remove("serial")   // different printer, learn again
+        state.printer = printer
+    }
     if (state.opts != opts) state.opts = opts
     mem().remove("opts")
     report("mode", opts?.control ? "Monitor and control" : "Monitor only")
@@ -177,9 +194,9 @@ private opt(String k) {
     return o[k]
 }
 
-private String serial() { state.printer?.serial?.toString() }
+private String serial() { (state.serial ?: state.printer?.serial)?.toString() }
 
-// Every minute: reconnect a dropped client; a quiet printer gets a pushall, then a reconnect.
+// Every minute: reconnect a dropped client, and restart sampling if its timer was lost (driver save).
 def everyMinute() {
     Map m = mem()
     boolean up = false
@@ -193,15 +210,7 @@ def everyMinute() {
         if (!m.reconnectPending && now() - ((m.connectAt ?: 0L) as long) > 60000L) scheduleReconnect()
         return
     }
-    if (m.lastRx == null) { m.lastRx = now(); return }   // memory cleared by a driver save
-    long quiet = now() - (m.lastRx as long)
-    if (quiet > 420000L) {
-        markDown("no message for ${(quiet / 60000) as int} min")
-        scheduleReconnect()
-    } else if (quiet > 360000L) {
-        logF "quiet for 6 min, asking for a full status"
-        pushAll()
-    }
+    if (!m.sampling && (m.nextSampleAt == null || now() > (m.nextSampleAt as long) + 60000L)) startSample()
 }
 
 // ============================================================
@@ -213,9 +222,9 @@ def connect() {
     m.reconnectPending = false
     m.connectAt = now()
     Map p = state.printer
-    if (!p?.serial) return
+    if (!p?.ip) return
     String code = null
-    try { code = parent?.getAccessCode(p.serial as String) } catch (e) { logE "could not get the access code from the app: ${e.message}" }
+    try { code = parent?.getAccessCode(device.deviceNetworkId) } catch (e) { logE "could not get the access code from the app: ${e.message}" }
     if (!code) {
         setStatus("No access code")
         logE "no LAN access code. Enter it in the Bambu Lab Integration app."
@@ -228,7 +237,6 @@ def connect() {
     logF "connecting to ${broker}"
     try {
         interfaces.mqtt.connect(broker, "hubitat-bambu-${device.id}", "bblp", code, ignoreSSLIssues: true, tlsVersion: "1.2", cleanSession: true)
-        interfaces.mqtt.subscribe("device/${p.serial}/report")
         onConnected()
     } catch (e) {
         String why = e.message ?: e.toString()
@@ -258,8 +266,81 @@ private void onConnected() {
     } else {
         logN "connected to ${state.printer.ip}"
     }
+    m.sampling = false
+    m.missed = 0
+    m.verPending = true
+    startSample()
+}
+
+// ============================================================
+// Sampling: subscribe, one full report, unsubscribe
+// ============================================================
+
+// Wildcard until the printer itself has told us its serial, so a mistyped serial in the app can't block data.
+private String reportTopic() { state.serial ? "device/${state.serial}/report" : "device/+/report" }
+
+def startSample() {
+    Map m = mem()
+    if (!state.connected || m.sampling) return
+    String t = reportTopic()
+    try { interfaces.mqtt.subscribe(t) } catch (e) {
+        markDown("subscribe failed: ${e.message}")
+        scheduleReconnect()
+        return
+    }
+    m.sampling = true
+    m.subTopic = t
+    m.sampleAt = now()
     pushAll()
-    publish([info: [sequence_id: seq(), command: "get_version"]])
+    if (m.verPending && state.serial) { m.verPending = false; publish([info: [sequence_id: seq(), command: "get_version"]]) }
+    runIn(SAMPLE_WAIT, "sampleTimeout")
+}
+
+private void endSample() {
+    Map m = mem()
+    if (!m.sampling) return
+    m.sampling = false
+    m.missed = 0
+    try { interfaces.mqtt.unsubscribe(m.subTopic as String) } catch (e) { }
+    unschedule("sampleTimeout")
+    if (device.currentValue("connectionStatus") == "Waiting for printer") setStatus("Connected")
+    int secs = nextSecs()
+    m.nextSampleAt = now() + secs * 1000L
+    runIn(secs, "startSample")
+}
+
+def sampleTimeout() {
+    Map m = mem()
+    if (!m.sampling) return
+    m.sampling = false
+    try { interfaces.mqtt.unsubscribe(m.subTopic as String) } catch (e) { }
+    int missed = ((m.missed ?: 0) as int) + 1
+    m.missed = missed
+    if (!state.serial) {
+        // Never heard from it: an idle printer may send nothing until asked, and asking needs the serial.
+        setStatus("Waiting for printer")
+        if (missed == 1) logE "connected, but no status from the printer yet. If it stays this way, enter its serial in the app (printer Settings, Device)."
+    } else if (missed >= 3) {
+        markDown("no reply to 3 status requests")
+        scheduleReconnect()
+        return
+    } else {
+        logF "no status reply (${missed} of 3)"
+    }
+    int secs = state.serial ? 30 : IDLE_SECS
+    m.nextSampleAt = now() + secs * 1000L
+    runIn(secs, "startSample")
+}
+
+private int nextSecs() {
+    (device.currentValue("printState") in ACTIVE) ? Math.max(15, ((opt("interval") ?: 30) as int)) : IDLE_SECS
+}
+
+// After a command: sample now and keep listening a few seconds for the printer's reply.
+private void sampleAfterCommand() {
+    Map m = mem()
+    m.holdUntil = now() + 5000L
+    if (!m.sampling) { unschedule("startSample"); runIn(1, "startSample") }
 }
 
 def mqttClientStatus(String s) {
@@ -305,7 +386,7 @@ private String seq() {
 }
 
 private boolean publish(Map msg) {
-    if (!state.connected) return false
+    if (!state.connected || !serial()) return false
     try {
         interfaces.mqtt.publish("device/${serial()}/request", JsonOutput.toJson(msg))
         return true
@@ -316,7 +397,7 @@ private boolean publish(Map msg) {
 }
 
 private void pushAll() {
-    publish([pushing: [sequence_id: seq(), command: "pushall", version: 1, push_target: 1]])
+    if (serial()) publish([pushing: [sequence_id: seq(), command: "pushall", version: 1, push_target: 1]])
 }
 
 // ============================================================
@@ -325,15 +406,13 @@ private void pushAll() {
 
 def parse(String raw) {
     Map m = mem()
+    if (!m.sampling) return   // stragglers after unsubscribe
     m.lastRx = now()
-    String payload
-    try { payload = interfaces.mqtt.parseMessage(raw)?.payload } catch (e) { logF "unreadable MQTT message"; return }
+    Map pm
+    try { pm = interfaces.mqtt.parseMessage(raw) } catch (e) { logF "unreadable MQTT message"; return }
+    String payload = pm?.payload
     if (!payload) return
-    if (payload.length() > FULL_REPORT && now() - ((m.lastFull ?: 0L) as long) < intervalMs()) {
-        def mt = payload =~ /"gcode_state"\s*:\s*"(\w+)"/
-        String gs = mt.find() ? mt.group(1) : null
-        if (gs == null || gs == m.lastGs) return   // nothing important changed since the last processed report
-    }
+    learnSerial(pm.topic?.toString())
     if (lvl() >= 2) logF "received ${payload.length() > 400 ? payload.take(400) + '...' : payload}"
     def j
     try { j = new JsonSlurper().parseText(payload) } catch (e) { logF "unreadable report: ${payload.take(120)}"; return }
@@ -342,16 +421,30 @@ def parse(String raw) {
         Map pr = j.print as Map
         checkResult(pr, "print")
         if (pr.command == "push_status" || pr.containsKey("gcode_state") || pr.containsKey("mc_percent")) {
-            if (payload.length() > FULL_REPORT) m.lastFull = now()
             merge(m.rep as Map, pr)
             render()
+            if (pr.containsKey("gcode_state") && now() >= ((m.holdUntil ?: 0L) as long)) endSample()
         }
     }
     if (j.system instanceof Map) checkResult(j.system as Map, "system")
     if (j.info instanceof Map && j.info.command == "get_version") readVersion(j.info as Map)
 }
 
-private long intervalMs() { (((opt("interval") ?: 5) as int) * 1000L) }
+private void learnSerial(String topic) {
+    def mt = (topic ?: "") =~ /^device\/([^\/]+)\/report$/
+    if (!mt.find()) return
+    String s = mt.group(1)
+    if (s == state.serial) return
+    String typed = state.printer?.serial?.toString()
+    state.serial = s
+    if (typed && typed != s) logE "the serial in the app (${typed}) doesn't match the printer (${s}). Using the printer's. You can clear the serial in the app."
+    else logN "printer serial is ${s}"
+    Map m = mem()
+    String t = "device/${s}/report"
+    if (m.sampling && m.subTopic != t) {
+        try { interfaces.mqtt.unsubscribe(m.subTopic as String); interfaces.mqtt.subscribe(t); m.subTopic = t } catch (e) { }
+    }
+}
 
 private void merge(Map into, Map from) {
     from.each { k, v ->
@@ -399,21 +492,28 @@ private void render() {
         mem().lastGs = gs
     }
     String ps = device.currentValue("printState") ?: ""
-    boolean active = ps in ["Printing", "Paused", "Preparing"]
+    boolean active = ps in ACTIVE
     Integer stg = toInt(r.stg_cur)
     report("stage", active ? (stg && stg != 255 && stg > 0 ? (STAGES[stg] ?: "Stage ${stg}") : (ps == "Printing" ? "Printing" : ps)) : ps)
     if (r.containsKey("mc_percent")) report("progress", toInt(r.mc_percent) ?: 0, "%")
     if (r.containsKey("mc_remaining_time")) {
-        int mins = toInt(r.mc_remaining_time) ?: 0
-        report("timeRemaining", mins, "min")
-        report("eta", active && mins > 0 ? new Date(now() + mins * 60000L).format("h:mm a", location.timeZone) : "")
+        int mins = active ? (toInt(r.mc_remaining_time) ?: 0) : 0
+        if (report("timeRemaining", mins, "min", 5) || (!active && device.currentValue("eta")))
+            report("eta", active && mins > 0 ? new Date(now() + mins * 60000L).format("h:mm a", location.timeZone) : "")
     }
+    Long start = toLong(r.gcode_start_time)
+    if (active && start && start > 0) report("elapsedTime", Math.max(0, ((now() / 1000L - start) / 60) as int), "min", 5)
+    else if (ps == "Idle") report("elapsedTime", 0, "min")
     if (r.containsKey("layer_num")) report("currentLayer", toInt(r.layer_num) ?: 0)
     if (r.containsKey("total_layer_num")) report("totalLayers", toInt(r.total_layer_num) ?: 0)
     String fn = (r.subtask_name ?: r.gcode_file ?: "").toString()
     if (fn || r.containsKey("subtask_name")) report("fileName", fn)
     if (r.containsKey("spd_lvl")) { Integer s = toInt(r.spd_lvl); report("speed", s in 1..4 ? SPEEDS[s] : "Standard") }
-    if (r.wifi_signal) report("wifiSignal", r.wifi_signal.toString())
+    if (r.wifi_signal) {
+        Integer db = toInt(r.wifi_signal.toString().replaceAll(/[^\-0-9]/, ""))
+        Integer last = mem().wifiDb as Integer
+        if (db == null || last == null || Math.abs(db - last) >= 5) { mem().wifiDb = db; report("wifiSignal", r.wifi_signal.toString()) }
+    }
     temps(r)
     errors(r)
     ams(r)
@@ -422,25 +522,38 @@ private void render() {
 }
 
 private void temps(Map r) {
-    BigDecimal step = (opt("tempStep") ?: 1) as BigDecimal
+    BigDecimal step = (opt("tempStep") ?: 5) as BigDecimal
     List ext = (r.device instanceof Map && r.device.extruder instanceof Map && r.device.extruder.info instanceof List) ? r.device.extruder.info as List : []
     def n1 = r.nozzle_temper, n1t = r.nozzle_target_temper
     if (n1 == null && ext) { Map e = ext.find { toInt(it.id) == 0 } as Map ?: ext[0] as Map; n1 = packedCur(e?.temp); n1t = packedTarget(e?.temp) }
-    if (n1 != null) { temp("nozzleTemp", n1, step); temp("temperature", n1, step) }
-    if (n1t != null) temp("nozzleTarget", n1t, 0)
+    heater("nozzle", n1, n1t, step, true)
     if (ext.size() > 1) {
         Map e2 = ext.find { toInt(it.id) == 1 } as Map
-        if (e2) { temp("nozzle2Temp", packedCur(e2.temp), step); temp("nozzle2Target", packedTarget(e2.temp), 0) }
+        if (e2) heater("nozzle2", packedCur(e2.temp), packedTarget(e2.temp), step, false)
     }
     def b = r.bed_temper, bt = r.bed_target_temper
     if (b == null && r.device instanceof Map && r.device.bed instanceof Map && r.device.bed.info instanceof Map) {
         b = packedCur(r.device.bed.info.temp); bt = packedTarget(r.device.bed.info.temp)
     }
-    if (b != null) temp("bedTemp", b, step)
-    if (bt != null) temp("bedTarget", bt, 0)
+    heater("bed", b, bt, step, false)
     def c = r.chamber_temper
     if (c == null && r.device instanceof Map && r.device.ctc instanceof Map && r.device.ctc.info instanceof Map) c = packedCur(r.device.ctc.info.temp)
     if (c != null) temp("chamberTemp", c, step)
+}
+
+// Status always; target when it changes; current temperature only at temp or off, in the app's step.
+private void heater(String n, cur, target, BigDecimal step, boolean main) {
+    BigDecimal c = num(cur), t = num(target)
+    if (c == null) return
+    t = t ?: 0
+    String st = t > 0 ? (c < t - AT_TEMP_C ? "Heating" : c > t + AT_TEMP_C ? "Cooling" : "At temp") : (c > OFF_C ? "Cooling" : "Off")
+    boolean changed = device.currentValue("${n}Status") != st
+    report("${n}Status", st)
+    temp("${n}Target", t, 0)
+    if (st in ["At temp", "Off"]) {
+        temp("${n}Temp", c, changed ? 0 : step)
+        if (main) temp("temperature", c, changed ? 0 : step)
+    }
 }
 
 // H2 series: current in the low 16 bits, target in the high 16 bits.
@@ -500,13 +613,13 @@ private void ams(Map r) {
         if (!child) return
         List ev = []
         BigDecimal hum = num(u.humidity_raw)
-        if (hum != null) ev << [name: "humidity", value: hum.setScale(0, java.math.RoundingMode.HALF_UP), unit: "%"]
+        if (hum != null) ev << [name: "humidity", value: hum.setScale(0, java.math.RoundingMode.HALF_UP), unit: "%", delta: 5]
         if (u.humidity != null) ev << [name: "dryness", value: "${u.humidity}/5"]
         BigDecimal t = num(u.temp)
         if (t != null) {
             String scale = location.temperatureScale ?: "C"
             if (scale == "F") t = t * 9 / 5 + 32
-            ev << [name: "temperature", value: t.setScale(1, java.math.RoundingMode.HALF_UP), unit: "°${scale}", delta: (opt("tempStep") ?: 1)]
+            ev << [name: "temperature", value: t.setScale(1, java.math.RoundingMode.HALF_UP), unit: "°${scale}", delta: (opt("tempStep") ?: 5)]
         }
         (u.tray instanceof List ? u.tray : []).each { tr ->
             Integer ti = toInt(tr.id)
@@ -537,18 +650,30 @@ private void light(Map r) {
 
 void componentOn(cd)  { setLight(true) }
 void componentOff(cd) { setLight(false) }
-void componentRefresh(cd) { pushAll() }
+void componentRefresh(cd) { refresh() }
 
 private void setLight(boolean on) {
     if (!opt("control")) { logE "monitor only: control the light from the Bambu apps, or set this printer to Monitor and control in the app."; return }
-    publish([system: [sequence_id: seq(), command: "ledctrl", led_node: "chamber_light", led_mode: on ? "on" : "off",
-                      led_on_time: 500, led_off_time: 500, loop_times: 0, interval_time: 0]])
+    if (!publish([system: [sequence_id: seq(), command: "ledctrl", led_node: "chamber_light", led_mode: on ? "on" : "off",
+                      led_on_time: 500, led_off_time: 500, loop_times: 0, interval_time: 0]])) { logE "not connected, light command not sent"; return }
     logN "chamber light ${on ? 'on' : 'off'}"
+    sampleAfterCommand()
 }
 
 // ============================================================
 // Print control (Monitor and control mode only)
 // ============================================================
+
+def printerControl(String action) {
+    switch (action) {
+        case "Pause": pause(); break
+        case "Resume": resume(); break
+        case "Stop": stop(); break
+        default:
+            if (action?.startsWith("Speed: ")) setSpeed(action - "Speed: ")
+            else logE "unknown Printer Control action ${action}"
+    }
+}
 
 def pause()  { printCommand("pause", "") }
 def resume() { printCommand("resume", "") }
@@ -566,7 +691,8 @@ private void printCommand(String cmd, String param) {
         return
     }
     if (!state.connected) { logE "not connected to the printer, ${cmd} not sent"; return }
-    if (publish([print: [sequence_id: seq(), command: cmd, param: param]])) logN "${cmd}${param ? ' ' + param : ''} sent"
+    if (publish([print: [sequence_id: seq(), command: cmd, param: param]])) { logN "${cmd}${param ? ' ' + param : ''} sent"; sampleAfterCommand() }
+    else logE "${cmd} not sent: the printer's serial isn't known yet"
 }
 
 // ============================================================
@@ -577,7 +703,7 @@ private void tile() {
     Map m = mem()
     String ps = device.currentValue("printState") ?: "Unknown"
     int pct = (device.currentValue("progress") ?: 0) as int
-    boolean active = ps in ["Printing", "Paused", "Preparing"]
+    boolean active = ps in ACTIVE
     String u = location.temperatureScale ?: "C"
     def t = { String a -> def v = device.currentValue(a); v == null ? "-" : "${Math.round(v as double)}" }
     String name = esc(device.displayName).take(40)
@@ -687,11 +813,12 @@ void removeAllChildren() {
 // Events and helpers
 // ============================================================
 
-private void report(String name, value, String unit = null, delta = 0) {
-    if (!moved(device.currentValue(name), value, delta)) return
+private boolean report(String name, value, String unit = null, delta = 0) {
+    if (!moved(device.currentValue(name), value, delta)) return false
     Map e = [name: name, value: value]
     if (unit) e.unit = unit
     sendEvent(e)
+    return true
 }
 
 private boolean moved(cur, val, delta) {

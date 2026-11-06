@@ -3,13 +3,14 @@
     Copyright 2026 JDThomas. All Rights Reserved
 
     Notes:
-     -Local only. Each printer is a slot (name, IP, serial, LAN access code); Done creates one Printer device per
-      complete slot and removes devices for printers taken out. Devices are keyed by serial.
+     -Local only. Each printer is a slot (name, IP, LAN access code, optional serial); Done creates one Printer
+      device per slot with an IP and code (DNI bambu-pN) and removes devices for slots taken out. The Printer
+      learns its serial from the printer's own reports (0.1.1), so the serial field is only a fallback.
      -Access codes stay in this app's settings and are never logged or stored on a device. getAccessCode() hands
       one to its Printer at connect time. Plain text input on purpose: a password field makes browsers autofill
-      the user's own login into the serial field. Serials must be 8 to 20 letters and digits.
+      the user's own login into the next field.
      -Mode is per printer (pN_mode): Monitor only (default, works with Bambu Cloud) or Monitor and control
-      (Developer Mode). Shared options: update interval for busy printers, temperature step.
+      (Developer Mode). Shared options: how often printing printers are checked, temperature step.
      -Equipment page as in IntelliCenter, one section per printer; state.pushedExcluded is per printer.
      -Log level is the only logging control. App -> Printer -> light/AMS; every line comes back to childLog().
       Full turns off after 30 minutes.
@@ -33,11 +34,11 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.1.0"
+@Field static final String APP_VERSION   = "0.1.1"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
-@Field static final Map INTERVALS        = ["2": "2 seconds", "5": "5 seconds", "10": "10 seconds", "30": "30 seconds"]
+@Field static final Map INTERVALS        = ["15": "15 seconds", "30": "30 seconds", "60": "1 minute", "120": "2 minutes"]
 @Field static final Map TEMP_STEPS       = ["0.5": "0.5°", "1": "1°", "2": "2°", "5": "5°"]
 @Field static final Map MODES            = [monitor: "Monitor only (works with Bambu Cloud and the Bambu apps)",
                                             control: "Monitor and control (needs Developer Mode, no Bambu Cloud)"]
@@ -47,19 +48,19 @@ preferences {
     page(name: "equipmentPage")
 }
 
-private String printerDni(String serial) { "bambu-${serial}" }
+private String printerDni(int slot) { "bambu-p${slot}" }
 private List printerDevices() { getChildDevices().findAll { it.deviceNetworkId.startsWith("bambu-") } }
 private int slotCount() { ((printerCount ?: "1") as String).toInteger() }
 private boolean validSerial(String s) { s ==~ /[A-Z0-9]{8,20}/ }
 
-// Complete slots only: serial -> [serial, name, ip]
+// Slots with an IP and access code: DNI -> [slot, name, ip, serial (optional), control]
 private Map configuredPrinters() {
     Map out = [:]
     (1..slotCount()).each { i ->
         String s = settings["p${i}_serial"]?.toString()?.trim()?.toUpperCase()
         String ip = settings["p${i}_ip"]?.toString()?.trim()
-        if (s && validSerial(s) && ip && settings["p${i}_code"]) out[s] = [serial: s, name: (settings["p${i}_name"]?.toString()?.trim() ?: "Bambu ${s.takeRight(4)}"), ip: ip,
-                                                         control: settings["p${i}_mode"] == "control"]
+        if (ip && settings["p${i}_code"]) out[printerDni(i)] = [slot: i, name: (settings["p${i}_name"]?.toString()?.trim() ?: "Bambu Printer ${i}"), ip: ip,
+                                                serial: (s && validSerial(s)) ? s : null, control: settings["p${i}_mode"] == "control"]
     }
     return out
 }
@@ -73,7 +74,7 @@ def mainPage() {
     if (state.pushedLogLevel != currentLogLevel()) pushLogLevel()
     Map banner = bannerState()
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
-        section {
+        section(sectionClass: "app-main-overview") {
             paragraph rawHtml: true, statusBannerHtml(banner.ok, banner.title, banner.summary)
         }
         section(sectionClass: "app-ui-links app-main-content") {
@@ -82,18 +83,21 @@ def mainPage() {
                 submitOnChange: true, width: 4
             (1..slotCount()).each { i ->
                 String s = settings["p${i}_serial"]?.toString()?.trim()?.toUpperCase()
-                def dev = s ? getChildDevice(printerDni(s)) : null
+                def dev = getChildDevice(printerDni(i))
+                String learned = null
+                try { learned = dev?.getSerial() } catch (e) { }
                 String status = dev ? " <span class='text-color-secondary' style='font-weight:400;font-size:14px;'>${esc(dev.currentValue('connectionStatus') ?: '')}" +
+                    (learned ? " &middot; serial ${esc(learned)}" : "") +
                     " &middot; <a href='/device/edit/${dev.id}' target='_blank' class='hub-text-link no-underline'>device " +
                     "<i class='fa-regular fa-external-link' style='font-size:0.8em'></i></a></span>" : ""
                 paragraph rawHtml: true, "<div class='font-semibold mt-2'>Printer ${i}${status}</div>"
                 input "p${i}_name", "text", title: "Name", required: false, width: 6
                 input "p${i}_ip", "text", title: "IP address", description: "e.g. 192.168.1.60", required: false, width: 6
-                input "p${i}_serial", "text", title: "Serial number", required: false, width: 6
                 input "p${i}_code", "text", title: "LAN access code", description: "8 characters, shown on the printer", required: false, width: 6
+                input "p${i}_serial", "text", title: "Serial number (optional)", description: "Found automatically", required: false, width: 6
                 if (s && !validSerial(s)) {
-                    paragraph rawHtml: true, warningMessageHtml("That doesn't look like a serial number (letters and numbers only, like 00M09A123456789). " +
-                        "If your browser filled in your email here, clear it and type the serial from the printer.")
+                    paragraph rawHtml: true, warningMessageHtml("That doesn't look like a serial number (letters and numbers only). " +
+                        "If your browser filled in your email here, clear it. The serial is found automatically, so you can leave it blank.")
                 }
                 input "p${i}_mode", "enum", title: "Mode", options: MODES, defaultValue: "monitor", submitOnChange: true, width: 12
                 if (settings["p${i}_mode"] == "control") {
@@ -102,8 +106,9 @@ def mainPage() {
                         "<b>Stop ends the print for good</b>, so keep it out of rules and voice assistants you don't trust.")
                 }
             }
-            paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;'>On the printer: <b>Settings, WLAN</b> (or <b>LAN Only</b>) shows the IP " +
-                "address and access code; <b>Settings, Device</b> shows the serial. A DHCP reservation keeps the IP from changing.</div>"
+            paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;'>On the printer, <b>Settings, Network</b> (<b>WLAN</b> on some models) " +
+                "shows the IP address and access code. Just read them there: Monitor only doesn't need LAN Only or Developer Mode, and the Bambu Handy app keeps working. " +
+                "The serial is found automatically. A DHCP reservation in your router keeps the IP from changing.</div>"
             if (printerDevices()) {
                 Map eq = equipmentCounts()
                 href name: "toEquipment", title: "<i class='fa-solid fa-cube mr-2' aria-hidden='true'></i>Equipment",
@@ -112,10 +117,10 @@ def mainPage() {
                     page: "equipmentPage", width: 12, style: "margin:8px;"
             }
             paragraph rawHtml: true, columnHeader("Options")
-            input "updateInterval", "enum", title: "Update busy printers every", options: INTERVALS, defaultValue: "5", width: 6,
-                description: "X1 and H2 printers report every second while printing. State changes always go through right away."
-            input "tempStep", "enum", title: "Report temperature changes of", options: TEMP_STEPS, defaultValue: "1", width: 6,
-                description: "Smaller changes are skipped to keep hub load down"
+            input "updateInterval", "enum", title: "Check printing printers every", options: INTERVALS, defaultValue: "30", width: 6,
+                description: "Idle printers are checked every 5 minutes. A finished print or an error shows up within this time."
+            input "tempStep", "enum", title: "At temperature, report changes of", options: TEMP_STEPS, defaultValue: "5", width: 6,
+                description: "While heating or cooling only the status changes (Heating, At temp, Cooling)"
         }
         section(sectionClass: "app-ui-links app-main-settings") {
             paragraph rawHtml: true, columnHeader("Quick Settings")
@@ -198,10 +203,10 @@ private Map equipmentCounts() {
 
 private Map bannerState() {
     Map cfg = configuredPrinters()
-    if (!cfg) return [ok: false, title: "Setup required", summary: "Enter a printer's IP address, serial number and LAN access code, then tap <b>Done</b>."]
+    if (!cfg) return [ok: false, title: "Setup required", summary: "Enter a printer's IP address and LAN access code, then tap <b>Done</b>."]
     List devs = printerDevices()
     if (!devs) return [ok: false, title: "Not connected yet", summary: "Tap <b>Done</b> to connect."]
-    List bad = devs.findAll { it.currentValue("connectionStatus") != "Connected" }
+    List bad = devs.findAll { !(it.currentValue("connectionStatus") in ["Connected", "Waiting for printer"]) }
     String counts = countText(devs.size(), "printer")
     if (!bad) {
         List printing = devs.findAll { it.currentValue("printState") == "Printing" }
@@ -226,21 +231,21 @@ def initialize() {
     unschedule()
     state.remove("fullLogArmed")   // unschedule() cleared its timer
     armLogRevert()
+    migrate()
     Map cfg = configuredPrinters()
-    Map shared = [interval: ((updateInterval ?: "5") as String).toInteger(), tempStep: ((tempStep ?: "1") as String).toBigDecimal()]
+    Map shared = [interval: ((updateInterval ?: "30") as String).toInteger(), tempStep: ((tempStep ?: "5") as String).toBigDecimal()]
     printerDevices().each { dev ->
-        String s = dev.deviceNetworkId - "bambu-"
-        if (!cfg.containsKey(s)) {
+        if (!cfg.containsKey(dev.deviceNetworkId)) {
             String label = dev.displayName
             try { dev.removeAllChildren(); deleteChildDevice(dev.deviceNetworkId); logInfo "removed ${label} (no longer in the app)" }
             catch (e) { logErr "could not remove ${label}: ${e.message}" }
         }
     }
-    cfg.each { s, p ->
-        def dev = getChildDevice(printerDni(s as String))
+    cfg.each { dni, p ->
+        def dev = getChildDevice(dni as String)
         if (!dev) {
             try {
-                dev = addChildDevice("jdthomas24", "Bambu Lab Printer", printerDni(s as String), [label: p.name, isComponent: false])
+                dev = addChildDevice("jdthomas24", "Bambu Lab Printer", dni as String, [label: p.name, isComponent: false])
                 logInfo "created ${dev.displayName}"
             } catch (e) {
                 String why = "${e}".contains("UnknownDeviceType") ? "the Bambu Lab Printer driver isn't installed (update with HPM)" : e.message
@@ -248,7 +253,7 @@ def initialize() {
                 return
             }
         }
-        dev.configure([serial: p.serial, name: p.name, ip: p.ip], shared + [control: p.control])
+        dev.configure([slot: p.slot, serial: p.serial, name: p.name, ip: p.ip], shared + [control: p.control])
         dev.setLogLevel(currentLogLevel())
     }
     state.pushedLogLevel = currentLogLevel()
@@ -266,10 +271,19 @@ def uninstalled() {
     }
 }
 
-// For the Printers, at connect time.
-String getAccessCode(String serial) {
-    Integer i = (1..slotCount()).find { settings["p${it}_serial"]?.toString()?.trim()?.toUpperCase() == serial }
-    return i ? settings["p${i}_code"]?.toString()?.trim() : null
+// For the Printers, at connect time. Takes the Printer's DNI (bambu-pN).
+String getAccessCode(String dni) {
+    def mt = (dni ?: "") =~ /^bambu-p(\d+)$/
+    Integer i = mt.find() ? mt.group(1).toInteger() : null
+    return (i && i <= slotCount()) ? settings["p${i}_code"]?.toString()?.trim() : null
+}
+
+// 0.1.1: sampling replaced 2 to 10 second processing, and temperatures report 5° steps at temperature.
+private void migrate() {
+    if (state.migrated == "0.1.1") return
+    if (!INTERVALS.containsKey(updateInterval?.toString())) app.updateSetting("updateInterval", [value: "30", type: "enum"])
+    if (tempStep == null || tempStep.toString() in ["0.5", "1"]) app.updateSetting("tempStep", [value: "5", type: "enum"])
+    state.migrated = "0.1.1"
 }
 
 // ============================================================================
@@ -334,6 +348,12 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
     """
 <style>
   ${appPageSpacingCss()}
+  #formApp .form > div:has(> h3:empty):has(+ .app-main-overview) { display: none; }
+  #formApp .form > .app-main-overview { margin-bottom: 0.429rem !important; }
+  .app-main-overview > .mdl-grid { padding-top: 0.286rem !important; padding-bottom: 0.286rem !important; }
+  .app-main-overview .mdl-cell { margin-top: 0.286rem !important; margin-bottom: 0.286rem !important; min-width: 0; }
+  .app-main-summary { overflow-wrap: anywhere; }
+  .app-main-content > .mdl-grid:first-child > .mdl-cell:first-child { margin-top: 0.286rem !important; }
   .app-main-content { float: left; width: calc(62% - 8px); }
   .app-main-settings { float: right; width: 38%; border-left: 1px solid var(--surface-border, rgba(0,0,0,.12)); padding-left: 8px; box-sizing: border-box; }
   .app-main-content > .mdl-grid, .app-main-settings > .mdl-grid { padding: 4px 0 !important; }
@@ -341,10 +361,13 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
   @media (max-width: 1000px) {
     .app-main-content, .app-main-settings { float: none; width: 100%; border-left: 0; padding-left: 0; }
   }
+  @media (max-width: 37.5rem) {
+    .app-main-summary { flex-direction: column; align-items: flex-start !important; }
+  }
 </style>
-<div class='flex align-items-center justify-content-between gap-3 ${tone} border-1 border-round p-3'>
+<div class='app-main-summary flex align-items-center justify-content-between gap-3 ${tone} border-round p-3'>
   <div class='flex align-items-center gap-3 min-w-0'>
-    <div class='flex-shrink-0'><i class='fa-solid fa-cube text-2xl' aria-hidden='true'></i></div>
+    <div class='flex-shrink-0'><i class='fa-solid fa-cube text-xl' aria-hidden='true'></i></div>
     <div class='min-w-0'>
       <div class='app-heading font-semibold'><i class='${icon} mr-2' aria-hidden='true'></i>${title}</div>
       <div class='text-color-secondary mt-1' style='font-size:14px;'>${summary}</div>

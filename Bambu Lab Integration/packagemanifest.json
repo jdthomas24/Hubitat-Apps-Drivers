@@ -1,11 +1,11 @@
 {
     "packageName": "Bambu Lab Integration",
-    "releaseNotes": "v0.1.0 (beta): Local monitoring of Bambu Lab printers over the LAN: print state, stage, progress, time left, layers, temperatures (including H2 series), speed, chamber light, HMS errors and a dashboard tile, plus one device per AMS unit with humidity, temperature and filament per tray. Each printer is Monitor only (works with Bambu Cloud and the Bambu apps) or Monitor and control (Developer Mode: pause, resume, stop, speed and a light switch). One Log level, dark mode.",
+    "releaseNotes": "v0.1.1 (beta): Tested on an H2D. Setup needs only the IP and access code: the serial is read from the printer. Sampling instead of streaming: printing printers are checked every 30 seconds and idle ones every 5 minutes, instead of a full status every second. Heater status (Heating, At temp, Cooling, Off) with targets, temperatures only at temperature in 5 degree steps, elapsed time, times in 5 minute steps. Pause, Resume, Stop and speed are one Printer Control command. Printers are recreated once on update (now keyed by slot), so recheck rules that use them. Main page banner matches Hubitat's built-in apps (gopher.ny).",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Bambu%20Lab%20Integration",
     "author": "jdthomas24",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "minimumHEVersion": "2.3.0",
-    "dateReleased": "2026-10-19",
+    "dateReleased": "2026-11-06",
     "category": "Integrations",
     "tags": "3D Printing",
     "apps": [
