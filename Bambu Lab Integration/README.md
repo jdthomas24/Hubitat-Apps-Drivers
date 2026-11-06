@@ -1,6 +1,6 @@
 # Bambu Lab Integration for Hubitat
 
-> **Status: v0.1.2 beta, tested on an H2D.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
+> **Status: v0.1.3 beta, tested on an H2D.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
 
 ## What you get
 
@@ -33,7 +33,7 @@ You choose which light and AMS devices Hubitat creates on the app's **Equipment*
 3. Tap **Done**. Each printer connects and adds its light and AMS devices within a few seconds.
 4. Open the app again and tap **Equipment** to turn off anything you don't want in Hubitat.
 
-**Remove printer** under a printer (tap it twice) deletes that printer and its devices. The app's **Tips & Troubleshooting** page covers choosing a mode, setup, rules and common problems.
+Once connected, each printer shows as a card with its status, mode and AMS units (tray colors). **Edit Printer** opens its settings, **Refresh** asks for a status now, and **Remove Printer** (tap twice) deletes that printer and its devices. The app's **Tips & Troubleshooting** page covers choosing a mode, setup, rules and common problems.
 
 A DHCP reservation for the printer keeps its IP address from changing.
 
@@ -54,13 +54,13 @@ Bambu's newer firmware only accepts control commands signed by Bambu's own softw
 
 > **Stop ends the print for good.** It's off by default, even in control mode. Turn on **Allow Stop** for a printer only if you trust every rule, dashboard and voice assistant that can reach it.
 
-## Advanced options
+## Printer preferences
 
-These are on the app's **Advanced** page and apply to every printer.
+These are on each printer device's **Preferences** tab.
 
 | Option | Default | What it does |
 |---|---|---|
-| Check printing printers every | 30 seconds | How often Hubitat asks a printing printer for its status. Idle printers are checked every 5 minutes. A finished print or an error shows up within this time. |
+| Check while printing every | 30 seconds | How often Hubitat asks a printing printer for its status. Idle printers are checked every 5 minutes. A finished print or an error shows up within this time. |
 | At temperature, report changes of | 5° | While a heater warms up or cools down only its status changes. Once it's at temperature (or off), smaller changes are skipped. |
 | Temperature units | Celsius | Matches the printer screen, slicers and filament specs. Choose **Hub's setting** for °F. |
 

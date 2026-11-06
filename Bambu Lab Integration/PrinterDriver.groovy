@@ -17,6 +17,8 @@
       status (Heating to <target>, At temp, Cooling, Off) and the current temperature only at temp or off, in the
       app's step. Celsius by default to match the printer; the app can switch to the hub's scale.
      -Times move in 5 minute steps; wifiSignal in 5 dB steps; AMS humidity in 5% steps.
+     -Preferences (0.1.3): check interval, temperature step and units. adoptOptions() copies the app's old
+      shared values in once on update.
      -Mode is per printer, from the app. Monitor only (default): works alongside Bambu Cloud and the Bambu
       apps; chamberLight is read-only and commands are refused locally. Monitor and control: needs Developer
       Mode (LAN Only, no Bambu Cloud); adds the chamber light switch device and Printer Control. Stop only
@@ -68,6 +70,11 @@ metadata {
     }
 
     preferences {
+        input name: "tempUnit", type: "enum", title: "Temperature units", options: ["C": "Celsius (matches the printer)", "hub": "Hub's setting"], defaultValue: "C"
+        input name: "tempStep", type: "enum", title: "At temperature, report changes of", options: ["0.5": "0.5°", "1": "1°", "2": "2°", "5": "5°"], defaultValue: "5",
+            description: "While heating or cooling only the status changes"
+        input name: "checkEvery", type: "enum", title: "Check while printing every", options: ["15": "15 seconds", "30": "30 seconds", "60": "1 minute", "120": "2 minutes"],
+            defaultValue: "30", description: "Idle printers are checked every 5 minutes"
         input name: "helpInfo", type: "hidden", title: fmtHelpInfo()
     }
 }
@@ -76,7 +83,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.1.2"
+@Field static final String VERSION     = "0.1.3"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -127,7 +134,22 @@ private Map mem() {
 
 def installed() { }
 
-def updated() { initialize() }
+// Preferences saved: new options take effect on the next check. Reconnect only if not connected.
+def updated() {
+    mem().remove("opts")
+    if (!state.connected) initialize()
+    else render()
+}
+
+// From the app once, on update to 0.1.3: its old shared options become this printer's preferences.
+void adoptOptions(Map o) {
+    if (state.optsAdopted) return
+    if (o?.tempUnit) device.updateSetting("tempUnit", [value: o.tempUnit, type: "enum"])
+    if (o?.tempStep) device.updateSetting("tempStep", [value: o.tempStep, type: "enum"])
+    if (o?.checkEvery) device.updateSetting("checkEvery", [value: o.checkEvery, type: "enum"])
+    state.optsAdopted = true
+    mem().remove("opts")
+}
 
 def initialize() {
     unschedule()
@@ -186,6 +208,9 @@ private void dropLight() {
 }
 
 private opt(String k) {
+    if (k == "interval") return ((settings?.checkEvery ?: "30") as String).toInteger()
+    if (k == "tempStep") return ((settings?.tempStep ?: "5") as String).toBigDecimal()
+    if (k == "unit") return settings?.tempUnit ?: "C"
     Map m = mem()
     Map o = m.opts as Map
     if (o == null) { o = (state.opts ?: [:]) as Map; m.opts = o }

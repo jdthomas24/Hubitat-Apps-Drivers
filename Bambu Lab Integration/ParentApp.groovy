@@ -5,14 +5,15 @@
     Notes:
      -Local only. Each printer is a slot (name, IP, LAN access code, optional serial), added and removed with
       buttons; slot numbers in state.slots never get reused. Done creates one Printer device per slot with an IP
-      and code (DNI bambu-pN); Remove deletes the slot's device right away. The Printer
+      and code (DNI bambu-pN); Remove deletes the slot's device right away. A printer with a device shows as a
+      summary card (as in Sofabaton); Edit Printer opens its fields, Done editing applies them. The Printer
       learns its serial from the printer's own reports (0.1.1), so the serial field is only a fallback.
      -Access codes stay in this app's settings and are never logged or stored on a device. getAccessCode() hands
       one to its Printer at connect time. Plain text input on purpose: a password field makes browsers autofill
       the user's own login into the next field.
      -Mode is per printer (pN_mode): Monitor only (default, works with Bambu Cloud) or Monitor and control
-      (Developer Mode). Control adds per-printer options (pN_allowStop, off by default). Shared options live on
-      the Advanced page: how often printing printers are checked, temperature step and units.
+      (Developer Mode). Control adds per-printer options (pN_allowStop, off by default). Check interval,
+      temperature step and units are printer device preferences (0.1.3); older app values are copied over once.
      -Equipment page as in IntelliCenter, one section per printer; state.pushedExcluded is per printer.
      -Log level is the only logging control. App -> Printer -> light/AMS; every line comes back to childLog().
       Full turns off after 30 minutes.
@@ -36,20 +37,16 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.1.2"
+@Field static final String APP_VERSION   = "0.1.3"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
-@Field static final Map INTERVALS        = ["15": "15 seconds", "30": "30 seconds", "60": "1 minute", "120": "2 minutes"]
-@Field static final Map TEMP_STEPS       = ["0.5": "0.5°", "1": "1°", "2": "2°", "5": "5°"]
-@Field static final Map TEMP_UNITS       = ["C": "Celsius (matches the printer)", "hub": "Hub's setting"]
 @Field static final Map MODES            = [monitor: "Monitor only (works with Bambu Cloud and the Bambu apps)",
                                             control: "Monitor and control (needs Developer Mode, no Bambu Cloud)"]
 
 preferences {
     page(name: "mainPage")
     page(name: "equipmentPage")
-    page(name: "advancedPage")
     page(name: "tipsPage")
 }
 
@@ -92,7 +89,7 @@ def mainPage() {
             List sl = slots()
             if (!sl) paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;'>No printers yet. Tap <b>Add printer</b>.</div>"
             sl.eachWithIndex { int i, int n -> printerCard(i, n + 1) }
-            input "addPrinter", "button", title: "Add printer", width: 4
+            input "addPrinter", "button", title: "Add printer", width: 4, inputClass: "app-ui-button"
             if (printerDevices().any { it.currentValue("connectionStatus") != "Connected" } || !printerDevices()) {
                 paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;'>On the printer, <b>Settings, Network</b> (<b>WLAN</b> on some models) " +
                     "shows the IP address and access code. Just read them there: Monitor only doesn't need LAN Only or Developer Mode. " +
@@ -105,10 +102,6 @@ def mainPage() {
                         "Appears once a printer connects and reports its light and AMS.",
                     page: "equipmentPage", width: 12, style: "margin:8px;"
             }
-            href name: "toAdvanced", title: "<i class='fa-solid fa-sliders mr-2' aria-hidden='true'></i>Advanced",
-                description: "Check printing printers every ${INTERVALS[(updateInterval ?: '30').toString()] ?: '30 seconds'} &middot; " +
-                    "${TEMP_STEPS[(tempStep ?: '5').toString()] ?: '5°'} steps &middot; ${tempUnit == 'hub' ? "hub's units" : 'Celsius'}",
-                page: "advancedPage", width: 12, style: "margin:8px;"
         }
         section(sectionClass: "app-ui-links app-main-settings") {
             paragraph rawHtml: true, columnHeader("Quick Settings")
@@ -129,16 +122,20 @@ def mainPage() {
 }
 
 private void printerCard(int i, int pos) {
-    String s = settings["p${i}_serial"]?.toString()?.trim()?.toUpperCase()
     def dev = getChildDevice(printerDni(i))
-    String learned = null
-    try { learned = dev?.getSerial() } catch (e) { }
+    boolean editing = state.editing == i || !dev
+    if (!editing) {
+        paragraph rawHtml: true, printerCardHtml(i, dev)
+        input "editP_${i}", "button", title: "Edit Printer", width: 3, inputClass: "app-ui-button"
+        input "refreshP_${i}", "button", title: "Refresh", width: 3, inputClass: "app-ui-button"
+        input "remove_${i}", "button", title: state.confirmRemove == i ? "Tap again to remove" : "Remove Printer", width: 3, inputClass: "app-ui-button"
+        paragraph rawHtml: true, "<div class='bb-card-end'></div>"
+        return
+    }
+    String s = settings["p${i}_serial"]?.toString()?.trim()?.toUpperCase()
     String title = esc(settings["p${i}_name"]?.toString()?.trim() ?: "Printer ${pos}")
-    String status = dev ? " <span class='text-color-secondary' style='font-weight:400;font-size:14px;'>${esc(dev.currentValue('connectionStatus') ?: '')}" +
-        (learned ? " &middot; serial ${esc(learned)}" : "") +
-        " &middot; <a href='/device/edit/${dev.id}' target='_blank' class='hub-text-link no-underline'>device " +
-        "<i class='fa-regular fa-external-link' style='font-size:0.8em'></i></a></span>" : ""
-    paragraph rawHtml: true, "<div class='font-semibold mt-3 pt-2' style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12));'>${title}${status}</div>"
+    String status = dev ? " <span class='text-color-secondary' style='font-weight:400;font-size:14px;'>${esc(dev.currentValue('connectionStatus') ?: '')}</span>" : ""
+    paragraph rawHtml: true, "<div class='font-semibold mt-3'>${title}${status}</div>"
     input "p${i}_name", "text", title: "Name", required: false, width: 6
     input "p${i}_ip", "text", title: "IP address", description: "e.g. 192.168.1.60", required: false, width: 6
     input "p${i}_code", "text", title: "LAN access code", description: "8 characters, shown on the printer", required: false, width: 6
@@ -148,7 +145,8 @@ private void printerCard(int i, int pos) {
             "If your browser filled in your email here, clear it. The serial is found automatically, so you can leave it blank.")
     }
     input "p${i}_mode", "enum", title: "Mode", options: MODES, defaultValue: "monitor", submitOnChange: true, width: 12
-    if (settings["p${i}_mode"] == "control") {
+    boolean ctl = settings["p${i}_mode"] == "control"
+    if (ctl) {
         paragraph rawHtml: true, warningMessageHtml("<b>Turn on Developer Mode on the printer</b> (Settings, LAN Only, then Developer Mode). " +
             "This takes the printer off Bambu Cloud: no Bambu Handy app and no printing from outside your home. Bambu Studio keeps working on your network.")
         input "p${i}_allowStop", "bool", title: "Allow Stop from Hubitat", defaultValue: false, width: 12,
@@ -159,33 +157,85 @@ private void printerCard(int i, int pos) {
         paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;'>Hubitat watches the printer and the Bambu Handy app keeps working. " +
             "Pause, stop and the light stay in the Bambu apps.</div>"
     }
-    boolean ctl = settings["p${i}_mode"] == "control"
     href name: "help_${i}", title: ctl ? "What changes with control" : "Monitor only or control?", description: "",
         page: "tipsPage", params: [topic: ctl ? "control" : "modes"], width: 8, style: "margin:8px 0;"
-    input "remove_${i}", "button", title: state.confirmRemove == i ? "Tap again to remove ${title}" : "Remove printer", width: 4
+    if (dev) input "doneP_${i}", "button", title: "Done editing", width: 3, inputClass: "app-ui-button"
+    input "remove_${i}", "button", title: state.confirmRemove == i ? "Tap again to remove" : "Remove Printer", width: 3, inputClass: "app-ui-button"
+    paragraph rawHtml: true, "<div class='bb-card-end'></div>"
 }
 
-def advancedPage() {
-    dynamicPage(name: "advancedPage", title: "Advanced", install: false, uninstall: false) {
-        section {
-            paragraph rawHtml: true, "<style>${appPageSpacingCss()}</style>" +
-                "<div class='text-color-secondary' style='font-size:14px;'>The defaults suit most printers. These apply to every printer in this app.</div>"
-            input "updateInterval", "enum", title: "Check printing printers every", options: INTERVALS, defaultValue: "30", width: 6,
-                description: "Idle printers are checked every 5 minutes. A finished print or an error shows up within this time."
-            input "tempStep", "enum", title: "At temperature, report changes of", options: TEMP_STEPS, defaultValue: "5", width: 6,
-                description: "While heating or cooling only the status changes (Heating, At temp, Cooling)"
-            input "tempUnit", "enum", title: "Temperature units", options: TEMP_UNITS, defaultValue: "C", width: 6,
-                description: "Printers, slicers and filament specs all use Celsius"
+// Summary card, Sofabaton style: name, serial and IP; status line; mode, AMS and light chips.
+private String printerCardHtml(int i, dev) {
+    String serial = null
+    try { serial = dev.getSerial() } catch (e) { }
+    String conn = dev.currentValue("connectionStatus") ?: "Connecting"
+    String ps = dev.currentValue("printState")
+    boolean ok = conn == "Connected"
+    String line
+    if (!ok) line = conn == "Waiting for printer" ? "Connected, waiting for the printer's first status" : conn
+    else if (ps in ["Printing", "Paused", "Preparing"]) {
+        def pct = dev.currentValue("progress"), left = dev.currentValue("timeRemaining")
+        line = ps + (pct != null ? " &middot; ${pct}%" : "") + (left ? " &middot; ${hm(left as int)} left" : "") +
+            (dev.currentValue("eta") ? " &middot; done at ${dev.currentValue('eta')}" : "")
+    } else line = ps ?: "Connected"
+    int errs = (dev.currentValue("errorCount") ?: 0) as int
+    StringBuilder c = new StringBuilder()
+    c << "<div style='border:1px solid var(--surface-border, rgba(0,0,0,.12));border-radius:10px;padding:12px 14px;margin:4px 0 0;background:var(--surface-card, #fff)'>"
+    c << "<div><i class='fa-solid fa-cube hub-text-link' aria-hidden='true' style='margin-right:6px'></i>"
+    c << "<a href='/device/edit/${dev.id}' target='_blank' class='bb-link' style='font-weight:600'>${esc(dev.displayName)}" +
+        "<i class='fa-regular fa-external-link' style='margin-left:5px;font-size:0.8em'></i></a> "
+    c << "<span class='text-color-secondary' style='font-size:0.8em'>${serial ? esc(serial) + ' &middot; ' : ''}${esc(settings["p${i}_ip"] ?: '')}</span></div>"
+    c << "<div class='${ok ? 'hub-text-success' : 'hub-text-warning'}' style='margin-top:6px;font-size:0.85em'>${esc(line).replace('&amp;middot;', '&middot;')}</div>"
+    if (errs > 0) c << "<div class='hub-text-warning' style='margin-top:4px;font-size:0.85em'>&#9888; ${errs} printer error${errs == 1 ? '' : 's'}: ${esc(dev.currentValue('errors') ?: '')}</div>"
+    c << "<div style='margin-top:10px;display:flex;flex-wrap:wrap;gap:8px'>"
+    c << "<span class='bb-chip'>${settings["p${i}_mode"] == 'control' ? 'Monitor and control' : 'Monitor only'}</span>"
+    List kids = []
+    try { kids = dev.getChildDevices() ?: [] } catch (e) { }
+    kids.sort { it.displayName }.each { k ->
+        if (k.deviceNetworkId.contains("-ams")) {
+            String dots = (1..4).collect { n ->
+                String col = k.currentValue("tray${n}Color")
+                col && col != "none" ? "<span class='bb-dot' style='background:${esc(col)}' title='${esc(k.currentValue("tray${n}") ?: '')}'></span>" :
+                    "<span class='bb-dot' style='background:transparent' title='empty'></span>"
+            }.join("")
+            c << "<a href='/device/edit/${k.id}' target='_blank' class='bb-pill'>${esc(shortName(k, dev))}${dots}" +
+                "<i class='fa-regular fa-external-link hub-text-link' style='margin-left:8px;font-size:0.75em'></i></a>"
+        } else {
+            String sw = k.currentValue("switch")
+            c << "<a href='/device/edit/${k.id}' target='_blank' class='bb-pill'>" +
+                "<span style='display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:${sw == 'on' ? 'var(--hubitat-success-color, #2e9e5b)' : 'var(--text-color-secondary, #bbb)'}'></span>" +
+                "${esc(shortName(k, dev))}<i class='fa-regular fa-external-link hub-text-link' style='margin-left:8px;font-size:0.75em'></i></a>"
         }
     }
+    c << "</div></div>"
+    return c.toString()
 }
 
+// "H2D #1 AMS 1" on printer "H2D #1" shows as "AMS 1".
+private String shortName(k, dev) {
+    String n = k.displayName ?: ""
+    String p = dev.displayName ?: ""
+    return n.startsWith(p + " ") ? n.substring(p.length() + 1) : n
+}
+
+private String hm(int mins) { mins >= 60 ? "${(mins / 60) as int}h ${mins % 60}m" : "${mins}m" }
+
 def appButtonHandler(String btn) {
+    def pm = btn =~ /^(editP|doneP|refreshP)_(\d+)$/
+    if (pm.find()) {
+        int n = pm.group(2).toInteger()
+        state.remove("confirmRemove")
+        if (pm.group(1) == "editP") state.editing = n
+        else if (pm.group(1) == "doneP") { state.remove("editing"); initialize() }
+        else { def d = getChildDevice(printerDni(n)); if (d) try { d.refresh() } catch (e) { } }
+        return
+    }
     if (btn == "addPrinter") {
         List sl = slots()
         int next = Math.max(((state.maxSlot ?: 0) as int), (sl ? sl.max() : 0)) + 1
         state.maxSlot = next
         state.slots = sl + next
+        state.editing = next
         state.remove("confirmRemove")
         return
     }
@@ -202,6 +252,7 @@ def appButtonHandler(String btn) {
     }
     ["name", "ip", "code", "serial", "mode", "allowStop"].each { app.removeSetting("p${i}_${it}") }
     state.slots = slots() - i
+    if (state.editing == i) state.remove("editing")
 }
 
 def equipmentPage() {
@@ -289,7 +340,7 @@ private Map bannerState() {
 
 def installed() { initialize() }
 
-def updated() { initialize() }
+def updated() { state.remove("editing"); state.remove("confirmRemove"); initialize() }
 
 def initialize() {
     unschedule()
@@ -297,8 +348,8 @@ def initialize() {
     armLogRevert()
     migrate()
     Map cfg = configuredPrinters()
-    Map shared = [interval: ((updateInterval ?: "30") as String).toInteger(), tempStep: ((tempStep ?: "5") as String).toBigDecimal(),
-                  unit: tempUnit == "hub" ? "hub" : "C"]
+    Map legacy = state.migrated == "0.1.3" ? null : [checkEvery: (updateInterval ?: "30").toString(), tempStep: (tempStep ?: "5").toString(),
+                                                    tempUnit: tempUnit == "hub" ? "hub" : "C"]
     printerDevices().each { dev ->
         if (!cfg.containsKey(dev.deviceNetworkId)) {
             String label = dev.displayName
@@ -318,10 +369,12 @@ def initialize() {
                 return
             }
         }
-        dev.configure([slot: p.slot, serial: p.serial, name: p.name, ip: p.ip], shared + [control: p.control, allowStop: p.control && p.allowStop])
+        dev.configure([slot: p.slot, serial: p.serial, name: p.name, ip: p.ip], [control: p.control, allowStop: p.control && p.allowStop])
+        if (legacy) try { dev.adoptOptions(legacy) } catch (e) { }
         dev.setLogLevel(currentLogLevel())
     }
     state.pushedLogLevel = currentLogLevel()
+    if (legacy) { ["updateInterval", "tempStep", "tempUnit"].each { app.removeSetting(it) }; state.migrated = "0.1.3" }
     runIn(2, "startPrinters")
 }
 
@@ -343,10 +396,10 @@ String getAccessCode(String dni) {
     return (i && slots().contains(i)) ? settings["p${i}_code"]?.toString()?.trim() : null
 }
 
-// 0.1.1: sampling replaced 2 to 10 second processing, and temperatures report 5° steps at temperature.
+// 0.1.1 moved to sampling (30 s default) and 5° steps; 0.1.3 copies these to the printers (see initialize).
 private void migrate() {
-    if (state.migrated == "0.1.1") return
-    if (!INTERVALS.containsKey(updateInterval?.toString())) app.updateSetting("updateInterval", [value: "30", type: "enum"])
+    if (state.migrated in ["0.1.1", "0.1.3"]) return
+    if (!(updateInterval?.toString() in ["15", "30", "60", "120"])) app.updateSetting("updateInterval", [value: "30", type: "enum"])
     if (tempStep == null || tempStep.toString() in ["0.5", "1"]) app.updateSetting("tempStep", [value: "5", type: "enum"])
     state.migrated = "0.1.1"
 }
@@ -384,7 +437,7 @@ private List tipsTopics() {
         [id: "updates", label: "Status updates", title: "How status stays up to date", group: "How it works", icon: "pi-refresh",
             body: "<p>X1 and H2 printers send an 8 KB status every second while printing. Over a long print that adds up, so the integration stays connected but only listens for one status per check:</p>",
             checklist: [
-                [title: "Printing", detail: "Every 30 seconds (Advanced, from 15 seconds to 2 minutes). A finished print or an error shows up within that time."],
+                [title: "Printing", detail: "Every 30 seconds (the printer device's Preferences, from 15 seconds to 2 minutes). A finished print or an error shows up within that time."],
                 [title: "Idle", detail: "Every 5 minutes."],
                 [title: "After a command", detail: "Right away, to pick up the printer's answer."],
                 [title: "Refresh", detail: "Tap Refresh on the printer device for a status now."]
@@ -392,7 +445,7 @@ private List tipsTopics() {
         [id: "temps", label: "Temperatures", title: "Heater status and temperatures", group: "How it works", icon: "pi-sun",
             body: "<p>Each heater has a <b>status</b> and a <b>temperature</b>. The status is <i>Heating to 220°</i>, <i>At temp</i>, <i>Cooling</i> or <i>Off</i>. " +
                 "The temperature only updates once the heater is at temperature or off, in 5° steps, so a warm-up doesn't send a burst of events.</p>" +
-                "<p>Temperatures are in Celsius to match the printer. Change it under <b>Advanced</b> if you'd rather follow the hub's units.</p>"],
+                "<p>Temperatures are in Celsius to match the printer. To follow the hub's units instead, open the printer device and change <b>Temperature units</b> under Preferences. The 5° step is there too.</p>"],
         [id: "rules", label: "Rules and dashboards", title: "Rules and dashboards", group: "Using it", icon: "pi-bolt",
             body: "<p>Some ideas:</p>",
             checklist: [
@@ -569,6 +622,18 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
   ${appPageSpacingCss()}
   ${tipsCardCss()}
   .app-main-support button.hrefElem[name^='_action_href_tips'] { min-height: 61.5px; padding-bottom: 13.5px; box-sizing: border-box; }
+  a.bb-pill { display: inline-flex; align-items: center; background: var(--hubitat-selection-background, #e3eaf3); border-radius: 20px; padding: 6px 14px;
+    font-size: 0.9em; color: inherit; text-decoration: none; transition: background 0.15s; }
+  a.bb-pill:hover { background: var(--surface-hover, #cfdcec); }
+  span.bb-chip { display: inline-flex; align-items: center; border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 20px; padding: 5px 12px; font-size: 0.85em; }
+  a.bb-link { color: var(--hubitat-link-color, #1565c0); text-decoration: none; }
+  a.bb-link:hover { text-decoration: underline; }
+  .bb-dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-left: 4px; border: 1px solid rgba(127,127,127,.5); }
+  .app-main-content :is([name*='editP_'],[name*='doneP_'],[name*='refreshP_'],[name*='remove_'],[id*='editP_'],[id*='doneP_'],[id*='refreshP_'],[id*='remove_']) {
+    font-size: 13px !important; padding: 3px 12px !important; min-height: 0 !important; height: auto !important;
+    line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid var(--hubitat-control-border, #d0d7de) !important;
+    white-space: nowrap; }
+  .bb-card-end { border-bottom: 1px solid var(--surface-border, rgba(0,0,0,.12)); margin: 4px 0 18px; }
   #formApp .form > div:has(> h3:empty):has(+ .app-main-overview) { display: none; }
   #formApp .form > .app-main-overview { margin-bottom: 0.429rem !important; }
   .app-main-overview > .mdl-grid { padding-top: 0.286rem !important; padding-bottom: 0.286rem !important; }
