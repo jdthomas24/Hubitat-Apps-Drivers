@@ -22,12 +22,24 @@
      -Any status received marks the printer Connected (0.1.4), so the label can't stay on Connecting while data
       flows. statusAge() tells the app how long the label has been unchanged. model comes from get_version.
      -Mode is per printer, from the app. Monitor only (default): works alongside Bambu Cloud and the Bambu
-      apps; chamberLight is read-only and commands are refused locally. Monitor and control: needs Developer
-      Mode (LAN Only, no Bambu Cloud); adds the chamber light switch device and Printer Control. Stop only
-      when the app's Allow Stop is on for this printer (off by default).
-      Unsigned commands refused by the printer (84033543) are reported once with the fix.
+      apps; Printer Control is refused locally. Monitor and control: needs Developer Mode (LAN Only, no Bambu
+      Cloud) and adds Printer Control. Stop only when the app's Allow Stop is on (off by default).
+     -The chamber light works in both modes (0.1.5): the printer accepts ledctrl without Developer Mode (H2D
+      confirmed). H2D has two nodes (chamber_light, chamber_light2); the driver sends to every chamber_light*
+      node the printer reports, and the light is on when any of them is.
+     -Refused commands (0.1.5): unsigned commands come back as err_code 84033543 or as HMS 0500_0500_0001_0007
+      (H2D). That code is not counted as a printer error. After a command the driver checks the next status
+      (speed, state, light) and logs whether it took, was refused (Developer Mode) or was ignored.
+     -Errors in plain English (0.1.5): on a new HMS or print error code the driver fetches that module's small
+      table from this integration's GitHub folder (hms/<module>.json, made from ha-bambulab's MIT-licensed
+      English HMS list) and keeps only the matching line in state.hmsText. errorText and the log get the text
+      and a Bambu Lab Wiki link. No lookup goes to Bambu.
+     -Door (contact, 0.1.5) from print.stat bit 0x00800000 (H2D confirmed). firmwareUpdate from upgrade_state.
+      External spools from vir_slot ids 254/255 (or vt_tray), shown only once loaded. H2D has no
+      gcode_start_time, so elapsedTime counts from when the driver saw the print start (blank if it joined
+      mid-print).
      -Children (chosen on the app's Equipment page): one AMS device per unit, plus the chamber light
-      (Generic Component Switch) in control mode. Exclusions as in IntelliCenter.
+      (Generic Component Switch). Exclusions as in IntelliCenter.
      -Reconnect backoff 5 s to 5 min. Quiet for 6 min: pushall. Still quiet a minute later: reconnect.
       A drop logs at Normal; still down after 4 tries warns once; recovery logs.
      -Tile stays under the dashboard's 1024-character limit.
@@ -39,6 +51,7 @@ metadata {
         capability "Refresh"
         capability "Sensor"
         capability "Actuator"
+        capability "ContactSensor"
 
         attribute "printState",       "string"
         attribute "stage",            "string"
@@ -62,6 +75,12 @@ metadata {
         attribute "activeTray",       "string"
         attribute "errorCount",       "number"
         attribute "errors",           "string"
+        attribute "errorText",        "string"
+        attribute "externalSpool",    "string"
+        attribute "externalSpoolColor", "string"
+        attribute "externalSpool2",   "string"
+        attribute "externalSpool2Color", "string"
+        attribute "firmwareUpdate",   "string"
         attribute "wifiSignal",       "string"
         attribute "firmware",         "string"
         attribute "model",            "string"
@@ -86,7 +105,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.1.4"
+@Field static final String VERSION     = "0.1.5"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -109,6 +128,13 @@ import groovy.transform.Field
     28: "Paused: chamber temperature fault", 29: "Cooling chamber", 30: "Paused by G-code", 31: "Motor noise showoff",
     32: "Paused: nozzle filament covered", 33: "Paused: cutter error", 34: "Paused: first layer error", 35: "Paused: nozzle clog"]
 @Field static final String DEV_MODE_ERR = "84033543"
+@Field static final Long DEV_MODE_PE    = 84033543L
+@Field static final List REFUSED_HMS    = ["0500050000010007"]   // MQTT command verification failed (unsigned)
+@Field static final Long DOOR_BIT       = 0x00800000L
+@Field static final String HMS_URL      = "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Bambu%20Lab%20Integration/hms/"
+@Field static final String WIKI         = "https://wiki.bambulab.com"
+@Field static final String WIKI_HOME    = "https://wiki.bambulab.com/en/hms/home"
+@Field static final Map AMS_FAMILY      = ["07": "AMS ", "18": "AMS-HT ", "12": "AMS Lite "]   // one table per family, unit A
 // Per-device working data: merged report, last message time, sequence id. Lost on a driver save, which is safe.
 @Field static final java.util.concurrent.ConcurrentHashMap RUNTIME = new java.util.concurrent.ConcurrentHashMap()
 
@@ -198,19 +224,6 @@ void configure(Map printer, Map opts) {
     if (state.opts != opts) state.opts = opts
     mem().remove("opts")
     report("mode", opts?.control ? "Monitor and control" : "Monitor only")
-    if (!opts?.control) dropLight()
-}
-
-// Monitor only: no light switch device. Forgotten, not excluded, so control mode recreates it.
-private void dropLight() {
-    def child = getChildDevice(dniFor("light"))
-    if (child) {
-        try { deleteChildDevice(child.deviceNetworkId); logN "removed ${child.displayName} (monitor only)" } catch (e) { }
-    }
-    Map c = (state.catalog ?: [:]) as Map
-    if (c.containsKey("light")) { c.remove("light"); state.catalog = c; mem().remove("cat") }
-    if (((state.known ?: []) as List).contains("light")) state.known = ((state.known ?: []) as List) - "light"
-    if (((state.excluded ?: []) as List).contains("light")) state.excluded = ((state.excluded ?: []) as List) - "light"
 }
 
 private opt(String k) {
@@ -362,7 +375,8 @@ def sampleTimeout() {
 }
 
 private int nextSecs() {
-    (device.currentValue("printState") in ACTIVE) ? Math.max(15, ((opt("interval") ?: 30) as int)) : IDLE_SECS
+    String ps = (mem().ps ?: device.currentValue("printState")) as String
+    (ps in ACTIVE) ? Math.max(15, ((opt("interval") ?: 30) as int)) : IDLE_SECS
 }
 
 // After a command: sample now and keep listening a few seconds for the printer's reply.
@@ -496,10 +510,7 @@ private void checkResult(Map r, String kind) {
     String err = (r.err_code ?: r.reason ?: "").toString()
     if (!(res in ["fail", "failed", "error"]) && !err.contains(DEV_MODE_ERR)) return
     if (err.contains(DEV_MODE_ERR) || (r.reason ?: "").toString().toLowerCase().contains("sign")) {
-        if (!mem().devModeWarned) {
-            mem().devModeWarned = true
-            logE "the printer refused ${r.command ?: 'a command'}: control from Hubitat needs Developer Mode on the printer (Settings, LAN Only, Developer Mode), which turns off Bambu Cloud. Or set this printer to Monitor only in the app. Monitoring keeps working."
-        }
+        refused(r.command?.toString())
         return
     }
     logE "the printer refused ${r.command ?: kind + ' command'}${r.reason ? ' (' + r.reason + ')' : ''}"
@@ -516,14 +527,21 @@ private void readVersion(Map info) {
 private void render() {
     Map r = mem().rep as Map
     String gs = r.gcode_state?.toString()
+    // This run's value: currentValue can still return the old one right after the event.
+    String ps = device.currentValue("printState") ?: ""
     if (gs) {
-        String ps = STATES[gs] ?: gs.toLowerCase().capitalize()
+        String now_ = STATES[gs] ?: gs.toLowerCase().capitalize()
         String old = device.currentValue("printState")
-        if (old != ps) logN "print state: ${ps}"
-        report("printState", ps)
+        if (old != now_) {
+            logN "print state: ${now_}"
+            if (now_ in ACTIVE && old != null && !(old in ACTIVE)) state.printStartAt = now()
+        }
+        if (!(now_ in ACTIVE) && state.printStartAt != null) state.remove("printStartAt")
+        report("printState", now_)
+        ps = now_
         mem().lastGs = gs
     }
-    String ps = device.currentValue("printState") ?: ""
+    mem().ps = ps
     boolean active = ps in ACTIVE
     Integer stg = toInt(r.stg_cur)
     report("stage", active ? (stg && stg != 255 && stg > 0 ? (STAGES[stg] ?: "Stage ${stg}") : (ps == "Printing" ? "Printing" : ps)) : ps)
@@ -534,7 +552,8 @@ private void render() {
             report("eta", active && mins > 0 ? new Date(now() + mins * 60000L).format("h:mm a", location.timeZone) : "")
     }
     Long start = toLong(r.gcode_start_time)
-    if (active && start && start > 0) report("elapsedTime", Math.max(0, ((now() / 1000L - start) / 60) as int), "min", 5)
+    Long startMs = (start && start > 0) ? start * 1000L : (state.printStartAt as Long)
+    if (active && startMs) report("elapsedTime", Math.max(0, ((now() - startMs) / 60000) as int), "min", 5)
     else if (ps == "Idle") report("elapsedTime", 0, "min")
     if (r.containsKey("layer_num")) report("currentLayer", toInt(r.layer_num) ?: 0)
     if (r.containsKey("total_layer_num")) report("totalLayers", toInt(r.total_layer_num) ?: 0)
@@ -549,8 +568,51 @@ private void render() {
     temps(r)
     errors(r)
     ams(r)
+    spools(r)
     light(r)
+    door(r)
+    firmwareUpdate(r)
     tile()
+    checkExpect(r)
+}
+
+// Door from print.stat (hex), bit 0x00800000 set = open. H2D confirmed.
+private void door(Map r) {
+    if (r.stat == null) return
+    Long s
+    try { s = Long.parseLong(r.stat.toString(), 16) } catch (e) { return }
+    String v = (s & DOOR_BIT) != 0L ? "open" : "closed"
+    if (device.currentValue("contact") != v) logN "door ${v}"
+    report("contact", v)
+}
+
+private void firmwareUpdate(Map r) {
+    if (!(r.upgrade_state instanceof Map)) return
+    Map u = r.upgrade_state as Map
+    String nv = (u.ota_new_version_number ?: "").toString()
+    boolean avail = toInt(u.new_version_state) == 1 || nv
+    String v = avail ? (nv ? "available: ${nv}" : "available") : "none"
+    if (avail && device.currentValue("firmwareUpdate") != v) logN "printer firmware update ${nv ? nv + ' ' : ''}available"
+    report("firmwareUpdate", v)
+}
+
+// External spool holders: vir_slot ids 254 and 255 (H2D), or vt_tray (one holder). Shown once a spool is loaded.
+private void spools(Map r) {
+    List slots = r.vir_slot instanceof List ? r.vir_slot as List : (r.vt_tray instanceof Map ? [r.vt_tray] : [])
+    slots.each { tr ->
+        if (!(tr instanceof Map)) return
+        Integer id = toInt(tr.id)
+        if (id == null || id < 254) return
+        String name = id == 254 ? "externalSpool" : "externalSpool2"
+        String type = tr.tray_type?.toString()
+        if (!type && device.currentValue(name) == null) return
+        String desc = type ? "${type}${tr.tray_sub_brands ? ' (' + tr.tray_sub_brands + ')' : ''}" : "empty"
+        Integer rem = toInt(tr.remain)
+        if (type && rem != null && rem > 0) desc += ", ${rem}%"
+        String col = type && tr.tray_color ? "#${tr.tray_color.toString().take(6)}" : "none"
+        report(name, desc)
+        report("${name}Color", col)
+    }
 }
 
 private void temps(Map r) {
@@ -600,24 +662,182 @@ private void temp(String name, c, BigDecimal step) {
 }
 
 // HMS list -> count and codes (HMS_AAAA_BBBB_CCCC_DDDD, Bambu's wiki format); print_error as a fallback.
+// A refused unsigned command is not a printer fault, so it's left out.
 private void errors(Map r) {
+    if (!r.containsKey("hms") && !r.containsKey("print_error")) return
     List codes = []
+    boolean wasRefused = false
     if (r.hms instanceof List) {
         r.hms.each { h ->
             Long a = toLong(h.attr), c = toLong(h.code)
             if (a != null && c != null) {
                 String s = String.format("%08X%08X", a, c)
+                if (s in REFUSED_HMS) { wasRefused = true; return }
                 codes << "HMS_${s[0..3]}_${s[4..7]}_${s[8..11]}_${s[12..15]}"
             }
         }
     }
     Long pe = toLong(r.print_error)
-    if (pe && pe != 0) codes << String.format("ERR_%08X", pe)
-    if (!r.containsKey("hms") && !r.containsKey("print_error")) return
-    String joined = codes.unique().join(", ")
-    if (joined != (device.currentValue("errors") ?: "") && codes) logE "printer reports ${codes.size() == 1 ? 'an error' : codes.size() + ' errors'}: ${joined}"
-    report("errorCount", codes.unique().size())
+    if (pe && pe != 0) {
+        if (pe == DEV_MODE_PE) wasRefused = true
+        else codes << String.format("ERR_%08X", pe)
+    }
+    // The code can sit in the list for a while: note it every time, tell the user once per appearance.
+    Map m = mem()
+    if (wasRefused) {
+        m.refusedAt = now()
+        if (!m.refusedPresent) { m.refusedPresent = true; if (!m.expect) refusedNotice("a command") }
+    } else if (m.refusedPresent) m.remove("refusedPresent")
+    codes = codes.unique()
+    String joined = codes.join(", ")
+    String was = device.currentValue("errors") ?: "none"
+    if ((joined ?: "none") != was && codes) {
+        List old = was == "none" ? [] : was.split(", ").toList()
+        (codes - old).each { announce(it as String) }
+    }
+    report("errorCount", codes.size())
     report("errors", joined ?: "none")
+    errorText(codes)
+}
+
+// ============================================================
+// Error text: per-module tables in this integration's GitHub folder
+// ============================================================
+
+private Map hmsCache() { (state.hmsText ?: [:]) as Map }
+
+// Log one new code: with its text if known, else after the lookup.
+private void announce(String code) {
+    Map hit = hmsCache()[code] as Map
+    if (hit?.t) { logE "printer error ${code}: ${hit.t} ${hit.u}"; return }
+    if (!hmsLookup(code)) logE "printer error ${code}. Look it up: ${WIKI_HOME}"
+}
+
+private void errorText(List codes) {
+    Map c = hmsCache()
+    String t = codes.collect { (c[it] as Map)?.t ?: it }.join(" | ")
+    report("errorText", t ?: "none")
+}
+
+// For the app's card: [code, text, link] per current error.
+List getErrorDetails() {
+    String e = device.currentValue("errors") ?: "none"
+    if (e == "none") return []
+    Map c = hmsCache()
+    return e.split(", ").collect { String k -> Map h = c[k] as Map; [k, h?.t ?: "", h?.u ?: WIKI_HOME] }
+}
+
+private String hexOf(String code) { code.replaceAll(/^(HMS|ERR)_/, "").replace("_", "") }
+
+private String hmsFile(String hex) {
+    String p = hex.take(2)
+    return (AMS_FAMILY.containsKey(p) && hex.length() >= 4 && hex[2..3] ==~ /0[0-7]/) ? p + "00" : hex.take(4)
+}
+
+// true if a lookup started (once per code per driver run).
+private boolean hmsLookup(String code) {
+    Map m = mem()
+    Set asked = (m.hmsAsked ?: (m.hmsAsked = java.util.concurrent.ConcurrentHashMap.newKeySet())) as Set
+    if (!asked.add(code)) return false
+    try {
+        asynchttpGet("hmsFetched", [uri: HMS_URL + hmsFile(hexOf(code)) + ".json", contentType: "text/plain", timeout: 20], [code: code])
+        return true
+    } catch (e) {
+        logF "error text lookup failed: ${e.message}"
+        return false
+    }
+}
+
+def hmsFetched(resp, Map data) {
+    String code = data?.code
+    if (!code) return
+    Map hit = null
+    try {
+        if (resp.status == 200) {
+            def tbl = new JsonSlurper().parseText(resp.data as String)
+            if (tbl instanceof Map) hit = hmsFind(tbl as Map, hexOf(code))
+        } else logF "no error text for ${code} (HTTP ${resp.status})"
+    } catch (e) { logF "error text lookup failed: ${e.message}" }
+    if (!hit) { logE "printer error ${code}. Look it up: ${WIKI_HOME}"; return }
+    Map c = hmsCache()
+    c[code] = hit
+    while (c.size() > 40) c.remove(c.keySet().iterator().next())
+    state.hmsText = c
+    logE "printer error ${code}: ${hit.t} ${hit.u}"
+    String e = device.currentValue("errors") ?: "none"
+    errorText(e == "none" ? [] : e.split(", ").toList())
+}
+
+// Table rows: [text, wiki, h2 wiki]. A wiki value is a model folder (x1, h2), "folder|-" for dashed codes,
+// or a full path. AMS units B to H share unit A's row with the letter changed.
+private Map hmsFind(Map tbl, String hex) {
+    List v = tbl[hex] as List
+    String base = hex
+    String text = v ? v[0] as String : null
+    if (!v && hex.length() == 16 && AMS_FAMILY.containsKey(hex.take(2)) && hex[2..3] != "00") {
+        base = hex.take(2) + "00" + hex.substring(4)
+        v = tbl[base] as List
+        if (v) {
+            String label = AMS_FAMILY[hex.take(2)] as String
+            int unit = Integer.parseInt(hex[2..3], 16)
+            text = (v[0] as String).replaceFirst(label + "A", label + ((char) (65 + unit)).toString())
+        }
+    }
+    if (!v || !text) return null
+    return [t: text, u: wikiUrl(base, v)]
+}
+
+private String wikiUrl(String hex, List v) {
+    if (hex.length() != 16) return WIKI_HOME
+    boolean h2 = (device.currentValue("model") ?: "").toString().startsWith("H2")
+    String seg = (h2 && v.size() > 2 && v[2]) ? v[2] as String : (v.size() > 1 ? v[1] as String : "")
+    if (!seg) return WIKI_HOME
+    if (seg.contains("/")) return WIKI + seg
+    boolean dash = seg.endsWith("|-")
+    String folder = seg - "|-"
+    String c = [hex[0..3], hex[4..7], hex[8..11], hex[12..15]].join(dash ? "-" : "_")
+    return "${WIKI}/en/${folder}/troubleshooting/hmscode/${c}"
+}
+
+// ============================================================
+// Command checks: did the printer act on it?
+// ============================================================
+
+private void expect(String what, String kind, want) { mem().expect = [what: what, kind: kind, want: want, at: now(), tries: 0] }
+
+private void checkExpect(Map r) {
+    Map m = mem()
+    Map x = m.expect as Map
+    if (!x || now() - (x.at as long) < 3000L) return
+    boolean ok
+    switch (x.kind) {
+        case "speed": ok = toInt(r.spd_lvl) == (x.want as int); break
+        case "state": ok = (x.want as List).contains(r.gcode_state?.toString()); break
+        case "light": ok = lightNow(r) == x.want; break
+        default: ok = true
+    }
+    if (ok) { m.remove("expect"); logN "${x.what}: done"; return }
+    if (((m.refusedAt ?: 0L) as long) >= (x.at as long) - 1000L) { m.remove("expect"); refusedNotice(x.what as String); return }
+    if ((x.tries as int) < 1) { x.tries = 1; x.at = now(); return }   // one more status before giving up
+    m.remove("expect")
+    logE "the printer didn't act on ${x.what}. If it keeps happening, check Developer Mode on the printer (Settings, LAN Only)."
+}
+
+// Seen in a reply or the HMS list. Logged by checkExpect against the command, or here if none is pending.
+private void refused(String cmd) {
+    Map m = mem()
+    m.refusedAt = now()
+    if (!m.expect) refusedNotice(cmd ?: "a command")
+}
+
+private void refusedNotice(String what) {
+    Map m = mem()
+    if (now() - ((m.refusedLogged ?: 0L) as long) < 60000L) return
+    m.refusedLogged = now()
+    if (!m.devModeWarned) {
+        m.devModeWarned = true
+        logE "the printer refused ${what}: Printer Control from Hubitat needs Developer Mode on the printer (Settings, LAN Only, Developer Mode), which turns off Bambu Cloud. Or set this printer to Monitor only in the app. Monitoring and the light keep working."
+    } else logE "the printer refused ${what} (needs Developer Mode)"
 }
 
 // ============================================================
@@ -665,13 +885,19 @@ private void ams(Map r) {
     }
 }
 
+// Every chamber_light* node (H2D has two). On when any of them is.
+private List lightNodes(Map r) {
+    (r.lights_report instanceof List) ? r.lights_report.findAll { it instanceof Map && it.node?.toString()?.startsWith("chamber_light") } : []
+}
+private String lightNow(Map r) { List n = lightNodes(r); n ? (n.any { it.mode != "off" } ? "on" : "off") : null }
+
 private void light(Map r) {
-    if (!(r.lights_report instanceof List)) return
-    Map l = r.lights_report.find { it.node == "chamber_light" } as Map
-    if (!l) return
-    String v = l.mode == "off" ? "off" : "on"
+    List nodes = lightNodes(r)
+    if (!nodes) return
+    List names = nodes.collect { it.node.toString() }.sort()
+    if (state.lightNodes != names) state.lightNodes = names
+    String v = lightNow(r)
     report("chamberLight", v)
-    if (!opt("control")) return
     catalogPut("light", [k: "light", n: "Chamber light"])
     def child = childFor("light")
     if (child) child.parse([[name: "switch", value: v]])
@@ -681,11 +907,17 @@ void componentOn(cd)  { setLight(true) }
 void componentOff(cd) { setLight(false) }
 void componentRefresh(cd) { refresh() }
 
+// Works in both modes: the printer takes ledctrl without Developer Mode.
 private void setLight(boolean on) {
-    if (!opt("control")) { logE "monitor only: control the light from the Bambu apps, or set this printer to Monitor and control in the app."; return }
-    if (!publish([system: [sequence_id: seq(), command: "ledctrl", led_node: "chamber_light", led_mode: on ? "on" : "off",
-                      led_on_time: 500, led_off_time: 500, loop_times: 0, interval_time: 0]])) { logE "not connected, light command not sent"; return }
+    List nodes = (state.lightNodes ?: ["chamber_light"]) as List
+    boolean sent = false
+    nodes.each { n ->
+        if (publish([system: [sequence_id: seq(), command: "ledctrl", led_node: n, led_mode: on ? "on" : "off",
+                              led_on_time: 500, led_off_time: 500, loop_times: 0, interval_time: 0]])) sent = true
+    }
+    if (!sent) { logE "not connected, light command not sent"; return }
     logN "chamber light ${on ? 'on' : 'off'}"
+    expect("chamber light ${on ? 'on' : 'off'}", "light", on ? "on" : "off")
     sampleAfterCommand()
 }
 
@@ -704,27 +936,28 @@ def printerControl(String action) {
     }
 }
 
-def pause()  { printCommand("pause", "") }
-def resume() { printCommand("resume", "") }
+def pause()  { if (printCommand("pause", "")) expect("pause", "state", ["PAUSE"]) }
+def resume() { if (printCommand("resume", "")) expect("resume", "state", ["RUNNING", "PREPARE"]) }
 def stop() {
     if (opt("control") && !opt("allowStop")) { logE "Stop is turned off for this printer. Turn on Allow Stop in the app to use it."; return }
-    printCommand("stop", "")
+    if (printCommand("stop", "")) expect("stop", "state", ["FINISH", "FAILED", "IDLE"])
 }
 
 def setSpeed(String speed) {
     int i = SPEEDS.indexOf(speed)
     if (i < 1) { logE "unknown speed ${speed}. Use Silent, Standard, Sport or Ludicrous."; return }
-    printCommand("print_speed", "${i}")
+    if (printCommand("print_speed", "${i}")) expect("speed ${speed}", "speed", i)
 }
 
-private void printCommand(String cmd, String param) {
+private boolean printCommand(String cmd, String param) {
     if (!opt("control")) {
         logE "monitor only: ${cmd} not sent. Use the Bambu apps, or set this printer to Monitor and control in the Bambu Lab Integration app (needs Developer Mode)."
-        return
+        return false
     }
-    if (!state.connected) { logE "not connected to the printer, ${cmd} not sent"; return }
-    if (publish([print: [sequence_id: seq(), command: cmd, param: param]])) { logN "${cmd}${param ? ' ' + param : ''} sent"; sampleAfterCommand() }
-    else logE "${cmd} not sent: the printer's serial isn't known yet"
+    if (!state.connected) { logE "not connected to the printer, ${cmd} not sent"; return false }
+    if (publish([print: [sequence_id: seq(), command: cmd, param: param]])) { logN "${cmd}${param ? ' ' + param : ''} sent"; sampleAfterCommand(); return true }
+    logE "${cmd} not sent: the printer's serial isn't known yet"
+    return false
 }
 
 // ============================================================
@@ -747,6 +980,7 @@ private void tile() {
     String html = "<div style='font-size:13px;line-height:1.35;text-align:left'><b>${name}</b><br>${ps}" +
         (active && file ? ": ${file}" : "") + bar + (line2 ? "${line2}<br>" : "<br>") +
         "Nozzle ${t('nozzleTemp')}&deg; Bed ${t('bedTemp')}&deg;" + (device.currentValue("chamberTemp") != null ? " Chamber ${t('chamberTemp')}&deg;" : "") +
+        (device.currentValue("contact") == "open" ? "<br>Door open" : "") +
         ((device.currentValue("errorCount") ?: 0) > 0 ? "<br>&#9888; ${device.currentValue('errorCount')} error(s)" : "") + "</div>"
     if (html.length() > 1024) html = html.take(1018) + "</div>"
     if (html != m.lastTile) { m.lastTile = html; report("tile", html) }

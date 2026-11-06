@@ -1,13 +1,13 @@
 # Bambu Lab Integration for Hubitat
 
-> **Status: v0.1.4 beta, tested on an H2D.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
+> **Status: v0.1.5 beta, tested on an H2D.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
 
 ## What you get
 
 | Device | What it does |
 |---|---|
-| **Printer** (one per printer) | Print state and stage, progress, elapsed time, time left and ETA, layers, file name, heater status (Heating to target, At temp, Cooling, Off) and temperatures for the nozzle, bed and chamber (both nozzles on the H2D), speed, chamber light, active filament, HMS errors, firmware, dashboard tile |
-| **Chamber light** (control mode only) | A switch for the printer's chamber light |
+| **Printer** (one per printer) | Print state and stage, progress, elapsed time, time left and ETA, layers, file name, heater status (Heating to target, At temp, Cooling, Off) and temperatures for the nozzle, bed and chamber (both nozzles on the H2D), speed, chamber light, door (contact sensor), active filament and external spools, errors in plain English with a Wiki link, firmware and firmware updates, dashboard tile |
+| **Chamber light** | A switch for the printer's chamber light (both modes; on the H2D it switches both chamber lights) |
 | **AMS** (one per unit) | Humidity, temperature, and filament type, color and amount for each tray |
 
 You choose which light and AMS devices Hubitat creates on the app's **Equipment** page.
@@ -46,11 +46,12 @@ Each printer has its own mode.
 | Hubitat sees status, temperatures, AMS, errors, tile | ✅ | ✅ |
 | Bambu Cloud and the Bambu Handy app | ✅ | ❌ |
 | Bambu Studio on your network | ✅ | ✅ |
-| **Printer Control** (Pause, Resume, speed) and the light from Hubitat | ❌ (use the Bambu apps) | ✅ |
+| Chamber light from Hubitat | ✅ | ✅ |
+| **Printer Control** (Pause, Resume, speed) from Hubitat | ❌ (use the Bambu apps) | ✅ |
 | Stop from Hubitat | ❌ | Only with **Allow Stop** turned on for that printer |
 | Printer setting needed | None | Developer Mode (Settings, LAN Only, Developer Mode) |
 
-Bambu's newer firmware only accepts control commands signed by Bambu's own software, unless Developer Mode is on, and Developer Mode keeps the printer off Bambu Cloud. That's why control is a separate mode. If the printer refuses a command, the log says so once, with the fix.
+Bambu's newer firmware only accepts control commands signed by Bambu's own software, unless Developer Mode is on, and Developer Mode keeps the printer off Bambu Cloud. That's why control is a separate mode. The chamber light is the exception: the printer takes it without Developer Mode. After each command the driver checks the next status and logs whether it took, was refused (Developer Mode) or was ignored.
 
 > **Stop ends the print for good.** It's off by default, even in control mode. Turn on **Allow Stop** for a printer only if you trust every rule, dashboard and voice assistant that can reach it.
 
@@ -73,7 +74,12 @@ These are on each printer device's **Preferences** tab.
 - **nozzleStatus** and **bedStatus** are "Heating to 220°", At temp, Cooling or Off. "bedStatus becomes At temp" is a clean trigger, with no watching numbers climb. **nozzleTemp** and **bedTemp** update at temperature or off.
 - **timeRemaining** and **elapsedTime** are in minutes and move in 5 minute steps.
 - **stage** shows what the printer is doing right now (Heating hotend, Changing filament, Paused: filament runout and so on).
-- **errors** lists HMS codes in Bambu's format (HMS_0700_8000_0002_0001). Search the code on the Bambu Lab Wiki for what it means.
+- **errors** lists HMS codes in Bambu's format (HMS_0700_8000_0002_0001) and **errorText** says what they mean. The log and the app's printer card link each code to its Bambu Lab Wiki page.
+- **contact** is open or closed for the printer's door (H2D tested), so the printer works as a contact sensor in rules.
+- **firmwareUpdate** is none, or available with the new version.
+- **externalSpool** and **externalSpool2** show the filament on the external holders once one is loaded.
+
+**Error text** comes from a small table in this folder's **hms** directory, fetched from GitHub the first time a code shows up (nothing goes to Bambu); only the matching line is kept on the hub. The English text and Wiki links come from the [ha-bambulab](https://github.com/greghesp/ha-bambulab) project (MIT license).
 
 ## Logging
 
@@ -93,7 +99,9 @@ One **Log level** in the app covers the app, every printer and every light and A
 
 **The serial in the app doesn't match.** The integration uses the serial the printer reports and logs a warning. Clear the serial field in the app.
 
-**Commands do nothing.** In Monitor only they're refused on purpose; use the Bambu apps. In Monitor and control, turn on Developer Mode on the printer.
+**Commands do nothing.** In Monitor only they're refused on purpose; use the Bambu apps. In Monitor and control, turn on Developer Mode on the printer. The log says after each command whether it took.
+
+**The light turned itself back on.** The printer turns its light on when a print finishes.
 
 **A device I deleted came back, or one is missing.** Use the app's **Equipment** page. Deleting a device from the Devices page turns it off there; turn it back on to recreate it.
 

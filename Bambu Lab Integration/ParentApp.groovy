@@ -12,7 +12,7 @@
       one to its Printer at connect time. Plain text input on purpose: a password field makes browsers autofill
       the user's own login into the next field.
      -Mode is per printer (pN_mode): Monitor only (default, works with Bambu Cloud) or Monitor and control
-      (Developer Mode). Control adds per-printer options (pN_allowStop, off by default). Check interval,
+      (Developer Mode). The chamber light works in both (0.1.5). Control adds per-printer options (pN_allowStop, off by default). Check interval,
       temperature step and units are printer device preferences (0.1.3); older app values are copied over once.
      -Equipment page as in IntelliCenter, one section per printer; state.pushedExcluded is per printer.
      -Log level is the only logging control. App -> Printer -> light/AMS; every line comes back to childLog().
@@ -37,7 +37,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.1.4"
+@Field static final String APP_VERSION   = "0.1.5"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -152,10 +152,10 @@ private void printerCard(int i, int pos) {
         input "p${i}_allowStop", "bool", title: "Allow Stop from Hubitat", defaultValue: false, width: 12,
             description: "Stop cancels the print and can't be undone. Off: Printer Control only pauses, resumes and changes speed."
         paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;'>Adds <b>Printer Control</b> (Pause, Resume, " +
-            "${settings["p${i}_allowStop"] ? 'Stop, ' : ''}speed) and a <b>Chamber light</b> switch.</div>"
+            "${settings["p${i}_allowStop"] ? 'Stop, ' : ''}speed).</div>"
     } else {
         paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;'>Hubitat watches the printer and the Bambu Handy app keeps working. " +
-            "Pause, stop and the light stay in the Bambu apps.</div>"
+            "The chamber light works from Hubitat; pause, stop and speed stay in the Bambu apps.</div>"
     }
     href name: "help_${i}", title: ctl ? "What changes with control" : "Monitor only or control?", description: "",
         page: "tipsPage", params: [topic: ctl ? "control" : "modes"], width: 8, style: "margin:8px 0;"
@@ -191,7 +191,21 @@ private String printerCardHtml(int i, dev) {
     c << "<span class='text-color-secondary' style='font-size:0.8em'>${serial ? esc(serial) + ' &middot; ' : ''}${esc(settings["p${i}_ip"] ?: '')}</span></div>"
     String tone = ok ? "hub-text-success" : busy ? "text-color-secondary" : "hub-text-warning"
     c << "<div class='${tone}' style='margin-top:6px;font-size:0.85em'>${esc(line).replace('&amp;middot;', '&middot;').replace('&amp;hellip;', '&hellip;')}</div>"
-    if (errs > 0) c << "<div class='hub-text-warning' style='margin-top:4px;font-size:0.85em'>&#9888; ${errs} printer error${errs == 1 ? '' : 's'}: ${esc(dev.currentValue('errors') ?: '')}</div>"
+    if (errs > 0) {
+        List det = []
+        try { det = dev.getErrorDetails() ?: [] } catch (e) { }
+        if (det) det.each { d ->
+            c << "<div class='hub-text-warning' style='margin-top:4px;font-size:0.85em'>&#9888; ${d[1] ? esc(d[1]) + ' ' : ''}" +
+                "<a href='${esc(d[2])}' target='_blank' class='bb-link'>${esc(d[0])}<i class='fa-regular fa-external-link' style='margin-left:4px;font-size:0.8em'></i></a></div>"
+        }
+        else c << "<div class='hub-text-warning' style='margin-top:4px;font-size:0.85em'>&#9888; ${errs} printer error${errs == 1 ? '' : 's'}: ${esc(dev.currentValue('errors') ?: '')}</div>"
+    }
+    if (dev.currentValue("contact") == "open" || dev.currentValue("firmwareUpdate")?.toString()?.startsWith("available")) {
+        List bits = []
+        if (dev.currentValue("contact") == "open") bits << "Door open"
+        if (dev.currentValue("firmwareUpdate")?.toString()?.startsWith("available")) bits << "Firmware update available"
+        c << "<div class='text-color-secondary' style='margin-top:4px;font-size:0.85em'>${bits.join(' &middot; ')}</div>"
+    }
     c << "<div style='margin-top:10px;display:flex;flex-wrap:wrap;gap:8px'>"
     c << "<span class='bb-chip'>${settings["p${i}_mode"] == 'control' ? 'Monitor and control' : 'Monitor only'}</span>"
     List kids = []
@@ -432,8 +446,8 @@ private List tipsTopics() {
         [id: "modes", label: "Monitor or control", title: "Monitor only or Monitor and control?", group: "Getting started", icon: "pi-sliders-h",
             body: "<p>Each printer has its own mode. Most people want <b>Monitor only</b>: Hubitat sees everything, and you keep printing and controlling from the Bambu apps as usual.</p>",
             checklist: [
-                [title: "Monitor only (default)", detail: "Print state, progress, time left, temperatures, AMS, errors and a dashboard tile. Bambu Cloud, Bambu Handy and printing from anywhere keep working. Nothing to change on the printer."],
-                [title: "Monitor and control", detail: "Everything above, plus Pause, Resume, speed, optional Stop, and a chamber light switch from Hubitat. Needs Developer Mode, which takes the printer off Bambu Cloud."],
+                [title: "Monitor only (default)", detail: "Print state, progress, time left, temperatures, AMS, door, errors in plain English, a dashboard tile, and the chamber light switch. Bambu Cloud, Bambu Handy and printing from anywhere keep working. Nothing to change on the printer."],
+                [title: "Monitor and control", detail: "Everything above, plus Pause, Resume, speed and optional Stop from Hubitat. Needs Developer Mode, which takes the printer off Bambu Cloud."],
                 [title: "Not sure?", detail: "Start with Monitor only. You can switch any time in the app; nothing else needs redoing."]
             ],
             append: "control"],
@@ -442,10 +456,10 @@ private List tipsTopics() {
             checklist: [
                 [title: "You lose", detail: "Bambu Cloud: the Bambu Handy app, remote printing and monitoring away from home, and cloud print history."],
                 [title: "You keep", detail: "Bambu Studio and OrcaSlicer on your home network, and printing from the printer's screen."],
-                [title: "Hubitat gets", detail: "Printer Control (Pause, Resume, speed, and Stop if you allow it) and a Chamber light switch device."],
+                [title: "Hubitat gets", detail: "Printer Control (Pause, Resume, speed, and Stop if you allow it). The chamber light works in both modes."],
                 [title: "Allow Stop", detail: "Off by default. Stop cancels the print for good, so only turn it on if you trust every rule, dashboard and voice assistant that can reach the printer."]
             ],
-            warning: "If Developer Mode is off, the printer refuses commands. The log says so once, and monitoring keeps working."],
+            warning: "If Developer Mode is off, the printer refuses Printer Control. After each command the log says whether it took, and monitoring and the light keep working."],
         [id: "setup", label: "Setup", title: "Adding a printer", group: "Getting started", icon: "pi-cog",
             body: "<p>Tap <b>Add printer</b>. Enter a name, the <b>IP address</b> and the <b>LAN access code</b>. Both are on the printer under <b>Settings, Network</b> (<b>WLAN</b> on some models). Just read them: you don't need to turn on LAN Only.</p>" +
                 "<p>Leave the serial blank. The integration reads it from the printer and shows it next to the printer's name once connected.</p>" +
@@ -466,7 +480,9 @@ private List tipsTopics() {
             body: "<p>Some ideas:</p>",
             checklist: [
                 [title: "Print finished", detail: "printState becomes Finished: notify, or turn off the enclosure fan."],
-                [title: "Print failed or error", detail: "printState becomes Failed, or errorCount above 0. errors lists HMS codes to look up on the Bambu Lab Wiki."],
+                [title: "Print failed or error", detail: "printState becomes Failed, or errorCount above 0. errorText says what's wrong in plain English, and the card links each code to the Bambu Lab Wiki."],
+                [title: "Door opened", detail: "The printer device is a contact sensor: contact becomes open (H2D and printers with a door sensor)."],
+                [title: "Firmware update", detail: "firmwareUpdate becomes available. Update from the printer or the Bambu apps."],
                 [title: "Ready to print", detail: "bedStatus becomes At temp."],
                 [title: "Dashboard", detail: "Add the printer as an Attribute tile and pick tile: state, file, progress bar, layers, time left and temperatures."]
             ]],
@@ -477,7 +493,9 @@ private List tipsTopics() {
                 [title: "Waiting for printer", detail: "Connected, but no status yet. Some printers stay quiet while idle; start anything on the printer, or enter its serial (Settings, Device)."],
                 [title: "Serial doesn't match", detail: "The integration uses the serial the printer reports and logs a warning. Clear the serial field."],
                 [title: "Reconnecting", detail: "Check the printer is on and on the same network, and nothing blocks port 8883. It retries on its own."],
-                [title: "Command refused", detail: "In Monitor only that's on purpose. In Monitor and control, turn on Developer Mode on the printer."]
+                [title: "Command refused", detail: "In Monitor only that's on purpose. In Monitor and control, turn on Developer Mode on the printer. The light works either way."],
+                [title: "Light came back on", detail: "The printer turns its light on when a print finishes. That's the printer, not Hubitat."],
+                [title: "Error text", detail: "Looked up from this integration's GitHub folder the first time a code appears (not from Bambu). Plain-English text comes from the ha-bambulab project (MIT license)."]
             ]]
     ]
 }
