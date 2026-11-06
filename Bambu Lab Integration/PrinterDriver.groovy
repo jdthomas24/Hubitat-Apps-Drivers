@@ -106,7 +106,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.1.8"
+@Field static final String VERSION     = "0.1.9"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -979,8 +979,8 @@ private void tile() {
     boolean active = ps in ACTIVE
     String u = unitScale()
     def t = { String a -> def v = device.currentValue(a); v == null ? "-" : "${Math.round(v as double)}" }
-    String name = esc(device.displayName).take(40)
-    String file = esc(device.currentValue("fileName") ?: "").take(40)
+    String name = esc(device.displayName.take(40))
+    String file = esc((device.currentValue("fileName") ?: "").toString().take(40))
     String line2 = active ? "${pct}% &middot; layer ${device.currentValue('currentLayer') ?: 0}/${device.currentValue('totalLayers') ?: 0}" +
         ((device.currentValue("timeRemaining") ?: 0) > 0 ? " &middot; ${hm(device.currentValue('timeRemaining') as int)} left" : "") : ""
     String bar = active ? "<div style='height:6px;border-radius:3px;background:rgba(127,127,127,.3);margin:4px 0'>" +

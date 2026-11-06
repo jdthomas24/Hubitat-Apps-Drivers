@@ -6,7 +6,8 @@
      -Local only. Each printer is a slot (name, IP, LAN access code, optional serial), added and removed with
       buttons; slot numbers in state.slots never get reused. Done creates one Printer device per slot with an IP
       and code (DNI bambu-pN); Remove deletes the slot's device right away. A printer with a device shows as a
-      summary card (as in Sofabaton); Edit Printer opens its fields, Done editing applies them. The Printer
+      summary card (as in Sofabaton); Edit Printer opens its own page (0.1.9) and returning to the main page
+      applies any change (reconnects only if something changed), so every card stays collapsed. A new slot edits inline until Done. The Printer
       learns its serial from the printer's own reports (0.1.1), so the serial field is only a fallback.
      -Access codes stay in this app's settings and are never logged or stored on a device. getAccessCode() hands
       one to its Printer at connect time. Plain text input on purpose: a password field makes browsers autofill
@@ -37,7 +38,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.1.8"
+@Field static final String APP_VERSION   = "0.1.9"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -46,6 +47,7 @@ import groovy.transform.Field
 
 preferences {
     page(name: "mainPage")
+    page(name: "printerPage")
     page(name: "equipmentPage")
     page(name: "tipsPage")
 }
@@ -77,6 +79,11 @@ private Map configuredPrinters() {
 // ============================================================================
 
 def mainPage() {
+    if (state.applyEdits) {   // back from Edit Printer: reconnect only if something changed
+        boolean changed = state.editBefore != groovy.json.JsonOutput.toJson(configuredPrinters())
+        ["applyEdits", "editSlot", "editBefore"].each { state.remove(it) }
+        if (changed) initialize()
+    }
     armLogRevert()
     if (state.pushedLogLevel != currentLogLevel()) pushLogLevel()
     Map banner = bannerState()
@@ -123,19 +130,44 @@ def mainPage() {
 
 private void printerCard(int i, int pos) {
     def dev = getChildDevice(printerDni(i))
-    boolean editing = state.editing == i || !dev
-    if (!editing) {
+    if (dev) {
         paragraph rawHtml: true, printerCardHtml(i, dev)
-        input "editP_${i}", "button", title: "Edit Printer", width: 3, inputClass: "app-ui-button"
+        href name: "editP_${i}", title: "Edit Printer", description: "", page: "printerPage", params: [slot: i], width: 3
         input "refreshP_${i}", "button", title: "Refresh", width: 3, inputClass: "app-ui-button"
         input "remove_${i}", "button", title: state.confirmRemove == i ? "Tap again to remove" : "Remove Printer", width: 3, inputClass: "app-ui-button"
         paragraph rawHtml: true, "<div class='bb-card-end'></div>"
         return
     }
+    // New printer: fields inline until Done creates its device.
+    paragraph rawHtml: true, "<div class='font-semibold mt-3'>${esc(settings["p${i}_name"]?.toString()?.trim() ?: "Printer ${pos}")}</div>"
+    printerFields(i)
+    input "remove_${i}", "button", title: state.confirmRemove == i ? "Tap again to remove" : "Remove Printer", width: 3, inputClass: "app-ui-button"
+    paragraph rawHtml: true, "<div class='bb-card-end'></div>"
+}
+
+// Edit an existing printer on its own page. Back on the main page, initialize() applies it.
+def printerPage(params = null) {
+    if (params?.slot) {
+        state.editSlot = params.slot as int
+        state.editBefore = groovy.json.JsonOutput.toJson(configuredPrinters())
+    }
+    int i = (state.editSlot ?: 0) as int
+    def dev = getChildDevice(printerDni(i))
+    if (dev) state.applyEdits = true
+    dynamicPage(name: "printerPage", title: "Edit Printer", install: false, uninstall: false) {
+        section(sectionClass: "app-ui-links app-main-content") {
+            paragraph rawHtml: true, "<style>${appPageSpacingCss()}</style>"
+            if (!dev) { paragraph "That printer isn't set up. Go back and use Add printer."; return }
+            paragraph rawHtml: true, "<div class='font-semibold'>${esc(dev.displayName)} <span class='text-color-secondary' style='font-weight:400;font-size:14px;'>" +
+                "${esc(dev.currentValue('connectionStatus') ?: '')}</span></div>"
+            printerFields(i)
+            paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;margin-top:8px'>Tap <b>Done</b> to save. The printer reconnects with the new settings.</div>"
+        }
+    }
+}
+
+private void printerFields(int i) {
     String s = settings["p${i}_serial"]?.toString()?.trim()?.toUpperCase()
-    String title = esc(settings["p${i}_name"]?.toString()?.trim() ?: "Printer ${pos}")
-    String status = dev ? " <span class='text-color-secondary' style='font-weight:400;font-size:14px;'>${esc(dev.currentValue('connectionStatus') ?: '')}</span>" : ""
-    paragraph rawHtml: true, "<div class='font-semibold mt-3'>${title}${status}</div>"
     input "p${i}_name", "text", title: "Name", required: false, width: 6
     input "p${i}_ip", "text", title: "IP address", description: "e.g. 192.168.1.60", required: false, width: 6
     input "p${i}_code", "text", title: "LAN access code", description: "8 characters, shown on the printer", required: false, width: 6
@@ -159,9 +191,6 @@ private void printerCard(int i, int pos) {
     }
     href name: "help_${i}", title: ctl ? "What changes with control" : "Monitor only or control?", description: "",
         page: "tipsPage", params: [topic: ctl ? "control" : "modes"], width: 8, style: "margin:8px 0;"
-    if (dev) input "doneP_${i}", "button", title: "Done editing", width: 3, inputClass: "app-ui-button"
-    input "remove_${i}", "button", title: state.confirmRemove == i ? "Tap again to remove" : "Remove Printer", width: 3, inputClass: "app-ui-button"
-    paragraph rawHtml: true, "<div class='bb-card-end'></div>"
 }
 
 // Summary card, Sofabaton style: name, serial and IP; status line; mode, AMS and light chips.
@@ -249,13 +278,11 @@ private String shortName(k, dev) {
 private String hm(int mins) { mins >= 60 ? "${(mins / 60) as int}h ${mins % 60}m" : "${mins}m" }
 
 def appButtonHandler(String btn) {
-    def pm = btn =~ /^(editP|doneP|refreshP)_(\d+)$/
+    def pm = btn =~ /^refreshP_(\d+)$/
     if (pm.find()) {
-        int n = pm.group(2).toInteger()
         state.remove("confirmRemove")
-        if (pm.group(1) == "editP") state.editing = n
-        else if (pm.group(1) == "doneP") { state.remove("editing"); initialize() }
-        else { def d = getChildDevice(printerDni(n)); if (d) try { d.refresh() } catch (e) { } }
+        def d = getChildDevice(printerDni(pm.group(1).toInteger()))
+        if (d) try { d.refresh() } catch (e) { }
         return
     }
     if (btn == "addPrinter") {
@@ -263,7 +290,6 @@ def appButtonHandler(String btn) {
         int next = Math.max(((state.maxSlot ?: 0) as int), (sl ? sl.max() : 0)) + 1
         state.maxSlot = next
         state.slots = sl + next
-        state.editing = next
         state.remove("confirmRemove")
         return
     }
@@ -280,7 +306,6 @@ def appButtonHandler(String btn) {
     }
     ["name", "ip", "code", "serial", "mode", "allowStop"].each { app.removeSetting("p${i}_${it}") }
     state.slots = slots() - i
-    if (state.editing == i) state.remove("editing")
 }
 
 def equipmentPage() {
@@ -379,7 +404,7 @@ private boolean reconnecting(dev) {
 
 def installed() { initialize() }
 
-def updated() { state.remove("editing"); state.remove("confirmRemove"); initialize() }
+def updated() { ["editing", "editSlot", "editBefore", "applyEdits", "confirmRemove"].each { state.remove(it) }; initialize() }
 
 def initialize() {
     unschedule()
@@ -672,7 +697,7 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
   a.bb-link { color: var(--hubitat-link-color, #1565c0); text-decoration: none; }
   a.bb-link:hover { text-decoration: underline; }
   .bb-dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-left: 4px; border: 1px solid rgba(127,127,127,.5); }
-  .app-main-content :is([name*='editP_'],[name*='doneP_'],[name*='refreshP_'],[name*='remove_'],[id*='editP_'],[id*='doneP_'],[id*='refreshP_'],[id*='remove_']) {
+  .app-main-content :is([name*='refreshP_'],[name*='remove_'],[id*='refreshP_'],[id*='remove_']) {
     font-size: 13px !important; padding: 3px 12px !important; min-height: 0 !important; height: auto !important;
     line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid var(--hubitat-control-border, #d0d7de) !important;
     white-space: nowrap; }
