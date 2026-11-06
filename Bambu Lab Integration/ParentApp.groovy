@@ -38,7 +38,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.1.9"
+@Field static final String APP_VERSION   = "0.2.0"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -207,7 +207,7 @@ private String printerCardHtml(int i, dev) {
     else if (ps in ["Printing", "Paused", "Preparing"]) {
         def pct = dev.currentValue("progress"), left = dev.currentValue("timeRemaining")
         line = ps + (pct != null ? " &middot; ${pct}%" : "") + (left ? " &middot; ${hm(left as int)} left" : "") +
-            (dev.currentValue("eta") ? " &middot; done at ${dev.currentValue('eta')}" : "")
+            (dev.currentValue("ETA") && dev.currentValue("ETA") != "--" ? " &middot; done at ${dev.currentValue('ETA')}" : "")
     } else line = ps ?: "Connected"
     int errs = (dev.currentValue("errorCount") ?: 0) as int
     StringBuilder c = new StringBuilder()
@@ -229,9 +229,9 @@ private String printerCardHtml(int i, dev) {
         }
         else c << "<div class='hub-text-warning' style='margin-top:4px;font-size:0.85em'>&#9888; ${errs} printer error${errs == 1 ? '' : 's'}: ${esc(dev.currentValue('errors') ?: '')}</div>"
     }
-    if (dev.currentValue("contact") == "open" || dev.currentValue("firmwareUpdate")?.toString()?.startsWith("available")) {
+    if (dev.currentValue("door") == "open" || dev.currentValue("firmwareUpdate")?.toString()?.startsWith("available")) {
         List bits = []
-        if (dev.currentValue("contact") == "open") bits << "Door open"
+        if (dev.currentValue("door") == "open") bits << "Door open"
         if (dev.currentValue("firmwareUpdate")?.toString()?.startsWith("available")) bits << "Firmware update available"
         c << "<div class='text-color-secondary' style='margin-top:4px;font-size:0.85em'>${bits.join(' &middot; ')}</div>"
     }
@@ -515,7 +515,8 @@ private List tipsTopics() {
             checklist: [
                 [title: "Print finished", detail: "printState becomes Finished: notify, or turn off the enclosure fan."],
                 [title: "Print failed or error", detail: "printState becomes Failed, or errorCount above 0. errorText says what's wrong in plain English, and the card links each code to the Bambu Lab Wiki."],
-                [title: "Door opened", detail: "The printer device is a contact sensor: contact becomes open (H2D and printers with a door sensor)."],
+                [title: "Door opened", detail: "door becomes open (H2D and printers with a door sensor). In Rule Machine it's under Custom Attribute."],
+                [title: "What printed last", detail: "lastPrint keeps the last finished or failed file. fileName says Not printing between prints."],
                 [title: "Firmware update", detail: "firmwareUpdate becomes available. Update from the printer or the Bambu apps."],
                 [title: "Ready to print", detail: "bedStatus becomes At temp."],
                 [title: "Dashboard", detail: "Add the printer as an Attribute tile and pick tile: state, file, progress bar, layers, time left and temperatures."]

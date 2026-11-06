@@ -1,12 +1,12 @@
 # Bambu Lab Integration for Hubitat
 
-> **Status: v0.1.9 beta, tested on an H2D.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
+> **Status: v0.2.0 beta, tested on an H2D.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
 
 ## What you get
 
 | Device | What it does |
 |---|---|
-| **Printer** (one per printer) | Print state and stage, progress, elapsed time, time left and ETA, layers, file name, heater status (Heating to target, At temp, Cooling, Off) and temperatures for the nozzle, bed and chamber (both nozzles on the H2D), speed, chamber light, door (contact sensor), active filament and external spools, errors in plain English with a Wiki link, firmware and firmware updates, dashboard tile |
+| **Printer** (one per printer) | Print state and stage, progress, elapsed time, time left and ETA, layers, file name and last print, heater status (Heating to target, At temp, Cooling, Off) and temperatures for the nozzle, bed and chamber (both nozzles on the H2D), speed, chamber light, door, active filament and external spools, errors in plain English with a Wiki link, firmware and firmware updates, dashboard tile |
 | **Chamber light** | A switch for the printer's chamber light (both modes; on the H2D it switches both chamber lights) |
 | **AMS** (one per unit) | Humidity, temperature, and filament type, color and amount for each tray |
 
@@ -69,13 +69,15 @@ These are on each printer device's **Preferences** tab.
 
 ## Dashboards and rules
 
-- **Tile:** add the Printer as an Attribute tile and pick **tile**. It shows state, file, a progress bar, layers, time left, temperatures and errors.
+- **Tile:** add the Printer as an Attribute tile and pick **tile**. A dark card that scales with the tile size: state, file, temperatures (an arrow and the target while heating), a progress bar, layers, time left and ETA while printing, the last print when idle, door open and errors.
 - **printState** is Idle, Preparing, Printing, Paused, Finished or Failed, so a rule can announce a finished print or a failure.
 - **nozzleStatus** and **bedStatus** are "Heating to 220°", At temp, Cooling or Off. "bedStatus becomes At temp" is a clean trigger, with no watching numbers climb. **nozzleTemp** and **bedTemp** update at temperature or off.
 - **timeRemaining** and **elapsedTime** are in minutes and move in 5 minute steps.
 - **stage** shows what the printer is doing right now (Heating hotend, Changing filament, Paused: filament runout and so on).
 - **errors** lists HMS codes in Bambu's format (HMS_0700_8000_0002_0001) and **errorText** says what they mean. The log and the app's printer card link each code to its Bambu Lab Wiki page.
-- **contact** is open or closed for the printer's door (H2D tested), so the printer works as a contact sensor in rules.
+- **door** is open or closed (H2D tested). In Rule Machine, use **Custom Attribute**.
+- **fileName** is the file printing now, or Not printing. **lastPrint** keeps the last finished or failed file.
+- **ETA** is when the print should finish (with the weekday if it's not today), or -- when not printing.
 - **firmwareUpdate** is none, or available with the new version.
 - **externalSpool** and **externalSpool2** show the filament on the external holders once one is loaded.
 

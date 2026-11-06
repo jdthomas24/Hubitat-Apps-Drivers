@@ -35,7 +35,11 @@
       table from this integration's GitHub folder (HMS/<module>.json, made from ha-bambulab's MIT-licensed
       English HMS list; GitHub paths are case sensitive, so HMS) and keeps only the matching line in state.hmsText. errorText and the log get the text
       and a Bambu Lab Wiki link. No lookup goes to Bambu.
-     -Door (contact, 0.1.5) from print.stat bit 0x00800000 (H2D confirmed). firmwareUpdate from upgrade_state.
+     -Door (door attribute, 0.2.0; contact in 0.1.5-0.1.9) from print.stat bit 0x00800000 (H2D confirmed).
+      firmwareUpdate from upgrade_state.
+     -0.2.0: fileName is "Not printing" when idle and lastPrint keeps the last finished or failed file. ETA
+      (was eta) is "--" when not printing, with the weekday when not today. Old eta and contact states are
+      deleted once. Tile in the Moonraker driver's style: scales with the tile (cqw), stays under 1024 bytes.
       External spools from vir_slot ids 254/255 (or vt_tray), shown only once loaded. H2D has no
       gcode_start_time, so elapsedTime counts from when the driver saw the print start (blank if it joined
       mid-print).
@@ -52,17 +56,18 @@ metadata {
         capability "Refresh"
         capability "Sensor"
         capability "Actuator"
-        capability "ContactSensor"
 
         attribute "printState",       "string"
         attribute "stage",            "string"
         attribute "progress",         "number"
         attribute "timeRemaining",    "number"
         attribute "elapsedTime",      "number"
-        attribute "eta",              "string"
+        attribute "ETA",              "string"
         attribute "currentLayer",     "number"
         attribute "totalLayers",      "number"
         attribute "fileName",         "string"
+        attribute "lastPrint",        "string"
+        attribute "door",             "string"
         attribute "nozzleTemp",       "number"
         attribute "nozzleStatus",     "string"
         attribute "nozzle2Temp",      "number"
@@ -106,7 +111,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.1.9"
+@Field static final String VERSION     = "0.2.0"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -183,6 +188,10 @@ void adoptOptions(Map o) {
 
 def initialize() {
     unschedule()
+    if (state.attrs != "0.2.0") {   // renamed in 0.2.0
+        ["eta", "contact"].each { try { device.deleteCurrentState(it) } catch (e) { } }
+        state.attrs = "0.2.0"
+    }
     Map m = mem()
     m.attempt = 0
     m.reconnectPending = false
@@ -557,9 +566,15 @@ private void render() {
     if (r.containsKey("mc_percent")) report("progress", toInt(r.mc_percent) ?: 0, "%")
     if (r.containsKey("mc_remaining_time")) {
         int mins = active ? (toInt(r.mc_remaining_time) ?: 0) : 0
-        if (report("timeRemaining", mins, "min", 5) || (!active && device.currentValue("eta")))
-            report("eta", active && mins > 0 ? new Date(now() + mins * 60000L).format("h:mm a", location.timeZone) : "")
-    }
+        report("timeRemaining", mins, "min", 5)
+        String eta = "--"
+        if (active && mins > 0) {
+            Date at = new Date(now() + mins * 60000L)
+            boolean today = at.format("yyyyMMdd", location.timeZone) == new Date(now()).format("yyyyMMdd", location.timeZone)
+            eta = at.format(today ? "h:mm a" : "EEE h:mm a", location.timeZone)
+        }
+        if (eta == "--" || (cv("timeRemaining") as Integer) == mins) report("ETA", eta)   // ETA moves with timeRemaining's 5 min steps
+    } else if (!active) report("ETA", "--")
     Long start = toLong(r.gcode_start_time)
     Long startMs = (start && start > 0) ? start * 1000L : (state.printStartAt as Long)
     if (active && startMs) report("elapsedTime", Math.max(0, ((now() - startMs) / 60000) as int), "min", 5)
@@ -567,7 +582,8 @@ private void render() {
     if (r.containsKey("layer_num")) report("currentLayer", toInt(r.layer_num) ?: 0)
     if (r.containsKey("total_layer_num")) report("totalLayers", toInt(r.total_layer_num) ?: 0)
     String fn = (r.subtask_name ?: r.gcode_file ?: "").toString()
-    if (fn || r.containsKey("subtask_name")) report("fileName", fn)
+    if (gs || fn) report("fileName", active && fn ? fn : "Not printing")
+    if (fn && ps in ["Finished", "Failed"]) report("lastPrint", fn)
     if (r.containsKey("spd_lvl")) { Integer s = toInt(r.spd_lvl); report("speed", s in 1..4 ? SPEEDS[s] : "Standard") }
     if (r.wifi_signal) {
         Integer db = toInt(r.wifi_signal.toString().replaceAll(/[^\-0-9]/, ""))
@@ -590,8 +606,8 @@ private void door(Map r) {
     Long s
     try { s = Long.parseLong(r.stat.toString(), 16) } catch (e) { return }
     String v = (s & DOOR_BIT) != 0L ? "open" : "closed"
-    if (device.currentValue("contact") != v) logN "door ${v}"
-    report("contact", v)
+    if (device.currentValue("door") != v) logN "door ${v}"
+    report("door", v)
 }
 
 private void firmwareUpdate(Map r) {
@@ -973,25 +989,67 @@ private boolean printCommand(String cmd, String param) {
 // ============================================================
 
 private void tile() {
+    String html = null
+    for (List lim in [[40, 60], [28, 40], [20, 24], [16, 0]]) {   // shrink file and error text until it fits
+        html = tileHtml(lim[0] as int, lim[1] as int)
+        if (html.getBytes("UTF-8").length <= 1024) break
+    }
     Map m = mem()
-    String ps = device.currentValue("printState") ?: "Unknown"
-    int pct = (device.currentValue("progress") ?: 0) as int
-    boolean active = ps in ACTIVE
-    String u = unitScale()
-    def t = { String a -> def v = device.currentValue(a); v == null ? "-" : "${Math.round(v as double)}" }
-    String name = esc(device.displayName.take(40))
-    String file = esc((device.currentValue("fileName") ?: "").toString().take(40))
-    String line2 = active ? "${pct}% &middot; layer ${device.currentValue('currentLayer') ?: 0}/${device.currentValue('totalLayers') ?: 0}" +
-        ((device.currentValue("timeRemaining") ?: 0) > 0 ? " &middot; ${hm(device.currentValue('timeRemaining') as int)} left" : "") : ""
-    String bar = active ? "<div style='height:6px;border-radius:3px;background:rgba(127,127,127,.3);margin:4px 0'>" +
-        "<div style='height:6px;border-radius:3px;width:${pct}%;background:currentColor'></div></div>" : ""
-    String html = "<div style='font-size:13px;line-height:1.35;text-align:left'><b>${name}</b><br>${ps}" +
-        (active && file ? ": ${file}" : "") + bar + (line2 ? "${line2}<br>" : "<br>") +
-        "Nozzle ${t('nozzleTemp')}&deg; Bed ${t('bedTemp')}&deg;" + (device.currentValue("chamberTemp") != null ? " Chamber ${t('chamberTemp')}&deg;" : "") +
-        (device.currentValue("contact") == "open" ? "<br>Door open" : "") +
-        ((device.currentValue("errorCount") ?: 0) > 0 ? "<br>&#9888; ${device.currentValue('errorCount')} error(s)" : "") + "</div>"
-    if (html.length() > 1024) html = html.take(1018) + "</div>"
     if (html != m.lastTile) { m.lastTile = html; report("tile", html) }
+}
+
+// Moonraker driver style: dark card, text scales with the tile (cqw).
+private String tileHtml(int fileMax, int errMax) {
+    String ps = cv("printState") ?: "Unknown"
+    boolean active = ps in ACTIVE
+    int pct = (cv("progress") ?: 0) as int
+    String col = ps == "Printing" ? "#00ff87" : ps in ["Paused", "Preparing", "Starting"] ? "#ffd166" : ps == "Failed" ? "#ff6b6b" : ps == "Finished" ? "#00b4d8" : "#aaa"
+    String icon = ps == "Printing" ? "&#9654; " : ps == "Paused" ? "&#9646;&#9646; " : ""
+    boolean up = cv("connectionStatus") == "Connected"
+    StringBuilder t = new StringBuilder()
+    t << "<div><b style='color:#00ae42'>${short_(device.displayName, 28)}</b> <span style='color:${up ? '#00ff87' : '#ffd166'}'>&#9679;</span></div>"
+    t << "<div style='color:${col}'>${icon}${ps}"
+    String file = cv("fileName")
+    if (active && file && file != "Not printing") t << " &middot; <span style='color:#eee'>${short_(file, fileMax)}</span>"
+    t << "</div>"
+    String noz = heat("nozzle") + (cv("nozzle2Status") != null ? "/" + heat("nozzle2") : "")
+    t << "<div>Nozzle <b style='color:#ff6b6b'>${noz}</b> &middot; Bed <b style='color:#ffa94d'>${heat('bed')}</b>" +
+        (cv("chamberTemp") != null ? " &middot; Ch <b>${Math.round(cv('chamberTemp') as double)}&deg;</b>" : "") + "</div>"
+    if (active) {
+        int left = (cv("timeRemaining") ?: 0) as int
+        String eta = cv("ETA")
+        t << "<div style='background:#0f3460;height:.4em;border-radius:1em'><div style='background:#00ae42;width:${pct}%;height:100%;border-radius:1em'></div></div>"
+        t << "<div>${pct}% &middot; L${cv('currentLayer') ?: 0}/${cv('totalLayers') ?: 0}" +
+            (left > 0 ? " &middot; <span style='color:#00ff87'>${hm(left)} left</span>" : "") + (eta && eta != "--" ? " &middot; ${eta}" : "") + "</div>"
+    } else {
+        String last = cv("lastPrint")
+        if (last) t << "<div style='color:#888'>Last: <span style='color:#ddd'>${short_(last, fileMax)}</span></div>"
+    }
+    if (cv("door") == "open") t << "<div style='color:#ffd166'>Door open</div>"
+    int errs = (cv("errorCount") ?: 0) as int
+    if (errs > 0) {
+        String et = cv("errorText")
+        t << "<div style='color:#ff6b6b'>&#9888; " + (errMax > 0 && et && et != "none" ? short_(et, errMax) : "${errs} error${errs == 1 ? '' : 's'}") + "</div>"
+    }
+    return "<div style='height:100%;box-sizing:border-box;padding:4%;container-type:inline-size;background:#1a1a2e;border-radius:10px'>" +
+        "<div style='height:100%;font:4.6cqw/1.35 sans-serif;color:#ddd;text-align:left;text-shadow:none;" +
+        "display:flex;flex-direction:column;justify-content:space-around'>${t}</div></div>"
+}
+
+// Heater for the tile: arrow and target while heating, else the temperature.
+private String heat(String n) {
+    String st = cv("${n}Status")
+    def mt = (st ?: "") =~ /^Heating to (\d+)/
+    if (mt.find()) return "&rarr;${mt.group(1)}&deg;"
+    def v = cv("${n}Temp")
+    return v == null ? "-" : "${Math.round(v as double)}&deg;"
+}
+
+// Cut raw text, then escape, so an entity is never split.
+private String short_(text, int max) {
+    String s = (text ?: "").toString()
+    if (max <= 0) return ""
+    return s.length() > max ? esc(s.take(max - 1)) + "&hellip;" : esc(s)
 }
 
 private String hm(int mins) { mins >= 60 ? "${(mins / 60) as int}h ${mins % 60}m" : "${mins}m" }
@@ -1088,11 +1146,19 @@ void removeAllChildren() {
 // ============================================================
 
 private boolean report(String name, value, String unit = null, delta = 0) {
-    if (!moved(device.currentValue(name), value, delta)) return false
+    if (!moved(cv(name), value, delta)) return false
     Map e = [name: name, value: value]
     if (unit) e.unit = unit
     sendEvent(e)
+    Map c = (mem().cv ?: (mem().cv = new java.util.concurrent.ConcurrentHashMap())) as Map
+    c[name] = value
     return true
+}
+
+// This run's value if it was just reported (currentValue can lag right after sendEvent).
+private cv(String name) {
+    Map c = mem().cv as Map
+    return (c != null && c.containsKey(name)) ? c[name] : device.currentValue(name)
 }
 
 private boolean moved(cur, val, delta) {
