@@ -31,8 +31,8 @@
       (H2D). That code is not counted as a printer error. After a command the driver checks the next status
       (speed, state, light) and logs whether it took, was refused (Developer Mode) or was ignored.
      -Errors in plain English (0.1.5): on a new HMS or print error code the driver fetches that module's small
-      table from this integration's GitHub folder (hms/<module>.json, made from ha-bambulab's MIT-licensed
-      English HMS list) and keeps only the matching line in state.hmsText. errorText and the log get the text
+      table from this integration's GitHub folder (HMS/<module>.json, made from ha-bambulab's MIT-licensed
+      English HMS list; GitHub paths are case sensitive, so HMS) and keeps only the matching line in state.hmsText. errorText and the log get the text
       and a Bambu Lab Wiki link. No lookup goes to Bambu.
      -Door (contact, 0.1.5) from print.stat bit 0x00800000 (H2D confirmed). firmwareUpdate from upgrade_state.
       External spools from vir_slot ids 254/255 (or vt_tray), shown only once loaded. H2D has no
@@ -105,7 +105,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.1.5"
+@Field static final String VERSION     = "0.1.6"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -131,7 +131,7 @@ import groovy.transform.Field
 @Field static final Long DEV_MODE_PE    = 84033543L
 @Field static final List REFUSED_HMS    = ["0500050000010007"]   // MQTT command verification failed (unsigned)
 @Field static final Long DOOR_BIT       = 0x00800000L
-@Field static final String HMS_URL      = "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Bambu%20Lab%20Integration/hms/"
+@Field static final String HMS_URL      = "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Bambu%20Lab%20Integration/HMS/"
 @Field static final String WIKI         = "https://wiki.bambulab.com"
 @Field static final String WIKI_HOME    = "https://wiki.bambulab.com/en/hms/home"
 @Field static final Map AMS_FAMILY      = ["07": "AMS ", "18": "AMS-HT ", "12": "AMS Lite "]   // one table per family, unit A

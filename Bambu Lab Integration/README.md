@@ -1,6 +1,6 @@
 # Bambu Lab Integration for Hubitat
 
-> **Status: v0.1.5 beta, tested on an H2D.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
+> **Status: v0.1.6 beta, tested on an H2D.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
 
 ## What you get
 
@@ -79,7 +79,7 @@ These are on each printer device's **Preferences** tab.
 - **firmwareUpdate** is none, or available with the new version.
 - **externalSpool** and **externalSpool2** show the filament on the external holders once one is loaded.
 
-**Error text** comes from a small table in this folder's **hms** directory, fetched from GitHub the first time a code shows up (nothing goes to Bambu); only the matching line is kept on the hub. The English text and Wiki links come from the [ha-bambulab](https://github.com/greghesp/ha-bambulab) project (MIT license).
+**Error text** comes from a small table in this folder's **HMS** directory, fetched from GitHub the first time a code shows up (nothing goes to Bambu); only the matching line is kept on the hub. The English text and Wiki links come from the [ha-bambulab](https://github.com/greghesp/ha-bambulab) project (MIT license).
 
 ## Logging
 
