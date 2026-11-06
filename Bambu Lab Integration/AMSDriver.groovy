@@ -35,7 +35,7 @@ metadata {
 
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.0"
+@Field static final String VERSION     = "0.2.1"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]

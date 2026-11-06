@@ -37,6 +37,7 @@
       and a Bambu Lab Wiki link. No lookup goes to Bambu.
      -Door (door attribute, 0.2.0; contact in 0.1.5-0.1.9) from print.stat bit 0x00800000 (H2D confirmed).
       firmwareUpdate from upgrade_state.
+     -0.2.1: layers read 0 when not printing, progress 0 when Idle (the printer keeps the last job's numbers).
      -0.2.0: fileName is "Not printing" when idle and lastPrint keeps the last finished or failed file. ETA
       (was eta) is "--" when not printing, with the weekday when not today. Old eta and contact states are
       deleted once. Tile in the Moonraker driver's style: scales with the tile (cqw), stays under 1024 bytes.
@@ -111,7 +112,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.0"
+@Field static final String VERSION     = "0.2.1"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -563,7 +564,8 @@ private void render() {
     boolean active = ps in ACTIVE
     Integer stg = toInt(r.stg_cur)
     report("stage", active ? (stg && stg != 255 && stg > 0 ? (STAGES[stg] ?: "Stage ${stg}") : (ps == "Printing" ? "Printing" : ps)) : ps)
-    if (r.containsKey("mc_percent")) report("progress", toInt(r.mc_percent) ?: 0, "%")
+    // The printer keeps the last job's numbers. Progress stays at 100 on Finished; Idle reads 0.
+    if (r.containsKey("mc_percent")) report("progress", ps == "Idle" ? 0 : (toInt(r.mc_percent) ?: 0), "%")
     if (r.containsKey("mc_remaining_time")) {
         int mins = active ? (toInt(r.mc_remaining_time) ?: 0) : 0
         report("timeRemaining", mins, "min", 5)
@@ -579,8 +581,8 @@ private void render() {
     Long startMs = (start && start > 0) ? start * 1000L : (state.printStartAt as Long)
     if (active && startMs) report("elapsedTime", Math.max(0, ((now() - startMs) / 60000) as int), "min", 5)
     else if (ps == "Idle") report("elapsedTime", 0, "min")
-    if (r.containsKey("layer_num")) report("currentLayer", toInt(r.layer_num) ?: 0)
-    if (r.containsKey("total_layer_num")) report("totalLayers", toInt(r.total_layer_num) ?: 0)
+    if (r.containsKey("layer_num")) report("currentLayer", active ? (toInt(r.layer_num) ?: 0) : 0)
+    if (r.containsKey("total_layer_num")) report("totalLayers", active ? (toInt(r.total_layer_num) ?: 0) : 0)
     String fn = (r.subtask_name ?: r.gcode_file ?: "").toString()
     if (gs || fn) report("fileName", active && fn ? fn : "Not printing")
     if (fn && ps in ["Finished", "Failed"]) report("lastPrint", fn)
