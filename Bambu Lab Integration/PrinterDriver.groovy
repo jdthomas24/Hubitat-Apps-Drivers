@@ -13,12 +13,14 @@
       every 30 s (app setting) while active, every 5 min idle. Unsubscribed, the printer sends the hub nothing.
       3 cycles without a reply reconnect. The merged report lives in memory (RUNTIME); a driver save clears it.
      -Temperatures: classic print.* fields first; H2 series fall back to print.device (extruder.info[n].temp,
-      ctc.info.temp), packed as current = low 16 bits, target = high 16 bits. Heaters report a status (Heating,
-      At temp, Cooling, Off) and their target; the current temperature only at temp or off, in the app's step.
+      ctc.info.temp), packed as current = low 16 bits, target = high 16 bits (H2D confirmed). Heaters report a
+      status (Heating to <target>, At temp, Cooling, Off) and the current temperature only at temp or off, in the
+      app's step. Celsius by default to match the printer; the app can switch to the hub's scale.
      -Times move in 5 minute steps; wifiSignal in 5 dB steps; AMS humidity in 5% steps.
      -Mode is per printer, from the app. Monitor only (default): works alongside Bambu Cloud and the Bambu
       apps; chamberLight is read-only and commands are refused locally. Monitor and control: needs Developer
-      Mode (LAN Only, no Bambu Cloud); adds the chamber light switch device and Pause, Resume, Stop, Set Speed.
+      Mode (LAN Only, no Bambu Cloud); adds the chamber light switch device and Printer Control. Stop only
+      when the app's Allow Stop is on for this printer (off by default).
       Unsigned commands refused by the printer (84033543) are reported once with the fix.
      -Children (chosen on the app's Equipment page): one AMS device per unit, plus the chamber light
       (Generic Component Switch) in control mode. Exclusions as in IntelliCenter.
@@ -31,7 +33,6 @@ metadata {
     definition(name: "Bambu Lab Printer", namespace: "jdthomas24", author: "jdthomas24") {
         capability "Initialize"
         capability "Refresh"
-        capability "TemperatureMeasurement"
         capability "Sensor"
         capability "Actuator"
 
@@ -45,13 +46,10 @@ metadata {
         attribute "totalLayers",      "number"
         attribute "fileName",         "string"
         attribute "nozzleTemp",       "number"
-        attribute "nozzleTarget",     "number"
         attribute "nozzleStatus",     "string"
         attribute "nozzle2Temp",      "number"
-        attribute "nozzle2Target",    "number"
         attribute "nozzle2Status",    "string"
         attribute "bedTemp",          "number"
-        attribute "bedTarget",        "number"
         attribute "bedStatus",        "string"
         attribute "chamberTemp",      "number"
         attribute "speed",            "string"
@@ -78,7 +76,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.1.1"
+@Field static final String VERSION     = "0.1.2"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -541,20 +539,21 @@ private void temps(Map r) {
     if (c != null) temp("chamberTemp", c, step)
 }
 
-// Status always; target when it changes; current temperature only at temp or off, in the app's step.
+// Status always (with the target while heating); current temperature only at temp or off, in the app's step.
 private void heater(String n, cur, target, BigDecimal step, boolean main) {
     BigDecimal c = num(cur), t = num(target)
     if (c == null) return
     t = t ?: 0
     String st = t > 0 ? (c < t - AT_TEMP_C ? "Heating" : c > t + AT_TEMP_C ? "Cooling" : "At temp") : (c > OFF_C ? "Cooling" : "Off")
-    boolean changed = device.currentValue("${n}Status") != st
-    report("${n}Status", st)
-    temp("${n}Target", t, 0)
-    if (st in ["At temp", "Off"]) {
-        temp("${n}Temp", c, changed ? 0 : step)
-        if (main) temp("temperature", c, changed ? 0 : step)
-    }
+    String shown = st == "Heating" ? "Heating to ${Math.round(toScale(t) as double)}°" : st
+    boolean changed = device.currentValue("${n}Status") != shown
+    report("${n}Status", shown)
+    if (st in ["At temp", "Off"]) temp("${n}Temp", c, changed ? 0 : step)
 }
+
+// Celsius unless the app is set to follow the hub's scale.
+private String unitScale() { opt("unit") == "hub" ? (location.temperatureScale ?: "C") : "C" }
+private BigDecimal toScale(BigDecimal c) { unitScale() == "F" ? c * 9 / 5 + 32 : c }
 
 // H2 series: current in the low 16 bits, target in the high 16 bits.
 private Integer packedCur(v) { Long n = toLong(v); n == null ? null : (int) (n & 0xFFFF) }
@@ -563,9 +562,7 @@ private Integer packedTarget(v) { Long n = toLong(v); n == null ? null : (int) (
 private void temp(String name, c, BigDecimal step) {
     BigDecimal v = num(c)
     if (v == null) return
-    String scale = location.temperatureScale ?: "C"
-    if (scale == "F") v = v * 9 / 5 + 32
-    report(name, v.setScale(1, java.math.RoundingMode.HALF_UP), "°${scale}", step)
+    report(name, toScale(v).setScale(1, java.math.RoundingMode.HALF_UP), "°${unitScale()}", step)
 }
 
 // HMS list -> count and codes (HMS_AAAA_BBBB_CCCC_DDDD, Bambu's wiki format); print_error as a fallback.
@@ -617,9 +614,7 @@ private void ams(Map r) {
         if (u.humidity != null) ev << [name: "dryness", value: "${u.humidity}/5"]
         BigDecimal t = num(u.temp)
         if (t != null) {
-            String scale = location.temperatureScale ?: "C"
-            if (scale == "F") t = t * 9 / 5 + 32
-            ev << [name: "temperature", value: t.setScale(1, java.math.RoundingMode.HALF_UP), unit: "°${scale}", delta: (opt("tempStep") ?: 5)]
+            ev << [name: "temperature", value: toScale(t).setScale(1, java.math.RoundingMode.HALF_UP), unit: "°${unitScale()}", delta: (opt("tempStep") ?: 5)]
         }
         (u.tray instanceof List ? u.tray : []).each { tr ->
             Integer ti = toInt(tr.id)
@@ -677,7 +672,10 @@ def printerControl(String action) {
 
 def pause()  { printCommand("pause", "") }
 def resume() { printCommand("resume", "") }
-def stop()   { printCommand("stop", "") }
+def stop() {
+    if (opt("control") && !opt("allowStop")) { logE "Stop is turned off for this printer. Turn on Allow Stop in the app to use it."; return }
+    printCommand("stop", "")
+}
 
 def setSpeed(String speed) {
     int i = SPEEDS.indexOf(speed)
@@ -704,7 +702,7 @@ private void tile() {
     String ps = device.currentValue("printState") ?: "Unknown"
     int pct = (device.currentValue("progress") ?: 0) as int
     boolean active = ps in ACTIVE
-    String u = location.temperatureScale ?: "C"
+    String u = unitScale()
     def t = { String a -> def v = device.currentValue(a); v == null ? "-" : "${Math.round(v as double)}" }
     String name = esc(device.displayName).take(40)
     String file = esc(device.currentValue("fileName") ?: "").take(40)

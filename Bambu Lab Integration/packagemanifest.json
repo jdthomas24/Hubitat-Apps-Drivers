@@ -1,9 +1,9 @@
 {
     "packageName": "Bambu Lab Integration",
-    "releaseNotes": "v0.1.1 (beta): Tested on an H2D. Setup needs only the IP and access code: the serial is read from the printer. Sampling instead of streaming: printing printers are checked every 30 seconds and idle ones every 5 minutes, instead of a full status every second. Heater status (Heating, At temp, Cooling, Off) with targets, temperatures only at temperature in 5 degree steps, elapsed time, times in 5 minute steps. Pause, Resume, Stop and speed are one Printer Control command. Printers are recreated once on update (now keyed by slot), so recheck rules that use them. Main page banner matches Hubitat's built-in apps (gopher.ny).",
+    "releaseNotes": "v0.1.2 (beta): Tested on an H2D. Add printer and Remove printer buttons, control options only when control is picked (Stop off unless Allow Stop is on), a Tips & Troubleshooting page, and an Advanced page for the shared options. Setup needs only the IP and access code: the serial is read from the printer. Sampling instead of streaming: printing printers are checked every 30 seconds and idle ones every 5 minutes, instead of a full status every second. Temperatures in Celsius to match the printer (option for the hub's scale). Heater status (Heating to target, At temp, Cooling, Off) with the temperature only at temperature, in 5 degree steps, elapsed time, times in 5 minute steps. Pause, Resume, Stop and speed are one Printer Control command. Printers are recreated once on update (now keyed by slot), so recheck rules that use them. Main page banner matches Hubitat's built-in apps (gopher.ny).",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Bambu%20Lab%20Integration",
     "author": "jdthomas24",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "minimumHEVersion": "2.3.0",
     "dateReleased": "2026-11-06",
     "category": "Integrations",

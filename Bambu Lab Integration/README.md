@@ -1,12 +1,12 @@
 # Bambu Lab Integration for Hubitat
 
-> **Status: v0.1.1 beta, tested on an H2D.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
+> **Status: v0.1.2 beta, tested on an H2D.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
 
 ## What you get
 
 | Device | What it does |
 |---|---|
-| **Printer** (one per printer) | Print state and stage, progress, elapsed time, time left and ETA, layers, file name, heater status (Heating, At temp, Cooling, Off) with targets and temperatures for the nozzle, bed and chamber (both nozzles on the H2D), speed, chamber light, active filament, HMS errors, firmware, dashboard tile |
+| **Printer** (one per printer) | Print state and stage, progress, elapsed time, time left and ETA, layers, file name, heater status (Heating to target, At temp, Cooling, Off) and temperatures for the nozzle, bed and chamber (both nozzles on the H2D), speed, chamber light, active filament, HMS errors, firmware, dashboard tile |
 | **Chamber light** (control mode only) | A switch for the printer's chamber light |
 | **AMS** (one per unit) | Humidity, temperature, and filament type, color and amount for each tray |
 
@@ -29,9 +29,11 @@ You choose which light and AMS devices Hubitat creates on the app's **Equipment*
 ## Set up
 
 1. Open **Integrations** in the left menu and add **Bambu Lab Integration**.
-2. For each printer, enter a name, the IP address and the LAN access code, and pick a **Mode**. On the printer, **Settings, Network** (**WLAN** on some models) shows the IP and access code. Just read them: Monitor only doesn't need LAN Only or Developer Mode, and the Bambu Handy app keeps working. Leave the serial blank; the integration reads it from the printer.
+2. Tap **Add printer**. Enter a name, the IP address and the LAN access code, and pick a **Mode**. On the printer, **Settings, Network** (**WLAN** on some models) shows the IP and access code. Just read them: Monitor only doesn't need LAN Only or Developer Mode, and the Bambu Handy app keeps working. Leave the serial blank; the integration reads it from the printer.
 3. Tap **Done**. Each printer connects and adds its light and AMS devices within a few seconds.
 4. Open the app again and tap **Equipment** to turn off anything you don't want in Hubitat.
+
+**Remove printer** under a printer (tap it twice) deletes that printer and its devices. The app's **Tips & Troubleshooting** page covers choosing a mode, setup, rules and common problems.
 
 A DHCP reservation for the printer keeps its IP address from changing.
 
@@ -44,19 +46,23 @@ Each printer has its own mode.
 | Hubitat sees status, temperatures, AMS, errors, tile | ✅ | ✅ |
 | Bambu Cloud and the Bambu Handy app | ✅ | ❌ |
 | Bambu Studio on your network | ✅ | ✅ |
-| **Printer Control** (Pause, Resume, Stop, speed) and the light from Hubitat | ❌ (use the Bambu apps) | ✅ |
+| **Printer Control** (Pause, Resume, speed) and the light from Hubitat | ❌ (use the Bambu apps) | ✅ |
+| Stop from Hubitat | ❌ | Only with **Allow Stop** turned on for that printer |
 | Printer setting needed | None | Developer Mode (Settings, LAN Only, Developer Mode) |
 
 Bambu's newer firmware only accepts control commands signed by Bambu's own software, unless Developer Mode is on, and Developer Mode keeps the printer off Bambu Cloud. That's why control is a separate mode. If the printer refuses a command, the log says so once, with the fix.
 
-> **Stop ends the print for good.** In control mode, any rule, dashboard or voice command that runs it cancels the job.
+> **Stop ends the print for good.** It's off by default, even in control mode. Turn on **Allow Stop** for a printer only if you trust every rule, dashboard and voice assistant that can reach it.
 
-## Options
+## Advanced options
+
+These are on the app's **Advanced** page and apply to every printer.
 
 | Option | Default | What it does |
 |---|---|---|
 | Check printing printers every | 30 seconds | How often Hubitat asks a printing printer for its status. Idle printers are checked every 5 minutes. A finished print or an error shows up within this time. |
 | At temperature, report changes of | 5° | While a heater warms up or cools down only its status changes. Once it's at temperature (or off), smaller changes are skipped. |
+| Temperature units | Celsius | Matches the printer screen, slicers and filament specs. Choose **Hub's setting** for °F. |
 
 **Why sampling:** X1 and H2 printers push an 8 KB status every second while printing, which adds up on a long print. The integration stays connected but only listens for one status per check, so a 30 hour print costs the hub about 3,600 messages instead of over 100,000.
 
@@ -64,7 +70,7 @@ Bambu's newer firmware only accepts control commands signed by Bambu's own softw
 
 - **Tile:** add the Printer as an Attribute tile and pick **tile**. It shows state, file, a progress bar, layers, time left, temperatures and errors.
 - **printState** is Idle, Preparing, Printing, Paused, Finished or Failed, so a rule can announce a finished print or a failure.
-- **nozzleStatus** and **bedStatus** are Heating, At temp, Cooling or Off. "bedStatus becomes At temp" is a clean trigger, with no watching numbers climb.
+- **nozzleStatus** and **bedStatus** are "Heating to 220°", At temp, Cooling or Off. "bedStatus becomes At temp" is a clean trigger, with no watching numbers climb. **nozzleTemp** and **bedTemp** update at temperature or off.
 - **timeRemaining** and **elapsedTime** are in minutes and move in 5 minute steps.
 - **stage** shows what the printer is doing right now (Heating hotend, Changing filament, Paused: filament runout and so on).
 - **errors** lists HMS codes in Bambu's format (HMS_0700_8000_0002_0001). Search the code on the Bambu Lab Wiki for what it means.
