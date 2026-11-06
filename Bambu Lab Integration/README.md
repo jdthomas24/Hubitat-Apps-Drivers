@@ -1,6 +1,6 @@
 # Bambu Lab Integration for Hubitat
 
-> **Status: v0.2.1 beta, tested on an H2D.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
+> **Status: v0.2.2 beta, tested on an H2D.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
 
 ## What you get
 
@@ -61,23 +61,24 @@ These are on each printer device's **Preferences** tab.
 
 | Option | Default | What it does |
 |---|---|---|
-| Check while printing every | 30 seconds | How often Hubitat asks a printing printer for its status. Idle printers are checked every 5 minutes. A finished print or an error shows up within this time. |
+| Check while printing every | 30 seconds | How often Hubitat asks a printing printer for its status. A finished print or an error shows up within this time. |
+| Check while idle every | 15 minutes | A health check while idle. A print that starts shows up within this time, or right away if you tap Refresh. |
 | At temperature, report changes of | 5° | While a heater warms up or cools down only its status changes. Once it's at temperature (or off), smaller changes are skipped. |
 | Temperature units | Celsius | Matches the printer screen, slicers and filament specs. Choose **Hub's setting** for °F. |
 
-**Why sampling:** X1 and H2 printers push an 8 KB status every second while printing, which adds up on a long print. The integration stays connected but only listens for one status per check, so a 30 hour print costs the hub about 3,600 messages instead of over 100,000.
+**Why sampling:** X1 and H2 printers push an 8 KB status every second once Hubitat listens, printing or idle. The integration stays connected but only listens for one status per check, so a 30 hour print costs the hub about 3,600 messages instead of over 100,000, and an idle day about 100.
 
 ## Dashboards and rules
 
-- **Tile:** add the Printer as an Attribute tile and pick **tile**. A dark card that scales with the tile size: state, file, temperatures (an arrow and the target while heating), a progress bar, layers, time left and ETA while printing, the last print when idle, door open and errors.
+- **Tile:** add the Printer as an Attribute tile and pick **tile**. A dark card that scales with the tile size: state, file, temperatures (an arrow and the target while heating), a progress bar and finish time while printing, the last print when idle, door open and errors. To keep the hub's database small it only changes every 5% and when something else on it changes; the device page has the exact numbers.
 - **printState** is Idle, Preparing, Printing, Paused, Finished or Failed, so a rule can announce a finished print or a failure.
 - **nozzleStatus** and **bedStatus** are "Heating to 220°", At temp, Cooling or Off. "bedStatus becomes At temp" is a clean trigger, with no watching numbers climb. **nozzleTemp** and **bedTemp** update at temperature or off.
-- **timeRemaining** and **elapsedTime** are in minutes and move in 5 minute steps.
+- **timeRemaining** and **elapsedTime** are in minutes and move in 5 minute steps. **currentLayer** moves in steps of 5.
 - **stage** shows what the printer is doing right now (Heating hotend, Changing filament, Paused: filament runout and so on).
 - **errors** lists HMS codes in Bambu's format (HMS_0700_8000_0002_0001) and **errorText** says what they mean. The log and the app's printer card link each code to its Bambu Lab Wiki page.
 - **door** is open or closed (H2D tested). In Rule Machine, use **Custom Attribute**.
 - **fileName** is the file printing now, or Not printing. **lastPrint** keeps the last finished or failed file.
-- **ETA** is when the print should finish (with the weekday if it's not today), or -- when not printing.
+- **ETA** is when the print should finish, to the nearest 5 minutes (with the weekday if it's not today), or -- when not printing.
 - **firmwareUpdate** is none, or available with the new version.
 - **externalSpool** and **externalSpool2** show the filament on the external holders once one is loaded.
 

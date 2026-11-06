@@ -3,52 +3,32 @@
     Copyright 2026 JDThomas. All Rights Reserved
 
     Notes:
-     -Created by the app, one per printer slot (DNI bambu-pN). Local only: MQTT over TLS to ssl://IP:8883, user
-      bblp, password = the printer's LAN access code (asked from the app at connect time, never stored here).
-      The printer's certificate is self-signed, so ignoreSSLIssues (Hubitat 2.2.5+).
-     -Topics: device/<serial>/report (in), device/<serial>/request (out). The serial is learned from the first
-      report on device/+/report (the printer accepts the wildcard; H2D confirmed), so setup needs no serial.
-     -Sampling, not streaming (0.1.1): X1/H2 push an 8 KB status every second while printing. The connection
-      stays up, but the driver only subscribes for one report per cycle (pushall, first full report, unsubscribe):
-      every 30 s (app setting) while active, every 5 min idle. Unsubscribed, the printer sends the hub nothing.
-      3 cycles without a reply reconnect. The merged report lives in memory (RUNTIME); a driver save clears it.
-     -Temperatures: classic print.* fields first; H2 series fall back to print.device (extruder.info[n].temp,
-      ctc.info.temp), packed as current = low 16 bits, target = high 16 bits (H2D confirmed). Heaters report a
-      status (Heating to <target>, At temp, Cooling, Off) and the current temperature only at temp or off, in the
-      app's step. Celsius by default to match the printer; the app can switch to the hub's scale.
-     -Times move in 5 minute steps; wifiSignal in 5 dB steps; AMS humidity in 5% steps.
-     -Preferences (0.1.3): check interval, temperature step and units. adoptOptions() copies the app's old
-      shared values in once on update.
-     -Any status received marks the printer Connected (0.1.4), so the label can't stay on Connecting while data
-      flows. statusAge() tells the app how long the label has been unchanged. model comes from get_version.
-     -Mode is per printer, from the app. Monitor only (default): works alongside Bambu Cloud and the Bambu
-      apps; Printer Control is refused locally. Monitor and control: needs Developer Mode (LAN Only, no Bambu
-      Cloud) and adds Printer Control. Stop only when the app's Allow Stop is on (off by default).
-     -The chamber light works in both modes (0.1.5): the printer accepts ledctrl without Developer Mode (H2D
-      confirmed). H2D has two nodes (chamber_light, chamber_light2); the driver sends to every chamber_light*
-      node the printer reports, and the light is on when any of them is.
-     -Refused commands (0.1.5): unsigned commands come back as err_code 84033543 or as HMS 0500_0500_0001_0007
-      (H2D). That code is not counted as a printer error. After a command the driver checks the next status
-      (speed, state, light) at the end of the listen window and logs whether it took, was refused (Developer Mode) or was ignored. The listen
-      window after a command ends on time even if an idle printer sends only one status (0.1.7).
-     -Errors in plain English (0.1.5): on a new HMS or print error code the driver fetches that module's small
-      table from this integration's GitHub folder (HMS/<module>.json, made from ha-bambulab's MIT-licensed
-      English HMS list; GitHub paths are case sensitive, so HMS) and keeps only the matching line in state.hmsText. errorText and the log get the text
-      and a Bambu Lab Wiki link. No lookup goes to Bambu.
-     -Door (door attribute, 0.2.0; contact in 0.1.5-0.1.9) from print.stat bit 0x00800000 (H2D confirmed).
-      firmwareUpdate from upgrade_state.
-     -0.2.1: layers read 0 when not printing, progress 0 when Idle (the printer keeps the last job's numbers).
-     -0.2.0: fileName is "Not printing" when idle and lastPrint keeps the last finished or failed file. ETA
-      (was eta) is "--" when not printing, with the weekday when not today. Old eta and contact states are
-      deleted once. Tile in the Moonraker driver's style: scales with the tile (cqw), stays under 1024 bytes.
-      External spools from vir_slot ids 254/255 (or vt_tray), shown only once loaded. H2D has no
-      gcode_start_time, so elapsedTime counts from when the driver saw the print start (blank if it joined
-      mid-print).
-     -Children (chosen on the app's Equipment page): one AMS device per unit, plus the chamber light
-      (Generic Component Switch). Exclusions as in IntelliCenter.
-     -Reconnect backoff 5 s to 5 min. Quiet for 6 min: pushall. Still quiet a minute later: reconnect.
-      A drop logs at Normal; still down after 4 tries warns once; recovery logs.
-     -Tile stays under the dashboard's 1024-character limit.
+     -One per printer slot (DNI bambu-pN), created by the app. MQTT over TLS to ssl://IP:8883, user bblp, password
+      = LAN access code, fetched from the app at connect time and never stored here. Self-signed cert.
+     -Topics device/<serial>/report and /request. The serial is learned from the first report on device/+/report.
+     -Sampling: X1/H2 stream an 8.6 KB status every second while subscribed, printing or idle. The link stays up
+      but the driver subscribes only for one full report per check (pushall, first report, unsubscribe): every
+      30 s while printing, every 15 min idle (preferences). 3 misses reconnect. Watchdog every 5 min.
+      Merged report lives in memory (RUNTIME); a driver save clears it.
+     -Change-only events. Heaters: status (Heating to N, At temp, Cooling, Off) and the temperature only at temp
+      or off, in the preference step; H2 temps are packed (current low 16 bits, target high 16). Times and layers
+      in 5 steps, wifi 5 dB, AMS humidity 5%. The printer keeps the last job's numbers: layers 0 when not
+      printing, progress 0 when Idle, fileName "Not printing", lastPrint keeps the finished or failed file.
+      H2D sends no gcode_start_time, so elapsedTime counts from a print start the driver saw.
+     -Tile (Moonraker driver style, under 1024 bytes) only changes on state, file, 5% progress, ETA, heater
+      status, door and errors, since every tile event is a ~900 byte row in the hub database.
+     -Monitor only (default) works with Bambu Cloud; Printer Control is refused locally. Monitor and control
+      needs Developer Mode. Stop only with Allow Stop. The chamber light works in both modes and is sent to every
+      chamber_light* node (H2D has two).
+     -After a command the driver listens 5 s and checks the result at the end of that window: done, refused
+      (err_code 84033543 or HMS 0500_0500_0001_0007, not counted as an error) or ignored (after a second check).
+     -Errors: on a new code the driver fetches HMS/<module>.json from this integration's GitHub folder
+      (ha-bambulab's English list, MIT) and keeps only that line in state.hmsText, for errorText, the log and a
+      Wiki link. Nothing goes to Bambu.
+     -door from print.stat bit 0x00800000; firmwareUpdate from upgrade_state; external spools from vir_slot
+      254/255 (or vt_tray), shown once loaded.
+     -Children (app's Equipment page): one AMS device per unit and the chamber light. Exclusions as IntelliCenter.
+     -Reconnect backoff 5 s to 5 min; still down after 4 tries warns once.
 */
 
 metadata {
@@ -103,7 +83,9 @@ metadata {
         input name: "tempStep", type: "enum", title: "At temperature, report changes of", options: ["0.5": "0.5°", "1": "1°", "2": "2°", "5": "5°"], defaultValue: "5",
             description: "While heating or cooling only the status changes"
         input name: "checkEvery", type: "enum", title: "Check while printing every", options: ["15": "15 seconds", "30": "30 seconds", "60": "1 minute", "120": "2 minutes"],
-            defaultValue: "30", description: "Idle printers are checked every 5 minutes"
+            defaultValue: "30"
+        input name: "idleEvery", type: "enum", title: "Check while idle every", options: ["5": "5 minutes", "15": "15 minutes", "30": "30 minutes", "60": "1 hour"],
+            defaultValue: "15", description: "A print that starts shows up within this time, or right away on Refresh"
         input name: "helpInfo", type: "hidden", title: fmtHelpInfo()
     }
 }
@@ -112,12 +94,11 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.1"
+@Field static final String VERSION     = "0.2.2"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
 @Field static final List BACKOFF       = [5, 15, 30, 60, 120, 300]
-@Field static final int IDLE_SECS      = 300
 @Field static final int SAMPLE_WAIT    = 20
 @Field static final BigDecimal AT_TEMP_C = 5      // within this of the target = At temp
 @Field static final BigDecimal OFF_C     = 45     // no target and below this = Off
@@ -177,22 +158,9 @@ def updated() {
     else render()
 }
 
-// From the app once, on update to 0.1.3: its old shared options become this printer's preferences.
-void adoptOptions(Map o) {
-    if (state.optsAdopted) return
-    if (o?.tempUnit) device.updateSetting("tempUnit", [value: o.tempUnit, type: "enum"])
-    if (o?.tempStep) device.updateSetting("tempStep", [value: o.tempStep, type: "enum"])
-    if (o?.checkEvery) device.updateSetting("checkEvery", [value: o.checkEvery, type: "enum"])
-    state.optsAdopted = true
-    mem().remove("opts")
-}
-
 def initialize() {
     unschedule()
-    if (state.attrs != "0.2.0") {   // renamed in 0.2.0
-        ["eta", "contact"].each { try { device.deleteCurrentState(it) } catch (e) { } }
-        state.attrs = "0.2.0"
-    }
+    ["optsAdopted", "attrs"].each { state.remove(it) }   // retired flags
     Map m = mem()
     m.attempt = 0
     m.reconnectPending = false
@@ -203,7 +171,7 @@ def initialize() {
         logE "not set up. Open the Bambu Lab Integration app and tap Done."
         return
     }
-    schedule("20 * * * * ?", "everyMinute")
+    schedule("20 0/5 * * * ?", "watchdog")
     runIn(1, "connect")
 }
 
@@ -228,9 +196,10 @@ def uninstalled() {
 
 // From the app on Done: printer identity (no access code) and options.
 void configure(Map printer, Map opts) {
-    if (state.printer != printer) {
-        if (printer?.ip != state.printer?.ip) state.remove("serial")   // different printer, learn again
-        state.printer = printer
+    Map p = (printer ?: [:]).findAll { k, v -> v != null && v != "" }   // no empty serial copy
+    if (state.printer != p) {
+        if (p.ip != state.printer?.ip) state.remove("serial")   // different printer, learn again
+        state.printer = p
     }
     if (state.opts != opts) state.opts = opts
     mem().remove("opts")
@@ -239,6 +208,7 @@ void configure(Map printer, Map opts) {
 
 private opt(String k) {
     if (k == "interval") return ((settings?.checkEvery ?: "30") as String).toInteger()
+    if (k == "idle") return ((settings?.idleEvery ?: "15") as String).toInteger() * 60
     if (k == "tempStep") return ((settings?.tempStep ?: "5") as String).toBigDecimal()
     if (k == "unit") return settings?.tempUnit ?: "C"
     Map m = mem()
@@ -249,8 +219,10 @@ private opt(String k) {
 
 private String serial() { (state.serial ?: state.printer?.serial)?.toString() }
 
-// Every minute: reconnect a dropped client, and restart sampling if its timer was lost (driver save).
-def everyMinute() {
+def everyMinute() { watchdog() }   // schedule name before 0.2.2
+
+// Every 5 minutes: reconnect a dropped client, and restart sampling if its timer was lost (driver save).
+def watchdog() {
     Map m = mem()
     boolean up = false
     try { up = interfaces.mqtt.isConnected() } catch (e) { }
@@ -384,14 +356,14 @@ def sampleTimeout() {
     } else {
         logF "no status reply (${missed} of 3)"
     }
-    int secs = state.serial ? 30 : IDLE_SECS
+    int secs = state.serial ? 30 : (opt("idle") as int)
     m.nextSampleAt = now() + secs * 1000L
     runIn(secs, "startSample")
 }
 
 private int nextSecs() {
     String ps = (mem().ps ?: device.currentValue("printState")) as String
-    (ps in ACTIVE) ? Math.max(15, ((opt("interval") ?: 30) as int)) : IDLE_SECS
+    (ps in ACTIVE) ? Math.max(15, ((opt("interval") ?: 30) as int)) : (opt("idle") as int)
 }
 
 // After a command: sample now and keep listening a few seconds for the printer's reply.
@@ -571,7 +543,8 @@ private void render() {
         report("timeRemaining", mins, "min", 5)
         String eta = "--"
         if (active && mins > 0) {
-            Date at = new Date(now() + mins * 60000L)
+            long fiveMin = 300000L
+            Date at = new Date((((now() + mins * 60000L) + fiveMin / 2) / fiveMin as long) * fiveMin)   // nearest 5 min, so small estimate changes don't move it
             boolean today = at.format("yyyyMMdd", location.timeZone) == new Date(now()).format("yyyyMMdd", location.timeZone)
             eta = at.format(today ? "h:mm a" : "EEE h:mm a", location.timeZone)
         }
@@ -581,7 +554,7 @@ private void render() {
     Long startMs = (start && start > 0) ? start * 1000L : (state.printStartAt as Long)
     if (active && startMs) report("elapsedTime", Math.max(0, ((now() - startMs) / 60000) as int), "min", 5)
     else if (ps == "Idle") report("elapsedTime", 0, "min")
-    if (r.containsKey("layer_num")) report("currentLayer", active ? (toInt(r.layer_num) ?: 0) : 0)
+    if (r.containsKey("layer_num")) report("currentLayer", active ? (toInt(r.layer_num) ?: 0) : 0, null, 5)
     if (r.containsKey("total_layer_num")) report("totalLayers", active ? (toInt(r.total_layer_num) ?: 0) : 0)
     String fn = (r.subtask_name ?: r.gcode_file ?: "").toString()
     if (gs || fn) report("fileName", active && fn ? fn : "Not printing")
@@ -1004,7 +977,7 @@ private void tile() {
 private String tileHtml(int fileMax, int errMax) {
     String ps = cv("printState") ?: "Unknown"
     boolean active = ps in ACTIVE
-    int pct = (cv("progress") ?: 0) as int
+    int pct = (((cv("progress") ?: 0) as int) / 5 as int) * 5   // 5% steps keep tile events down
     String col = ps == "Printing" ? "#00ff87" : ps in ["Paused", "Preparing", "Starting"] ? "#ffd166" : ps == "Failed" ? "#ff6b6b" : ps == "Finished" ? "#00b4d8" : "#aaa"
     String icon = ps == "Printing" ? "&#9654; " : ps == "Paused" ? "&#9646;&#9646; " : ""
     boolean up = cv("connectionStatus") == "Connected"
@@ -1018,11 +991,9 @@ private String tileHtml(int fileMax, int errMax) {
     t << "<div>Nozzle <b style='color:#ff6b6b'>${noz}</b> &middot; Bed <b style='color:#ffa94d'>${heat('bed')}</b>" +
         (cv("chamberTemp") != null ? " &middot; Ch <b>${Math.round(cv('chamberTemp') as double)}&deg;</b>" : "") + "</div>"
     if (active) {
-        int left = (cv("timeRemaining") ?: 0) as int
         String eta = cv("ETA")
         t << "<div style='background:#0f3460;height:.4em;border-radius:1em'><div style='background:#00ae42;width:${pct}%;height:100%;border-radius:1em'></div></div>"
-        t << "<div>${pct}% &middot; L${cv('currentLayer') ?: 0}/${cv('totalLayers') ?: 0}" +
-            (left > 0 ? " &middot; <span style='color:#00ff87'>${hm(left)} left</span>" : "") + (eta && eta != "--" ? " &middot; ${eta}" : "") + "</div>"
+        t << "<div>${pct}%" + (eta && eta != "--" ? " &middot; <span style='color:#00ff87'>done ${eta}</span>" : "") + "</div>"
     } else {
         String last = cv("lastPrint")
         if (last) t << "<div style='color:#888'>Last: <span style='color:#ddd'>${short_(last, fileMax)}</span></div>"
@@ -1054,7 +1025,6 @@ private String short_(text, int max) {
     return s.length() > max ? esc(s.take(max - 1)) + "&hellip;" : esc(s)
 }
 
-private String hm(int mins) { mins >= 60 ? "${(mins / 60) as int}h ${mins % 60}m" : "${mins}m" }
 
 private String esc(v) { (v == null ? "" : v.toString()).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("'", "&#39;") }
 

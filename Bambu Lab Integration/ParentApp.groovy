@@ -3,24 +3,16 @@
     Copyright 2026 JDThomas. All Rights Reserved
 
     Notes:
-     -Local only. Each printer is a slot (name, IP, LAN access code, optional serial), added and removed with
-      buttons; slot numbers in state.slots never get reused. Done creates one Printer device per slot with an IP
-      and code (DNI bambu-pN); Remove deletes the slot's device right away. A printer with a device shows as a
-      summary card (as in Sofabaton); Edit Printer opens its own page (0.1.9) and returning to the main page
-      applies any change (reconnects only if something changed), so every card stays collapsed. A new slot edits inline until Done. The Printer
-      learns its serial from the printer's own reports (0.1.1), so the serial field is only a fallback.
-     -Access codes stay in this app's settings and are never logged or stored on a device. getAccessCode() hands
-      one to its Printer at connect time. Plain text input on purpose: a password field makes browsers autofill
-      the user's own login into the next field.
-     -Mode is per printer (pN_mode): Monitor only (default, works with Bambu Cloud) or Monitor and control
-      (Developer Mode). The chamber light works in both (0.1.5). Control adds per-printer options (pN_allowStop, off by default). Check interval,
-      temperature step and units are printer device preferences (0.1.3); older app values are copied over once.
-     -Equipment page as in IntelliCenter, one section per printer; state.pushedExcluded is per printer.
-     -Log level is the only logging control. App -> Printer -> light/AMS; every line comes back to childLog().
-      Full turns off after 30 minutes.
-     -UI follows HubitatAppUiTemplate (Reolink, UI design by gopher.ny). Dark mode uses the hub's theme
-      classes and var() tokens with fallbacks; legacyLightThemeCss() covers pre-2.5.3 firmware (pattern by
-      vurvantsev, Reolink 1.6.13).
+     -Local only. Each printer is a slot (state.slots, numbers never reused) with name, IP, LAN access code,
+      optional serial and mode. Done creates one Printer per slot (DNI bambu-pN). Existing printers show as cards;
+      Edit Printer opens printerPage, and back on the main page any change is applied. New slots edit inline.
+     -Access codes stay in this app's settings, never logged or stored on a device; getAccessCode() hands one
+      over at connect time. Plain text input on purpose: password fields make browsers autofill the next field.
+     -Mode per printer: Monitor only (default) or Monitor and control (Developer Mode, pN_allowStop off by default).
+      Check intervals, temperature step and units are printer device preferences.
+     -Equipment page as IntelliCenter, one section per printer; state.pushedExcluded is per printer.
+     -One log level for everything; children log through childLog(). Full turns off after 30 minutes.
+     -UI per HubitatAppUiTemplate (Reolink, gopher.ny). legacyLightThemeCss() covers pre-2.5.3 firmware.
 */
 
 definition(
@@ -38,7 +30,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.2.1"
+@Field static final String APP_VERSION   = "0.2.2"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -54,9 +46,8 @@ preferences {
 
 private String printerDni(int slot) { "bambu-p${slot}" }
 private List printerDevices() { getChildDevices().findAll { it.deviceNetworkId.startsWith("bambu-") } }
-// Slot numbers in use. Before 0.1.2 the page had a "Number of printers" setting.
 private List slots() {
-    if (state.slots == null) state.slots = (1..(((printerCount ?: "1") as String).toInteger())).collect { it }
+    if (state.slots == null) state.slots = []
     return (state.slots as List).collect { it as int }
 }
 private boolean validSerial(String s) { s ==~ /[A-Z0-9]{8,20}/ }
@@ -410,10 +401,7 @@ def initialize() {
     unschedule()
     state.remove("fullLogArmed")   // unschedule() cleared its timer
     armLogRevert()
-    migrate()
     Map cfg = configuredPrinters()
-    Map legacy = state.migrated == "0.1.3" ? null : [checkEvery: (updateInterval ?: "30").toString(), tempStep: (tempStep ?: "5").toString(),
-                                                    tempUnit: tempUnit == "hub" ? "hub" : "C"]
     printerDevices().each { dev ->
         if (!cfg.containsKey(dev.deviceNetworkId)) {
             String label = dev.displayName
@@ -434,11 +422,11 @@ def initialize() {
             }
         }
         dev.configure([slot: p.slot, serial: p.serial, name: p.name, ip: p.ip], [control: p.control, allowStop: p.control && p.allowStop])
-        if (legacy) try { dev.adoptOptions(legacy) } catch (e) { }
         dev.setLogLevel(currentLogLevel())
     }
     state.pushedLogLevel = currentLogLevel()
-    if (legacy) { ["updateInterval", "tempStep", "tempUnit"].each { app.removeSetting(it) }; state.migrated = "0.1.3" }
+    state.remove("migrated")
+    ["printerCount", "updateInterval", "tempStep", "tempUnit"].each { app.removeSetting(it) }
     runIn(2, "startPrinters")
 }
 
@@ -458,14 +446,6 @@ String getAccessCode(String dni) {
     def mt = (dni ?: "") =~ /^bambu-p(\d+)$/
     Integer i = mt.find() ? mt.group(1).toInteger() : null
     return (i && slots().contains(i)) ? settings["p${i}_code"]?.toString()?.trim() : null
-}
-
-// 0.1.1 moved to sampling (30 s default) and 5° steps; 0.1.3 copies these to the printers (see initialize).
-private void migrate() {
-    if (state.migrated in ["0.1.1", "0.1.3"]) return
-    if (!(updateInterval?.toString() in ["15", "30", "60", "120"])) app.updateSetting("updateInterval", [value: "30", type: "enum"])
-    if (tempStep == null || tempStep.toString() in ["0.5", "1"]) app.updateSetting("tempStep", [value: "5", type: "enum"])
-    state.migrated = "0.1.1"
 }
 
 // ============================================================================
@@ -502,7 +482,7 @@ private List tipsTopics() {
             body: "<p>X1 and H2 printers send an 8 KB status every second while printing. Over a long print that adds up, so the integration stays connected but only listens for one status per check:</p>",
             checklist: [
                 [title: "Printing", detail: "Every 30 seconds (the printer device's Preferences, from 15 seconds to 2 minutes). A finished print or an error shows up within that time."],
-                [title: "Idle", detail: "Every 5 minutes."],
+                [title: "Idle", detail: "Every 15 minutes, like a health check (5 minutes to 1 hour in Preferences). A print that starts shows up within that time."],
                 [title: "After a command", detail: "Right away, to pick up the printer's answer."],
                 [title: "Refresh", detail: "Tap Refresh on the printer device for a status now."]
             ]],
