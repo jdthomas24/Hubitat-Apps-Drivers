@@ -37,7 +37,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.1.6"
+@Field static final String APP_VERSION   = "0.1.8"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -220,14 +220,23 @@ private String printerCardHtml(int i, dev) {
             c << "<a href='/device/edit/${k.id}' target='_blank' class='bb-pill'>${esc(shortName(k, dev))}${dots}" +
                 "<i class='fa-regular fa-external-link hub-text-link' style='margin-left:8px;font-size:0.75em'></i></a>"
         } else {
-            String sw = k.currentValue("switch")
-            c << "<a href='/device/edit/${k.id}' target='_blank' class='bb-pill'>" +
-                "<span style='display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:${sw == 'on' ? 'var(--hubitat-success-color, #2e9e5b)' : 'var(--text-color-secondary, #bbb)'}'></span>" +
+            boolean on = k.currentValue("switch") == "on"
+            c << "<a href='/device/edit/${k.id}' target='_blank' class='bb-pill' title='${on ? 'On' : 'Off'}'>" + bulbSvg(on) +
                 "${esc(shortName(k, dev))}<i class='fa-regular fa-external-link hub-text-link' style='margin-left:8px;font-size:0.75em'></i></a>"
         }
     }
     c << "</div></div>"
     return c.toString()
+}
+
+// Light pill icon: lit amber bulb when on, gray outline with a slash when off.
+private String bulbSvg(boolean on) {
+    String bulb = "M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1 2V16h5.2v-.2c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z"
+    String fill = on ? "#f5b301" : "none"
+    String stroke = on ? "#b37f00" : "var(--text-color-secondary, #999)"
+    return "<svg viewBox='0 0 24 24' width='16' height='16' aria-hidden='true' style='vertical-align:-3px;margin-right:6px'>" +
+        "<path d='${bulb}' fill='${fill}' stroke='${stroke}' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/>" +
+        (on ? "" : "<line x1='4' y1='3' x2='20' y2='21' stroke='${stroke}' stroke-width='2' stroke-linecap='round'/>") + "</svg>"
 }
 
 // "H2D #1 AMS 1" on printer "H2D #1" shows as "AMS 1".

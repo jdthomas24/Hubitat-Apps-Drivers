@@ -29,7 +29,8 @@
       node the printer reports, and the light is on when any of them is.
      -Refused commands (0.1.5): unsigned commands come back as err_code 84033543 or as HMS 0500_0500_0001_0007
       (H2D). That code is not counted as a printer error. After a command the driver checks the next status
-      (speed, state, light) and logs whether it took, was refused (Developer Mode) or was ignored.
+      (speed, state, light) at the end of the listen window and logs whether it took, was refused (Developer Mode) or was ignored. The listen
+      window after a command ends on time even if an idle printer sends only one status (0.1.7).
      -Errors in plain English (0.1.5): on a new HMS or print error code the driver fetches that module's small
       table from this integration's GitHub folder (HMS/<module>.json, made from ha-bambulab's MIT-licensed
       English HMS list; GitHub paths are case sensitive, so HMS) and keeps only the matching line in state.hmsText. errorText and the log get the text
@@ -105,7 +106,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.1.6"
+@Field static final String VERSION     = "0.1.8"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -338,6 +339,9 @@ def startSample() {
     runIn(SAMPLE_WAIT, "sampleTimeout")
 }
 
+// End of the listen window after a command, for printers that sent their one status early.
+def holdEnd() { if (mem().sampling) endSample() }
+
 private void endSample() {
     Map m = mem()
     if (!m.sampling) return
@@ -346,6 +350,7 @@ private void endSample() {
     try { interfaces.mqtt.unsubscribe(m.subTopic as String) } catch (e) { }
     unschedule("sampleTimeout")
     markAlive()
+    checkExpect(m.rep as Map)   // after the whole listen window, so a refusal sent a few seconds late counts
     int secs = nextSecs()
     m.nextSampleAt = now() + secs * 1000L
     runIn(secs, "startSample")
@@ -467,7 +472,11 @@ def parse(String raw) {
             markAlive()
             merge(m.rep as Map, pr)
             render()
-            if (pr.containsKey("gcode_state") && now() >= ((m.holdUntil ?: 0L) as long)) endSample()
+            if (pr.containsKey("gcode_state")) {
+                long wait = ((m.holdUntil ?: 0L) as long) - now()
+                if (wait <= 0) endSample()
+                else runIn(Math.max(1, Math.ceil(wait / 1000.0) as int), "holdEnd")   // an idle printer may not send another
+            }
         }
     }
     if (j.system instanceof Map) checkResult(j.system as Map, "system")
@@ -573,7 +582,6 @@ private void render() {
     door(r)
     firmwareUpdate(r)
     tile()
-    checkExpect(r)
 }
 
 // Door from print.stat (hex), bit 0x00800000 set = open. H2D confirmed.
@@ -808,7 +816,7 @@ private void expect(String what, String kind, want) { mem().expect = [what: what
 private void checkExpect(Map r) {
     Map m = mem()
     Map x = m.expect as Map
-    if (!x || now() - (x.at as long) < 3000L) return
+    if (!x || ((m.sampleAt ?: 0L) as long) <= (x.at as long)) return   // only a status asked for after the command
     boolean ok
     switch (x.kind) {
         case "speed": ok = toInt(r.spd_lvl) == (x.want as int); break

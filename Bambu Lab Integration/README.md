@@ -1,6 +1,6 @@
 # Bambu Lab Integration for Hubitat
 
-> **Status: v0.1.6 beta, tested on an H2D.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
+> **Status: v0.1.8 beta, tested on an H2D.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
 
 ## What you get
 
