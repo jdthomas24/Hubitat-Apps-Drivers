@@ -19,6 +19,7 @@
      -UI follows HubitatAppUiTemplate (Reolink, UI design by gopher.ny). Dark mode uses the hub's theme
       classes and var() tokens with fallbacks; legacyLightThemeCss() covers pre-2.5.3 firmware (pattern by
       vurvantsev, Reolink 1.6.13).
+     -Tips & Troubleshooting page (2.0.4) is the same code as Sofabaton, Bambu and Pentair; it scrolls to the top on open.
 */
 
 definition(
@@ -37,7 +38,7 @@ import groovy.json.JsonOutput
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Leviton Smart Load Center"
-@Field static final String APP_VERSION   = "2.0.3"
+@Field static final String APP_VERSION   = "2.0.4"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/release-leviton-smart-load-center/163950"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String API           = "https://my.leviton.com/api"
@@ -50,6 +51,7 @@ import groovy.transform.Field
 preferences {
     page(name: "mainPage")
     page(name: "equipmentPage")
+    page(name: "tipsPage")
 }
 
 private String panelDni(String id) { "leviton-panel-${id}" }
@@ -117,10 +119,12 @@ def mainPage() {
             label title: "App name", required: false
         }
         section(title: "<b>Help & Support</b>", sectionClass: "app-ui-links app-main-support") {
+            href name: "tips", title: "<i class='pi pi-info-circle' aria-hidden='true'></i>Tips & Troubleshooting", page: "tipsPage",
+                description: "Setup, breaker control and hub load", width: 4, style: "margin:8px;"
             paragraph rawHtml: true, supportLinkHtml(COMMUNITY_URL, "pi pi-comments",
-                "Hubitat Community Thread", "Questions, feedback, and release notes"), width: 6
+                "Hubitat Community Thread", "Questions, feedback, and release notes"), width: 4
             paragraph rawHtml: true, supportLinkHtml(COFFEE_URL, "fa-solid fa-mug-hot",
-                "Buy Me a Coffee", "Support development"), width: 6
+                "Buy Me a Coffee", "Support development"), width: 4
         }
         versionFooterSection()
     }
@@ -497,6 +501,182 @@ private String esc(v) {
 }
 
 // ============================================================================
+// Tips & Troubleshooting (same page as Sofabaton, Bambu and Pentair)
+// ============================================================================
+
+@Field static final String DEFAULT_TIP_TOPIC = "setup"
+
+/** Fields: id, label, title, group, icon (PrimeIcons), body; optional checklist, warning, append. */
+private List tipsTopics() {
+    [
+        [id: "setup", label: "Setup", title: "Connecting your panel", group: "Getting started", icon: "pi-cog",
+            body: "<p>Enter your My Leviton email and password and tap <b>Done</b>. The app signs in, adds each panel, and the panels add their breakers and CT clamps in about 30 seconds.</p>",
+            checklist: [
+                [title: "Panels", detail: "LWHEM (2nd gen) and LDATA (1st gen) hubs with smart breakers, set up in the My Leviton app."],
+                [title: "Account", detail: "Accounts with two-step verification aren't supported yet."],
+                [title: "Cloud", detail: "Data comes from the Leviton cloud, so the hub needs internet access. Your password stays in the app and is never logged."],
+                [title: "More than one panel", detail: "Each panel gets its own Panel device. Turn a whole panel off under Panels."]
+            ]],
+        [id: "equipment", label: "Equipment", title: "Choosing breakers and CT clamps", group: "Getting started", icon: "pi-list",
+            body: "<p>The app's <b>Equipment</b> page lists every breaker and CT clamp, one section per panel. Everything starts turned on.</p>",
+            checklist: [
+                [title: "Turn something off", detail: "Its device is removed right away and won't come back."],
+                [title: "Turn it back on", detail: "The device is recreated in a few seconds."],
+                [title: "Deleted from the Devices page", detail: "Counts as turned off, so it stays gone. Turn it back on here to recreate it."]
+            ]],
+        [id: "options", label: "Options and hub load", title: "Options and hub load", group: "How it works", icon: "pi-sliders-h",
+            body: "<p>A busy panel sends a lot of power readings. These options decide how many reach the hub:</p>",
+            checklist: [
+                [title: "Live power updates", detail: "On (default): power every few seconds. Off: power on the refresh interval only, much lighter on the hub."],
+                [title: "Report power changes of", detail: "5 W by default. Smaller changes are skipped. Any change reports everything."],
+                [title: "Refresh interval", detail: "1 minute by default. Energy counters and a backup read of every breaker."]
+            ]],
+        [id: "control", label: "Breaker control", title: "Breaker control", group: "How it works", icon: "pi-power-off",
+            body: "<p>Off by default. With <b>Allow breaker control</b> on, a breaker's Off trips it and On resets it. The switch only changes after Leviton accepts the command.</p>",
+            checklist: [
+                [title: "1st gen breakers", detail: "Can be tripped from Hubitat but must be reset at the panel. The Breaker's Data section shows remoteOn: supported when it can be reset remotely."],
+                [title: "switch", detail: "On only when the breaker is on at the panel and not remotely tripped. breakerState and remoteState show the detail."]
+            ],
+            warning: "<b>Off cuts power to that circuit.</b> Any rule, dashboard, voice command or \"all switches off\" that includes a breaker device can trip it. Keep breakers out of switch groups and voice assistants."],
+        [id: "rules", label: "Rules and dashboards", title: "Rules and dashboards", group: "Using it", icon: "pi-bolt",
+            body: "<p>Some starting points:</p>",
+            checklist: [
+                [title: "High usage", detail: "A breaker's power stays above a level: notify, for a dryer left on or a space heater."],
+                [title: "Breaker tripped", detail: "breakerState changes: notify right away."],
+                [title: "Solar and grid", detail: "On LWHEM, CT clamp power goes negative while a source is generating."],
+                [title: "Energy", detail: "Breakers and CT clamps report energy, for energy reports and dashboards."]
+            ]],
+        [id: "migrate", label: "Coming from 1.2.x", title: "Coming from the 1.2.x drivers", group: "Using it", icon: "pi-arrow-right",
+            body: "<p>1.2.x was a pair of drivers on a virtual device. 2.0 is an integration with new device types, so the old devices can't be upgraded in place.</p>",
+            checklist: [
+                [title: "Run both", detail: "Set up 2.0 as above. Both versions can run side by side for a while."],
+                [title: "Move rules", detail: "Settings, Swap Device moves rules and dashboards to the new devices, one device at a time."],
+                [title: "Remove the old one", detail: "Delete the old Leviton Smart Load Center Parent device (its breakers go with it), then the two old drivers."],
+                [title: "Renamed attributes", detail: "energyConsumption is now energy. The Panel's totalPower is now power, and presence and wsStatus are now connectionStatus."]
+            ]],
+        [id: "trouble", label: "Troubleshooting", title: "Troubleshooting", group: "Troubleshooting", icon: "pi-wrench",
+            body: "<p>The status banner on the main page and each Panel's connectionStatus usually say what's wrong.</p>",
+            checklist: [
+                [title: "Sign-in failed", detail: "Check the email and password in the My Leviton app, fix them here and tap Done."],
+                [title: "Panel offline or Reconnecting", detail: "The panel reconnects on its own, waiting a little longer each try (up to 5 minutes). If the My Leviton app shows live data and Hubitat doesn't after 10 minutes, set Log level to Full, tap Initialize on the Panel and post the log in the community thread."],
+                [title: "A deleted device came back, or one is missing", detail: "Use the Equipment page."],
+                [title: "Total power doesn't match a CT clamp", detail: "Panel power is the sum of every smart breaker, including ones turned off in Equipment. Standard (non-smart) breakers report nothing."]
+            ]]
+    ]
+}
+
+def tipsPage(params = null) {
+    def topics = tipsTopics()
+    def topic = topics.find { it.id == params?.topic } ?: topics.find { it.id == DEFAULT_TIP_TOPIC } ?: topics[0]
+    int i = topics.indexOf(topic)
+    def next = i + 1 < topics.size() ? topics[i + 1] : null
+    dynamicPage(name: "tipsPage", title: "Tips & Troubleshooting") {
+        section(sectionClass: "app-ui-links app-tips-index app-ui-navigation") {
+            paragraph rawHtml: true, tipsStylesHtml() + tipsScrollScript(params?.topic != null)
+            topics.groupBy { it.group }.each { group, entries ->
+                paragraph rawHtml: true, "<div class='app-heading font-semibold mt-2'>${group}</div>"
+                entries.each { entry ->
+                    String selected = entry.id == topic.id ? "app-ui-navigation-selected" : ""
+                    href name: "tip_${entry.id}",
+                        title: "<span class='${selected}'><i class='pi ${entry.icon} mr-3' aria-hidden='true'></i>${entry.label}</span>",
+                        description: "", page: "tipsPage", params: [topic: entry.id], width: 12, style: "margin:0 8px;"
+                }
+            }
+        }
+        section(sectionClass: "app-ui-links app-tips-article") {
+            paragraph rawHtml: true, tipsArticleHtml(topic)
+            if (topic.append) {
+                def extra = topics.find { it.id == topic.append }
+                if (extra) paragraph rawHtml: true, tipsArticleHtml(extra)
+            }
+            if (next) {
+                href name: "nextTip", title: "<span class='hub-text-link'>${next.label}</span>",
+                    description: "Next topic", page: "tipsPage", params: [topic: next.id], width: 12, style: "margin:8px;"
+            }
+        }
+    }
+}
+
+private String tipsArticleHtml(Map topic) {
+    String extra = ""
+    if (topic.checklist) {
+        extra += "<div class='border-1 surface-border border-round p-3 mb-3'>" + topic.checklist.collect { item ->
+            "<div class='flex align-items-center gap-3 py-2'><i class='pi pi-check-circle hub-text-link text-xl' aria-hidden='true'></i>" +
+            "<div><div class='font-semibold'>${item.title}</div><div class='text-sm text-color-secondary'>${item.detail}</div></div></div>"
+        }.join("") + "</div>"
+    }
+    if (topic.warning) extra += warningMessageHtml(topic.warning)
+    """
+<article class='app-tip-card'>
+  <div class='app-tip-card-header flex align-items-center gap-3'>
+    <i class='pi ${topic.icon} hub-text-link text-xl' aria-hidden='true'></i>
+    <h4 class='app-heading font-semibold m-0'>${topic.title}</h4>
+  </div>
+  <div class='app-tip-copy'>${topic.body}${extra}</div>
+</article>
+"""
+}
+
+// The page can open at the main page's scroll position. Start at the top; on a phone, after picking a topic,
+// at the article (the index sits above it there).
+private String tipsScrollScript(boolean picked) {
+    """
+<script>
+(function(){
+  function go(){
+    var art = document.querySelector('.app-tips-article');
+    if (${picked} && art && window.innerWidth <= 1000) { art.scrollIntoView(); return; }
+    var el = document.getElementById('formApp');
+    for (; el; el = el.parentElement) if (el.scrollTop) el.scrollTop = 0;
+    window.scrollTo(0, 0);
+  }
+  go(); setTimeout(go, 50); setTimeout(go, 300);
+})();
+</script>
+"""
+}
+
+private String tipsStylesHtml() {
+    """
+<style>
+  ${appPageSpacingCss()}
+  .app-tips-index { float: left; width: calc(27% - 8px); box-sizing: border-box; }
+  .app-tips-article { float: right; width: 73%; border-left: 1px solid var(--surface-border, rgba(0,0,0,.12)); padding-left: 8px; box-sizing: border-box; }
+  .app-tips-index > .mdl-grid, .app-tips-article > .mdl-grid { padding: 4px 0 !important; }
+  .app-tips-index .mdl-cell:has(> style) { display: none; }
+  .app-tip-card { border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 4px; overflow: hidden; margin-bottom: 8px; }
+  .app-tip-card-header { padding: 16px; background: var(--surface-ground, #fafafa); border-bottom: 1px solid var(--surface-border, rgba(0,0,0,.12)); }
+  .app-tip-copy { padding: 16px; line-height: 1.55; overflow-wrap: anywhere; }
+  .app-tip-copy p { margin: 0 0 16px; }
+  .app-tip-copy p:last-child { margin-bottom: 0; }
+  .app-tips-article button.hrefElem { background: var(--surface-card, #fff); box-shadow: none; border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 4px; font-family: inherit; }
+  .app-tips-article button.hrefElem::before { color: var(--hubitat-link-color, #1565c0); }
+  .form:has(> .app-tips-index) + fieldset,
+  #formApp:has(.app-tips-index) #fieldsetAppButtons { clear: both; }
+  @media (max-width: 1000px) {
+    .app-tips-index, .app-tips-article { float: none; width: 100%; padding: 0; border-left: 0; }
+  }
+</style>
+"""
+}
+
+private String tipsCardCss() {
+    """
+  button.hrefElem[name^='_action_href_tips'] {
+    position: relative; background: var(--surface-card, #fff); border: 1px solid var(--surface-border, rgba(0,0,0,.12));
+    border-radius: 4px; box-shadow: none; color: var(--text-color, rgba(0,0,0,.87)); min-height: 56px;
+    font-family: inherit; font-size: 16px; font-weight: 500; line-height: 1.4; padding: 8px 28px 8px 46px;
+  }
+  button.hrefElem[name^='_action_href_tips'] > span:first-child { color: var(--hubitat-link-color, #1565c0); font-weight: 600; font-size: 16px !important; }
+  button.hrefElem[name^='_action_href_tips'] > span.state-incomplete-text { color: var(--text-color-secondary, rgba(0,0,0,.6)); font-size: 14px; font-weight: 500; line-height: 1.4; }
+  button.hrefElem[name^='_action_href_tips'] i.pi {
+    position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--hubitat-link-color, #1565c0); font-size: 20px;
+  }
+  button.hrefElem[name^='_action_href_tips']::before { color: var(--hubitat-link-color, #1565c0); }
+"""
+}
+
+// ============================================================================
 // UI template (HubitatAppUiTemplate)
 // ============================================================================
 
@@ -506,6 +686,8 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
     """
 <style>
   ${appPageSpacingCss()}
+  ${tipsCardCss()}
+  .app-main-support button.hrefElem[name^='_action_href_tips'] { min-height: 61.5px; padding-bottom: 13.5px; box-sizing: border-box; }
   #formApp .form > div:has(> h3:empty):has(+ .app-main-overview) { display: none; }
   #formApp .form > .app-main-overview { margin-bottom: 0.429rem !important; }
   .app-main-overview > .mdl-grid { padding-top: 0.286rem !important; padding-bottom: 0.286rem !important; }

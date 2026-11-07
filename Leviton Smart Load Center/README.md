@@ -1,6 +1,6 @@
 # Leviton Smart Load Center for Hubitat
 
-> **Status: v2.0.2.** Brings your Leviton smart panel into Hubitat: power, current, voltage and energy for every smart breaker and CT clamp, with optional remote trip and reset. Works with LWHEM (2nd gen) and LDATA (1st gen) panels through your My Leviton account. Breaker and CT mapping ported from [rwoldberg/ldata-ha](https://github.com/rwoldberg/ldata-ha).
+> **Status: v2.0.4.** Brings your Leviton smart panel into Hubitat: power, current, voltage and energy for every smart breaker and CT clamp, with optional remote trip and reset. Works with LWHEM (2nd gen) and LDATA (1st gen) panels through your My Leviton account. Breaker and CT mapping ported from [rwoldberg/ldata-ha](https://github.com/rwoldberg/ldata-ha).
 
 ## What you get
 
@@ -31,6 +31,8 @@ You choose which breakers and CT clamps Hubitat creates on the app's **Equipment
 2. Enter your My Leviton email and password.
 3. Tap **Done**. The app signs in, adds each panel, and the panels add their breakers and CT clamps in about 30 seconds.
 4. Open the app again and tap **Equipment** to turn off anything you don't want in Hubitat. Turn a whole panel off under **Panels**.
+
+The app's **Tips & Troubleshooting** page (under Help & Support) covers setup, breaker control, hub load, rules, moving from 1.2.x and common problems.
 
 ## Options
 
