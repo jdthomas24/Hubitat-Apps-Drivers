@@ -38,12 +38,13 @@
      -UI follows HubitatAppUiTemplate (Reolink, UI design by gopher.ny). Dark mode uses the hub's theme
       classes (hub-text-*, app-ui-button*, app-ui-links/navigation, surface-*, p-message/p-tag) and var() tokens
       with fallbacks; legacyLightThemeCss() covers pre-2.5.3 firmware (pattern by vurvantsev, Reolink 1.6.13).
+     -Tips page scrolls to the top on open (1.1.7); it could open at the main page's scroll position.
 */
 
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Sofabaton Integration"
-@Field static final String APP_VERSION = "1.1.6"
+@Field static final String APP_VERSION = "1.1.7"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com"   // TODO: release thread
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
@@ -1218,7 +1219,7 @@ def tipsPage(params = null) {
     def next = i + 1 < topics.size() ? topics[i + 1] : null
     dynamicPage(name: "tipsPage", title: "Tips & Troubleshooting") {
         section(sectionClass: "app-ui-links app-tips-index app-ui-navigation") {
-            paragraph rawHtml: true, tipsStylesHtml()
+            paragraph rawHtml: true, tipsStylesHtml() + tipsScrollScript(params?.topic != null)
             topics.groupBy { it.group }.each { group, entries ->
                 paragraph rawHtml: true, "<div class='app-heading font-semibold mt-2'>${group}</div>"
                 entries.each { entry ->
@@ -1260,6 +1261,25 @@ private String tipsArticleHtml(Map topic) {
   </div>
   <div class='app-tip-copy'>${topic.body}${extra}</div>
 </article>
+"""
+}
+
+// The page can open at the main page's scroll position. Start at the top; on a phone, after picking a topic,
+// at the article (the index sits above it there).
+private String tipsScrollScript(boolean picked) {
+    """
+<script>
+(function(){
+  function go(){
+    var art = document.querySelector('.app-tips-article');
+    if (${picked} && art && window.innerWidth <= 1000) { art.scrollIntoView(); return; }
+    var el = document.getElementById('formApp');
+    for (; el; el = el.parentElement) if (el.scrollTop) el.scrollTop = 0;
+    window.scrollTo(0, 0);
+  }
+  go(); setTimeout(go, 50); setTimeout(go, 300);
+})();
+</script>
 """
 }
 
