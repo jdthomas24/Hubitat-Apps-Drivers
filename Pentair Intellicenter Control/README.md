@@ -1,6 +1,6 @@
 # Pentair IntelliCenter for Hubitat
 
-> **Status: v1.8.0.** Local control of a Pentair IntelliCenter pool controller. No cloud, no account: Hubitat talks straight to the controller on your network.
+> **Status: v1.8.1.** Local control of a Pentair IntelliCenter pool controller. No cloud, no account: Hubitat talks straight to the controller on your network.
 
 ## What you get
 
@@ -35,6 +35,8 @@ You choose which of these Hubitat creates on the app's **Equipment** page.
 2. Enter the controller's IP address. Leave the port at **6680** (some IntelliCenter 2 systems use **6681**).
 3. Tap **Done**. The Bridge connects and adds your equipment in about 20 seconds.
 4. Open the app again and tap **Equipment** to turn off anything you don't want in Hubitat.
+
+The app's **Tips & Troubleshooting** page (under Help & Support) covers setup, supported firmware, heat control, rules and common problems.
 
 **Finding the IP:** your router's device list (look for IntelliCenter or Pentair), or the Pentair app under Settings → Status → Network. A DHCP reservation keeps it from changing.
 

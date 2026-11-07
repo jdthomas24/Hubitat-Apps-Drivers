@@ -16,6 +16,7 @@
      -UI follows HubitatAppUiTemplate (Reolink, UI design by gopher.ny). Dark mode uses the hub's theme
       classes (hub-text-*, app-ui-button*, app-ui-links, surface-*, p-message/p-tag) and var() tokens with
       fallbacks; legacyLightThemeCss() covers pre-2.5.3 firmware (pattern by vurvantsev, Reolink 1.6.13).
+     -Tips & Troubleshooting page (1.8.1) is the same code as Sofabaton and Bambu; it scrolls to the top on open.
 */
 
 definition(
@@ -33,7 +34,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Pentair IntelliCenter"
-@Field static final String APP_VERSION   = "1.8.0"
+@Field static final String APP_VERSION   = "1.8.1"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/release-pentair-intellicenter-controller-beta/162876/31"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -43,6 +44,7 @@ import groovy.transform.Field
 preferences {
     page(name: "mainPage")
     page(name: "equipmentPage")
+    page(name: "tipsPage")
 }
 
 private String bridgeDni() { "intellicenter-bridge-${app.id}" }
@@ -93,10 +95,12 @@ def mainPage() {
             label title: "App name", required: false
         }
         section(title: "<b>Help & Support</b>", sectionClass: "app-ui-links app-main-support") {
+            href name: "tips", title: "<i class='pi pi-info-circle' aria-hidden='true'></i>Tips & Troubleshooting", page: "tipsPage",
+                description: "Setup, firmware, heat and rules", width: 4, style: "margin:8px;"
             paragraph rawHtml: true, supportLinkHtml(COMMUNITY_URL, "pi pi-comments",
-                "Hubitat Community Thread", "Questions, feedback, and release notes"), width: 6
+                "Hubitat Community Thread", "Questions, feedback, and release notes"), width: 4
             paragraph rawHtml: true, supportLinkHtml(COFFEE_URL, "fa-solid fa-mug-hot",
-                "Buy Me a Coffee", "Support development"), width: 6
+                "Buy Me a Coffee", "Support development"), width: 4
         }
         versionFooterSection()
     }
@@ -260,6 +264,185 @@ private String esc(v) {
 }
 
 // ============================================================================
+// Tips & Troubleshooting (same page as Sofabaton and Bambu)
+// ============================================================================
+
+@Field static final String DEFAULT_TIP_TOPIC = "setup"
+
+/** Fields: id, label, title, group, icon (PrimeIcons), body; optional checklist, warning, append. */
+private List tipsTopics() {
+    [
+        [id: "setup", label: "Setup", title: "Connecting to your controller", group: "Getting started", icon: "pi-cog",
+            body: "<p>Enter the controller's IP address and tap <b>Done</b>. The Bridge connects and adds your equipment in about 20 seconds.</p>",
+            checklist: [
+                [title: "IP address", detail: "Your router's device list (look for IntelliCenter or Pentair), or the Pentair app under Settings, Status, Network. A DHCP reservation keeps it from changing."],
+                [title: "Port", detail: "Leave it at 6680. Some IntelliCenter 2 systems use 6681."],
+                [title: "Same network", detail: "The controller and the hub need to be on the same network, with nothing blocking the port."],
+                [title: "Bridge device", detail: "Holds the connection and creates every pool device under itself. Its connectionStatus shows Connected once it's talking to the controller."]
+            ]],
+        [id: "firmware", label: "Supported firmware", title: "Supported controller firmware", group: "Getting started", icon: "pi-verified",
+            body: "<p>IntelliCenter firmware <b>1.064 and later</b>, including <b>3.x</b>.</p>",
+            checklist: [
+                [title: "2.x isn't supported", detail: "Pentair withdrew the 2.x firmware line. If your panel is on 2.x, update it to the current 3.x release first."],
+                [title: "Heat control on 3.x", detail: "Reworked in 1.8.0 for 3.x panels and confirmed on 3.014 with a gas heater."]
+            ]],
+        [id: "equipment", label: "Equipment", title: "Choosing your equipment", group: "Getting started", icon: "pi-list",
+            body: "<p>The app's <b>Equipment</b> page lists everything the Bridge found on your controller, grouped by kind. Everything starts turned on.</p>",
+            checklist: [
+                [title: "Turn something off", detail: "Its device is removed right away and won't come back."],
+                [title: "Turn it back on", detail: "The device is recreated in a few seconds."],
+                [title: "Deleted from the Devices page", detail: "Counts as turned off, so it stays gone. Turn it back on here to recreate it."]
+            ]],
+        [id: "heat", label: "Heat control", title: "Heating the pool or spa", group: "How it works", icon: "pi-sun",
+            body: "<p>Heat is controlled from the Pool and Spa devices.</p>",
+            checklist: [
+                [title: "Heat And Start", detail: "Sets the set point and heat source in one step and turns the body on. It uses the last heater used, else the first one your panel lists."],
+                [title: "Stop Heat", detail: "Turns heat off and leaves the pump running. So does Set Heat Source Off."],
+                [title: "heatSources", detail: "The heat choices your panel offers for that body, using your heater names. Use any of them with Set Heat Source."],
+                [title: "heaterMode", detail: "Heating, Idle (heat is on but the heater isn't firing right now) or Off. heatSource shows the source that's selected."],
+                [title: "Heat Lock", detail: "Locked blocks every heat change from Hubitat (set point, source, Heat And Start). Stop Heat still works."]
+            ]],
+        [id: "pumps", label: "Pumps and chlorinator", title: "Pumps and the chlorinator", group: "How it works", icon: "pi-sync",
+            body: "<p>Both report what the controller tells them; changes show up as they happen.</p>",
+            checklist: [
+                [title: "Pump", detail: "RPM, GPM and watts when the pump reports them. Set Speed changes the RPM of the running program, within the limits in the pump's Preferences."],
+                [title: "Pump on and off", detail: "The pump runs with its body, so turn it on and off from the Pool or Spa device."],
+                [title: "Chlorinator", detail: "IntelliChlor salt level, pool and spa output and superchlorinate, read-only. It only appears when the controller reports a salt cell."]
+            ]],
+        [id: "rules", label: "Rules and dashboards", title: "Rules and dashboards", group: "Using it", icon: "pi-bolt",
+            body: "<p>Some starting points:</p>",
+            checklist: [
+                [title: "Spa ready", detail: "Spa temperature reaches the set point: send a notification."],
+                [title: "Heater running", detail: "heaterMode becomes Heating or goes back to Idle."],
+                [title: "Lights and features", detail: "Each circuit, feature and group is a switch, so scenes and rules can turn them on and off."],
+                [title: "Dashboard", detail: "Add the Pool, Spa or Pump device as an Attribute tile and pick tile."],
+                [title: "Older rules", detail: "Rules made with the 1.6.x command names keep working."]
+            ]],
+        [id: "trouble", label: "Troubleshooting", title: "Troubleshooting", group: "Troubleshooting", icon: "pi-wrench",
+            body: "<p>The status banner on the main page and the Bridge's connectionStatus usually say what's wrong.</p>",
+            checklist: [
+                [title: "No devices after setup", detail: "Check the IP, and that the Bridge shows connectionStatus Connected. Set Log level to Full, tap Initialize on the Bridge, and check the logs."],
+                [title: "Waiting for hub startup", detail: "Normal right after a hub reboot. The Bridge waits 3 minutes, then connects on its own. Tap Refresh on the Bridge if you need it sooner."],
+                [title: "Controller offline", detail: "The Bridge retries every 2 minutes and reconnects on its own. Check the controller has power and network, and that nothing blocks port 6680."],
+                [title: "A deleted device came back, or one is missing", detail: "Use the Equipment page."],
+                [title: "Heat commands do nothing", detail: "Check Heat Lock is unlocked and the heater is assigned to that body in the Pentair app (Settings, Advanced Settings, Heaters). On 3.002 and later the heater type also has to match how it's wired, or it won't fire even from the Pentair app. The log shows what was sent; post those lines in the community thread."],
+                [title: "No chlorinator device", detail: "If the Pentair app shows salt but Hubitat doesn't, set Log level to Full, tap Initialize on the Bridge, and post the lines with CHEM in the community thread."]
+            ]]
+    ]
+}
+
+def tipsPage(params = null) {
+    def topics = tipsTopics()
+    def topic = topics.find { it.id == params?.topic } ?: topics.find { it.id == DEFAULT_TIP_TOPIC } ?: topics[0]
+    int i = topics.indexOf(topic)
+    def next = i + 1 < topics.size() ? topics[i + 1] : null
+    dynamicPage(name: "tipsPage", title: "Tips & Troubleshooting") {
+        section(sectionClass: "app-ui-links app-tips-index app-ui-navigation") {
+            paragraph rawHtml: true, tipsStylesHtml() + tipsScrollScript(params?.topic != null)
+            topics.groupBy { it.group }.each { group, entries ->
+                paragraph rawHtml: true, "<div class='app-heading font-semibold mt-2'>${group}</div>"
+                entries.each { entry ->
+                    String selected = entry.id == topic.id ? "app-ui-navigation-selected" : ""
+                    href name: "tip_${entry.id}",
+                        title: "<span class='${selected}'><i class='pi ${entry.icon} mr-3' aria-hidden='true'></i>${entry.label}</span>",
+                        description: "", page: "tipsPage", params: [topic: entry.id], width: 12, style: "margin:0 8px;"
+                }
+            }
+        }
+        section(sectionClass: "app-ui-links app-tips-article") {
+            paragraph rawHtml: true, tipsArticleHtml(topic)
+            if (topic.append) {
+                def extra = topics.find { it.id == topic.append }
+                if (extra) paragraph rawHtml: true, tipsArticleHtml(extra)
+            }
+            if (next) {
+                href name: "nextTip", title: "<span class='hub-text-link'>${next.label}</span>",
+                    description: "Next topic", page: "tipsPage", params: [topic: next.id], width: 12, style: "margin:8px;"
+            }
+        }
+    }
+}
+
+private String tipsArticleHtml(Map topic) {
+    String extra = ""
+    if (topic.checklist) {
+        extra += "<div class='border-1 surface-border border-round p-3 mb-3'>" + topic.checklist.collect { item ->
+            "<div class='flex align-items-center gap-3 py-2'><i class='pi pi-check-circle hub-text-link text-xl' aria-hidden='true'></i>" +
+            "<div><div class='font-semibold'>${item.title}</div><div class='text-sm text-color-secondary'>${item.detail}</div></div></div>"
+        }.join("") + "</div>"
+    }
+    if (topic.warning) extra += warningMessageHtml(topic.warning)
+    """
+<article class='app-tip-card'>
+  <div class='app-tip-card-header flex align-items-center gap-3'>
+    <i class='pi ${topic.icon} hub-text-link text-xl' aria-hidden='true'></i>
+    <h4 class='app-heading font-semibold m-0'>${topic.title}</h4>
+  </div>
+  <div class='app-tip-copy'>${topic.body}${extra}</div>
+</article>
+"""
+}
+
+// The page can open at the main page's scroll position. Start at the top; on a phone, after picking a topic,
+// at the article (the index sits above it there).
+private String tipsScrollScript(boolean picked) {
+    """
+<script>
+(function(){
+  function go(){
+    var art = document.querySelector('.app-tips-article');
+    if (${picked} && art && window.innerWidth <= 1000) { art.scrollIntoView(); return; }
+    var el = document.getElementById('formApp');
+    for (; el; el = el.parentElement) if (el.scrollTop) el.scrollTop = 0;
+    window.scrollTo(0, 0);
+  }
+  go(); setTimeout(go, 50); setTimeout(go, 300);
+})();
+</script>
+"""
+}
+
+private String tipsStylesHtml() {
+    """
+<style>
+  ${appPageSpacingCss()}
+  .app-tips-index { float: left; width: calc(27% - 8px); box-sizing: border-box; }
+  .app-tips-article { float: right; width: 73%; border-left: 1px solid var(--surface-border, rgba(0,0,0,.12)); padding-left: 8px; box-sizing: border-box; }
+  .app-tips-index > .mdl-grid, .app-tips-article > .mdl-grid { padding: 4px 0 !important; }
+  .app-tips-index .mdl-cell:has(> style) { display: none; }
+  .app-tip-card { border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 4px; overflow: hidden; margin-bottom: 8px; }
+  .app-tip-card-header { padding: 16px; background: var(--surface-ground, #fafafa); border-bottom: 1px solid var(--surface-border, rgba(0,0,0,.12)); }
+  .app-tip-copy { padding: 16px; line-height: 1.55; overflow-wrap: anywhere; }
+  .app-tip-copy p { margin: 0 0 16px; }
+  .app-tip-copy p:last-child { margin-bottom: 0; }
+  .app-tips-article button.hrefElem { background: var(--surface-card, #fff); box-shadow: none; border: 1px solid var(--surface-border, rgba(0,0,0,.12)); border-radius: 4px; font-family: inherit; }
+  .app-tips-article button.hrefElem::before { color: var(--hubitat-link-color, #1565c0); }
+  .form:has(> .app-tips-index) + fieldset,
+  #formApp:has(.app-tips-index) #fieldsetAppButtons { clear: both; }
+  @media (max-width: 1000px) {
+    .app-tips-index, .app-tips-article { float: none; width: 100%; padding: 0; border-left: 0; }
+  }
+</style>
+"""
+}
+
+private String tipsCardCss() {
+    """
+  button.hrefElem[name^='_action_href_tips'] {
+    position: relative; background: var(--surface-card, #fff); border: 1px solid var(--surface-border, rgba(0,0,0,.12));
+    border-radius: 4px; box-shadow: none; color: var(--text-color, rgba(0,0,0,.87)); min-height: 56px;
+    font-family: inherit; font-size: 16px; font-weight: 500; line-height: 1.4; padding: 8px 28px 8px 46px;
+  }
+  button.hrefElem[name^='_action_href_tips'] > span:first-child { color: var(--hubitat-link-color, #1565c0); font-weight: 600; font-size: 16px !important; }
+  button.hrefElem[name^='_action_href_tips'] > span.state-incomplete-text { color: var(--text-color-secondary, rgba(0,0,0,.6)); font-size: 14px; font-weight: 500; line-height: 1.4; }
+  button.hrefElem[name^='_action_href_tips'] i.pi {
+    position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--hubitat-link-color, #1565c0); font-size: 20px;
+  }
+  button.hrefElem[name^='_action_href_tips']::before { color: var(--hubitat-link-color, #1565c0); }
+"""
+}
+
+// ============================================================================
 // UI template (HubitatAppUiTemplate)
 // ============================================================================
 
@@ -269,6 +452,8 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
     """
 <style>
   ${appPageSpacingCss()}
+  ${tipsCardCss()}
+  .app-main-support button.hrefElem[name^='_action_href_tips'] { min-height: 61.5px; padding-bottom: 13.5px; box-sizing: border-box; }
   #formApp .form > div:has(> h3:empty):has(+ .app-main-overview) { display: none; }
   #formApp .form > .app-main-overview { margin-bottom: 0.429rem !important; }
   .app-main-overview > .mdl-grid { padding-top: 0.286rem !important; padding-bottom: 0.286rem !important; }
