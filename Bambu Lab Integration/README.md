@@ -1,6 +1,6 @@
 # Bambu Lab Integration for Hubitat
 
-> **Status: v0.2.2 beta, tested on an H2D.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
+> **Status: v0.2.3 beta, tested on two H2Ds. X1, P1 and A1 should work but are untested.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
 
 ## What you get
 
@@ -68,6 +68,8 @@ These are on each printer device's **Preferences** tab.
 
 **Why sampling:** X1 and H2 printers push an 8 KB status every second once Hubitat listens, printing or idle. The integration stays connected but only listens for one status per check, so a 30 hour print costs the hub about 3,600 messages instead of over 100,000, and an idle day about 100.
 
+**P1 and A1 printers** lag if asked for a full status too often, so the integration asks them at most every 5 minutes. Checks in between just listen for 5 seconds and pick up what changed, so progress and temperatures stay current, but a finished or paused print can take up to 5 minutes to show. **Refresh** always gets a full status. This is automatic, from the model the printer reports. X1 and H2 printers are unchanged.
+
 ## Dashboards and rules
 
 - **Tile:** add the Printer as an Attribute tile and pick **tile**. A dark card that scales with the tile size: state, file, temperatures (an arrow and the target while heating), a progress bar and finish time while printing, the last print when idle, door open and errors. To keep the hub's database small it only changes every 5% and when something else on it changes; the device page has the exact numbers.
@@ -105,6 +107,8 @@ One **Log level** in the app covers the app, every printer and every light and A
 **Commands do nothing.** In Monitor only they're refused on purpose; use the Bambu apps. In Monitor and control, turn on Developer Mode on the printer. The log says after each command whether it took.
 
 **The light turned itself back on.** The printer turns its light on when a print finishes.
+
+**X1, P1 or A1 looks wrong.** These models aren't tested yet. Set **Log level** to **Full**, let it run through a check or a print, and post the logs in the community thread.
 
 **A device I deleted came back, or one is missing.** Use the app's **Equipment** page. Deleting a device from the Devices page turns it off there; turn it back on to recreate it.
 

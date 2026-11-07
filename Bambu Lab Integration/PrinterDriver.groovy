@@ -9,6 +9,9 @@
      -Sampling: X1/H2 stream an 8.6 KB status every second while subscribed, printing or idle. The link stays up
       but the driver subscribes only for one full report per check (pushall, first report, unsubscribe): every
       30 s while printing, every 15 min idle (preferences). 3 misses reconnect. Watchdog every 5 min.
+     -P1/A1 (0.2.3): pushall at most every 5 min (more lags them; they send changes only, not full reports).
+      Checks in between listen 5 s and merge what arrives, never a miss. X1/H2 by model; unknown counts as P1/A1.
+      Refresh always sends pushall.
       Merged report lives in memory (RUNTIME); a driver save clears it.
      -Change-only events. Heaters: status (Heating to N, At temp, Cooling, Off) and the temperature only at temp
       or off, in the preference step; H2 temps are packed (current low 16 bits, target high 16). Times and layers
@@ -94,12 +97,14 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.2"
+@Field static final String VERSION     = "0.2.3"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
 @Field static final List BACKOFF       = [5, 15, 30, 60, 120, 300]
 @Field static final int SAMPLE_WAIT    = 20
+@Field static final long PUSHALL_MIN_MS = 300000L   // P1/A1
+@Field static final int QUICK_WAIT     = 5
 @Field static final BigDecimal AT_TEMP_C = 5      // within this of the target = At temp
 @Field static final BigDecimal OFF_C     = 45     // no target and below this = Off
 @Field static final List ACTIVE        = ["Printing", "Paused", "Preparing", "Starting", "Slicing"]
@@ -164,7 +169,7 @@ def initialize() {
     Map m = mem()
     m.attempt = 0
     m.reconnectPending = false
-    ["opts", "cat", "skip", "sampling", "missed", "nextSampleAt", "holdUntil"].each { m.remove(it) }
+    ["opts", "cat", "skip", "sampling", "missed", "nextSampleAt", "holdUntil", "quick", "lastPushAll"].each { m.remove(it) }
     if (state.connected) state.connected = false
     if (!state.printer?.ip) {
         setStatus("Not Configured")
@@ -181,6 +186,7 @@ def refresh() {
     if (!state.connected && !up) { logN "not connected, reconnecting"; connect(); return }
     if (!state.connected) state.connected = true
     logN "refresh requested"
+    mem().forceFull = true
     unschedule("startSample")
     startSample()
 }
@@ -304,8 +310,15 @@ private void onConnected() {
 // Wildcard until the printer itself has told us its serial, so a mistyped serial in the app can't block data.
 private String reportTopic() { state.serial ? "device/${state.serial}/report" : "device/+/report" }
 
+// P1/A1 or not yet known: pushall is rationed.
+private boolean limited() {
+    String md = (device.currentValue("model") ?: "").toString().toUpperCase()
+    return !(md.startsWith("X1") || md.startsWith("H2"))
+}
+
 def startSample() {
     Map m = mem()
+    if (m.sampling && m.quick && m.forceFull) endSample(((m.lastRx ?: 0L) as long) >= ((m.sampleAt ?: 0L) as long))   // Refresh mid quick check
     if (!state.connected || m.sampling) return
     String t = reportTopic()
     try { interfaces.mqtt.subscribe(t) } catch (e) {
@@ -316,22 +329,43 @@ def startSample() {
     m.sampling = true
     m.subTopic = t
     m.sampleAt = now()
-    pushAll()
+    boolean full = !limited() || m.forceFull || !serial() ||
+        now() - ((m.lastPushAll ?: 0L) as long) >= PUSHALL_MIN_MS
+    m.remove("forceFull")
     if (m.verPending && state.serial) { m.verPending = false; publish([info: [sequence_id: seq(), command: "get_version"]]) }
-    runIn(SAMPLE_WAIT, "sampleTimeout")
+    if (full) {
+        m.quick = false
+        pushAll()
+        m.lastPushAll = now()
+        runIn(SAMPLE_WAIT, "sampleTimeout")
+    } else {
+        m.quick = true
+        runIn(QUICK_WAIT, "quickEnd")
+    }
+}
+
+// End of a P1/A1 listen-only check. Not hearing anything here is normal, so it never counts as a miss.
+def quickEnd() {
+    Map m = mem()
+    if (!m.sampling || !m.quick) return
+    long wait = ((m.holdUntil ?: 0L) as long) - now()
+    if (wait > 0) { runIn(Math.max(1, Math.ceil(wait / 1000.0) as int), "quickEnd"); return }
+    endSample(((m.lastRx ?: 0L) as long) >= ((m.sampleAt ?: 0L) as long))
 }
 
 // End of the listen window after a command, for printers that sent their one status early.
 def holdEnd() { if (mem().sampling) endSample() }
 
-private void endSample() {
+private void endSample(boolean heard = true) {
     Map m = mem()
     if (!m.sampling) return
     m.sampling = false
-    m.missed = 0
+    m.quick = false
+    if (heard) m.missed = 0
     try { interfaces.mqtt.unsubscribe(m.subTopic as String) } catch (e) { }
     unschedule("sampleTimeout")
-    markAlive()
+    unschedule("quickEnd")
+    if (heard) markAlive()
     checkExpect(m.rep as Map)   // after the whole listen window, so a refusal sent a few seconds late counts
     int secs = nextSecs()
     m.nextSampleAt = now() + secs * 1000L
@@ -340,7 +374,7 @@ private void endSample() {
 
 def sampleTimeout() {
     Map m = mem()
-    if (!m.sampling) return
+    if (!m.sampling || m.quick) return
     m.sampling = false
     try { interfaces.mqtt.unsubscribe(m.subTopic as String) } catch (e) { }
     int missed = ((m.missed ?: 0) as int) + 1
@@ -454,7 +488,7 @@ def parse(String raw) {
             markAlive()
             merge(m.rep as Map, pr)
             render()
-            if (pr.containsKey("gcode_state")) {
+            if (pr.containsKey("gcode_state") && !m.quick) {
                 long wait = ((m.holdUntil ?: 0L) as long) - now()
                 if (wait <= 0) endSample()
                 else runIn(Math.max(1, Math.ceil(wait / 1000.0) as int), "holdEnd")   // an idle printer may not send another

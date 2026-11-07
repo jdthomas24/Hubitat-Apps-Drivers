@@ -30,7 +30,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.2.2"
+@Field static final String APP_VERSION   = "0.2.3"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -484,7 +484,8 @@ private List tipsTopics() {
                 [title: "Printing", detail: "Every 30 seconds (the printer device's Preferences, from 15 seconds to 2 minutes). A finished print or an error shows up within that time."],
                 [title: "Idle", detail: "Every 15 minutes, like a health check (5 minutes to 1 hour in Preferences). A print that starts shows up within that time."],
                 [title: "After a command", detail: "Right away, to pick up the printer's answer."],
-                [title: "Refresh", detail: "Tap Refresh on the printer device for a status now."]
+                [title: "Refresh", detail: "Tap Refresh on the printer device for a status now."],
+                [title: "P1 and A1 series", detail: "These printers lag if asked for a full status too often, so they get one at most every 5 minutes. The checks in between listen for 5 seconds and pick up what changed, so progress and temperatures stay current, but a finished or paused print can take up to 5 minutes to show. Refresh always gets a full status. This switches on by itself from the model the printer reports."]
             ]],
         [id: "temps", label: "Temperatures", title: "Heater status and temperatures", group: "How it works", icon: "pi-sun",
             body: "<p>Each heater has a <b>status</b> and a <b>temperature</b>. The status is <i>Heating to 220°</i>, <i>At temp</i>, <i>Cooling</i> or <i>Off</i>. " +
@@ -510,7 +511,8 @@ private List tipsTopics() {
                 [title: "Reconnecting", detail: "Check the printer is on and on the same network, and nothing blocks port 8883. It retries on its own."],
                 [title: "Command refused", detail: "In Monitor only that's on purpose. In Monitor and control, turn on Developer Mode on the printer. The light works either way."],
                 [title: "Light came back on", detail: "The printer turns its light on when a print finishes. That's the printer, not Hubitat."],
-                [title: "Error text", detail: "Looked up from this integration's GitHub folder the first time a code appears (not from Bambu). Plain-English text comes from the ha-bambulab project (MIT license)."]
+                [title: "Error text", detail: "Looked up from this integration's GitHub folder the first time a code appears (not from Bambu). Plain-English text comes from the ha-bambulab project (MIT license)."],
+                [title: "Other models", detail: "Tested on the H2D. X1, P1 and A1 should work but haven't been tested yet. If something looks off, set Log level to Full, let it run through a check or a print, and post the logs in the community thread."]
             ]]
     ]
 }
