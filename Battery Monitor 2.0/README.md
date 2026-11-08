@@ -1,6 +1,6 @@
 # Battery Monitor 2.0 for Hubitat
 
-> **Status: v2.7.5.** Tracks battery levels, drain, health and replacements for the devices you pick, with Li-ion cliff-drop alerts and an optional web portal. Companion to [Device Health Monitor](../Device%20Health%20Monitor), which watches connectivity.
+> **Status: v2.7.6.** Tracks battery levels, drain, health and replacements for the devices you pick, with Li-ion cliff-drop alerts and an optional web portal. Companion to [Device Health Monitor](../Device%20Health%20Monitor), which watches connectivity.
 
 ## What it does
 
@@ -26,7 +26,7 @@ then Save.
 1. Apps → **Add User App** → **Battery Monitor 2.0**.
 2. Open **Monitored devices** and pick your battery devices.
 3. Tap **Done**. That's required before the reports fill in.
-4. Optional: set up **Notifications**, the **Scan interval**, and battery types under **Device management**.
+4. Optional: set up **Notifications**, **Scan interval & dates** (scan timing, date format and 12/24-hour clock), and battery types under **Device management**.
 
 New devices take about a week. Health shows **Pending** until it has 5 samples over 5 days (7 for locks, smoke and CO detectors). A replacement battery starts from the last battery's drain instead, so health shows right away as long as the old battery was tracked for at least a week.
 
@@ -49,7 +49,7 @@ New devices take about a week. Health shows **Pending** until it has 5 samples o
 
 - **Drain** is the average pace since the battery was replaced or last stepped down, so batteries that report in steps (1%, or 10% chunks) don't read as fast drain. If the level keeps setting new lows over several days, the faster recent pace takes over.
 - **Est Days** is current level divided by drain, capped at 365.
-- **Stale** means no activity past the stale threshold (default 24 hours, under Scan interval).
+- **Stale** means no activity past the stale threshold (default 24 hours, under Scan interval & dates).
 - Smoke and CO detectors often show **<0.01%/day**. That's normal.
 - Locks use higher drain thresholds.
 

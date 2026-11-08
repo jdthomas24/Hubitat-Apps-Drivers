@@ -1,6 +1,6 @@
 /**
  * Battery Monitor 2.0
- * Version: 2.7.5
+ * Version: 2.7.6
  *
  * Tracks battery levels, drain, health, and replacements for selected devices.
  * Scans on a recurring schedule plus each device's own battery events. Health uses
@@ -8,6 +8,8 @@
  * and reacts faster to recent readings. Replacements are auto-detected from a confirmed upward jump.
  * Optional OAuth web portal serves a live dashboard.
  *
+ * v2.7.6 -- Date and clock format options (Scan interval & dates page). Display only: history keeps storing
+ *    MM/dd/yyyy text plus epoch time, so older entries and sorting are unchanged.
  * v2.7.5 -- Replacements keep the outgoing battery's data: the new cycle starts from its long-term
  *    pace (no Pending if it had 7+ days), every entry is kept with how long each battery lasted, and
  *    deleting a device's newest entry restores the previous cycle. A staged jump confirms only on a
@@ -50,7 +52,7 @@ definition(
     oauth: true
 )
 
-@Field static final String APP_VERSION = "2.7.5"
+@Field static final String APP_VERSION = "2.7.6"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/release-battery-monitor-2-0/162329"
 @Field static final String COFFEE_URL = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "best"
@@ -323,7 +325,7 @@ def sendCliffAlert(device, oldLevel, newLevel) {
         return
     }
 
-    def ts  = new Date().format("MM/dd h:mm a", location.timeZone)
+    def ts  = fmtStamp(new Date())
     def msg = "⚡ URGENT: ${device.displayName} battery dropped ${oldLevel}% → ${newLevel}% (${ts}). This pattern is typical of a Li-ion cell nearing end of life — replace as soon as possible."
 
     def bypassSnooze = settings?.cliffBypassSnooze != false
@@ -437,8 +439,8 @@ def mainPage() {
                  description: portalOn ? stOn() : "${stOff()} · needs OAuth",
                  width: 12, style: "margin:0;")
             href(name: "toGeneral", page: "generalPage",
-                 title: "<i class='fa-solid fa-clock' aria-hidden='true'></i>Scan interval",
-                 description: "${scanLabel.capitalize()} · stale after ${settings?.staleThresholdHours ?: 24}h",
+                 title: "<i class='fa-solid fa-clock' aria-hidden='true'></i>Scan interval & dates",
+                 description: "${scanLabel.capitalize()} · stale after ${settings?.staleThresholdHours ?: 24}h · ${fmtDate(new Date())}",
                  width: 12, style: "margin:0;")
             href(name: "toAppName", page: "appNamePage",
                  title: "<i class='fa-solid fa-pen' aria-hidden='true'></i>App name",
@@ -524,7 +526,7 @@ def notificationsPage() {
             section("<b>Snooze</b> ${snoozed ? bmPill("Snoozed, ${hoursLeft}h left", "amber") : bmPill("Off", "gray")}") {
                 def smsg = state.remove("snoozeMsg")
                 if (snoozed) {
-                    def until = new Date(state.notifSnoozedUntil as Long).format("MMM d, h:mm a", location.timeZone)
+                    def until = fmtMonthDay(new Date(state.notifSnoozedUntil as Long)) + ", " + fmtTime(new Date(state.notifSnoozedUntil as Long))
                     paragraph rawHtml: true, "<div class='bm-msg bm-msg-warn'>😴 Snoozed until <b>${until}</b>. Cliff alerts still come through by default.</div>"
                     input "snoozeClear", "button", title: "Resume now", width: 3, styleClass: "bm-btn"
                 } else {
@@ -576,7 +578,7 @@ def appNamePage() {
 }
 
 def generalPage() {
-    dynamicPage(name: "generalPage", title: "Scan Interval", install: false) {
+    dynamicPage(name: "generalPage", title: "Scan Interval & Dates", install: false) {
         section {
             paragraph rawHtml: true, bmPageCss()
             input "scanInterval", "enum",
@@ -588,6 +590,16 @@ def generalPage() {
                   title: "Mark devices stale after (hours without activity)",
                   description: "Default 24. Used by the summary, banner, and notifications.",
                   defaultValue: 24, required: false
+        }
+        section("<b>Dates and times</b>") {
+            input "dateFormat", "enum", title: "Date format",
+                  description: "Used in the app, notifications and the web portal.",
+                  options: ["mdy": "MM/DD/YYYY (US)", "dmy": "DD/MM/YYYY (UK, EU)", "ymd": "YYYY-MM-DD"],
+                  defaultValue: "mdy", submitOnChange: true, width: 6
+            input "clockFormat", "enum", title: "Clock",
+                  options: ["12": "12-hour (3:45 PM)", "24": "24-hour (15:45)"],
+                  defaultValue: "12", submitOnChange: true, width: 6
+            paragraph "<span class='bm-hint'>Example: ${fmtDate(new Date())} ${fmtTime(new Date())}</span>"
         }
     }
 }
@@ -642,7 +654,7 @@ def scanAllDevices() {
         }
     }
 
-    def ts = new Date().format("MM/dd h:mm a", location.timeZone)
+    def ts = fmtStamp(new Date())
     def msg = "SCAN: ${devList.size()} device(s) scanned at ${ts}."
     if (poor.size()  > 0) msg += " Low battery: ${poor.join(', ')}."
     if (stale.size() > 0) msg += " Stale: ${stale.join(', ')}."
@@ -744,7 +756,7 @@ def scheduledSummary() {
         }
     }
 
-    def timestamp = new Date().format("MM/dd HH:mm", location.timeZone)
+    def timestamp = fmtStamp(new Date())
     def body      = "${prefix}🔋 Battery Summary — ${timestamp}\n"
 
     def staleDevices = devList.findAll { isStale(it) }.collect {
@@ -1483,7 +1495,7 @@ def forceRefreshEndpoint() {
 def serveDashboardPage() {
     try {
         def rows = buildSummaryRows()
-        def ts   = new Date().format("h:mm a", location.timeZone)
+        def ts   = fmtTime(new Date())
         def body = rows ? summaryHtml(rows, "", true) :
             "<div class='bm-ok'>No monitored devices with a battery reading yet.</div>"
         def html = """<!DOCTYPE html><html><head><meta charset='UTF-8'>
@@ -2127,6 +2139,29 @@ private String bmPageCss() {
 """
 }
 
+// ===================== DATE DISPLAY =====================
+// Display only. Stored history dates stay MM/dd/yyyy text (older entries: yyyy-MM-dd HH:mm).
+private String datePattern(boolean year = true) {
+    switch (settings?.dateFormat) {
+        case "dmy": return year ? "dd/MM/yyyy" : "dd/MM"
+        case "ymd": return year ? "yyyy-MM-dd" : "MM-dd"
+        default:    return year ? "MM/dd/yyyy" : "MM/dd"
+    }
+}
+private String fmtDate(Date d)      { d.format(datePattern(), location.timeZone) }
+private String fmtTime(Date d)      { d.format(settings?.clockFormat == "24" ? "HH:mm" : "h:mm a", location.timeZone) }
+private String fmtStamp(Date d)     { d.format(datePattern(false), location.timeZone) + " " + fmtTime(d) }
+private String fmtMonthDay(Date d)  { d.format(settings?.dateFormat == "mdy" || !settings?.dateFormat ? "MMM d" : "d MMM", location.timeZone) }
+
+private String displayDate(Map r) {
+    if (r?.time instanceof Number) return fmtDate(new Date(r.time as long))
+    def d = r?.date?.toString()
+    if (!d) return ""
+    try {
+        return fmtDate((d =~ /^\d{4}-\d{2}-\d{2}/) ? new Date().parse("yyyy-MM-dd HH:mm", d) : new Date().parse("MM/dd/yyyy", d))
+    } catch (e) { return d }
+}
+
 /** Sort key for history entries. Dates are stored as MM/dd/yyyy text, which sorts by month, not year. */
 private long replacementTime(r) {
     if (r?.time instanceof Number) return r.time as long
@@ -2632,7 +2667,7 @@ ${bmMsgHtml(msg)}
             }.sort { a, b -> replacementTime(b) <=> replacementTime(a) }
             def allReps  = state.replacements ?: []
             def histHtml = hist ? "<table class='bm-table'>" + hist.collect { r ->
-                "<tr><td>${r.date}</td><td>${r.level}%</td><td>${lastedCell(r, allReps)}</td><td style='text-align:right;'>${historyTypePill(r.type)}</td></tr>"
+                "<tr><td>${displayDate(r)}</td><td>${r.level}%</td><td>${lastedCell(r, allReps)}</td><td style='text-align:right;'>${historyTypePill(r.type)}</td></tr>"
             }.join("") + "</table>" : "<div class='bm-hint'>No replacements logged yet.</div>"
             paragraph rawHtml: true, "<div class='bm-h' style='margin-top:6px;'>Replacement history</div>${histHtml}"
         }
@@ -2752,12 +2787,7 @@ def historyPage() {
                 def nameHtml = !dev ? "<span class='bm-muted'>${displayName} <em>(device removed)</em></span>" :
                     hubLink("/device/edit/${dev.id}", displayName)
                 def info = dev ? getCatalogBatteryInfo(dev) : null
-                def dateDisplay = r.date ?: ""
-                try {
-                    if (dateDisplay =~ /^\d{4}-\d{2}-\d{2}/) {
-                        dateDisplay = new Date().parse("yyyy-MM-dd HH:mm", dateDisplay).format("MM/dd/yyyy", location.timeZone)
-                    }
-                } catch (e) { }
+                def dateDisplay = displayDate(r)
                 "<tr${dev ? '' : " style='opacity:0.6;'"}><td>${nameHtml}${info ? bmPill(bmEsc(info), 'gray') : ''}</td>" +
                     "<td>${r.level}%</td><td>${dateDisplay}</td><td>${lastedCell(r, allReps)}</td><td style='text-align:right;'>${historyTypePill(r.type)}</td></tr>"
             }.join("")
@@ -2786,7 +2816,7 @@ def deleteHistoryPage() {
         } else {
             def options = [:]
             state.replacements.sort { a, b -> replacementTime(b) <=> replacementTime(a) }.take(100).eachWithIndex { r, i ->
-                options["${i}"] = "🗑️ ${r.device} — ${r.date}${canRestore(r) ? ' (restores previous battery data)' : ''}"
+                options["${i}"] = "🗑️ ${r.device} — ${displayDate(r)}${canRestore(r) ? ' (restores previous battery data)' : ''}"
             }
             section("<b>Select Entry to Delete</b>") {
                 paragraph "Deleting a device's newest entry also restores the data from its previous battery, " +
@@ -2832,7 +2862,7 @@ def deleteHistoryConfirmPage() {
                         return true
                     }
                     app.updateSetting("confirmEntryDelete", [value: false, type: "bool"])
-                    paragraph "✅ Deleted entry for ${entry.device} on ${entry.date}." + (restored ? " Previous battery data restored." : "")
+                    paragraph "✅ Deleted entry for ${entry.device} on ${displayDate(entry)}." + (restored ? " Previous battery data restored." : "")
                 } else {
                     paragraph "⚠️ Entry not found — it may have already been deleted."
                 }
