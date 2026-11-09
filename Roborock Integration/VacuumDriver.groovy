@@ -15,8 +15,8 @@
       and Dock share the Vacuum Control dropdown (0.2.4); on/off still start and dock. Scenes run through the app.
      -switch and the 20 s poll follow the state code, not in_cleaning: some models (Qrevo MaxV) keep in_cleaning 1
       while docked with no job (0.2.4).
-     -cleanArea (was "cleanArea (sq ft)") carries ft² or m² as its unit: the Area unit preference, else the hub's
-      temperature scale (°C gives m²). The old attribute is deleted once (0.2.5).
+     -Clean area is "cleanArea (sq ft)" or "cleanArea (sq m)" (the device page shows no units, so it's in the name):
+      the Area unit preference, else the hub's temperature scale (°C gives sq m). The other name is deleted (0.2.5).
      -The local key is kept in memory only (from the app); state.keyFp is a short fingerprint to spot a change.
      -The vacuum closes the local connection now and then (reset by peer). A drop reconnects within a few seconds
       and healthStatus only goes offline if it isn't back within 90 s. A command sent while reconnecting is held and
@@ -102,7 +102,8 @@ metadata {
         attribute "error", "enum", errorCodes.values().collect{ it.toLowerCase() }
         attribute "fanPower", "enum", fanPowerCodes.values().collect{ it.toLowerCase() }
         attribute "cleanTime (min)", "number"
-        attribute "cleanArea", "number"
+        attribute "cleanArea (sq ft)", "number"
+        attribute "cleanArea (sq m)", "number"
         attribute "cleanPercent (%)", "number"
         attribute "remainingFilter (%)", "number"
         attribute "remainingMainBrush (%)", "number"
@@ -128,7 +129,7 @@ preferences {
     input(name: "dockedPoll", type: "enum", title: "<b>Docked poll:</b>", options: ["60": "1 minute", "120": "2 minutes", "300": "5 minutes"], defaultValue: "120", required: true, width: 4,
         description: "<i>How often to check the vacuum while docked. Jobs started outside Hubitat show up within this time.</i>")
     input(name: "areaUnit", type: "enum", title: "<b>Area unit:</b>", options: ["auto": "Hub setting (°F: ft², °C: m²)", "0": "Square feet (ft²)", "1": "Square meters (m²)"], defaultValue: "auto", required: true, width: 4,
-        description: "<i>For cleanArea.</i>")
+        description: "<i>Clean area shows as cleanArea (sq ft) or cleanArea (sq m).</i>")
     input(name: "numberOfButtons", type: "number", title: "<b>Set Number of Buttons:</b>", range: "1...", defaultValue: 1, required: true, width: 4)
 }
 
@@ -138,7 +139,7 @@ def updated() { sendEvent(name: "numberOfButtons", value: (settings.numberOfButt
 def initialize() {
     unschedule()
     state.remove("cfgKey")   // kept in State before 0.2.4
-    if (device.currentValue("cleanArea (sq ft)") != null) device.deleteCurrentState("cleanArea (sq ft)")   // renamed in 0.2.5
+    dropArea(useFeet() ? "cleanArea (sq ft)" : "cleanArea (sq m)")
     closeSocket()
     state.retry = 0
     connect()
@@ -508,7 +509,9 @@ private void processStatus(Map r) {
     if (r.clean_time != null) sendIf("cleanTime (min)", Math.ceil((r.clean_time as int) / 60.0) as int)
     if (r.clean_area != null) {
         boolean ft = useFeet()
-        sendIf("cleanArea", (ft ? (r.clean_area as long) / 92903.04 : (r.clean_area as long) / 1000000.0) as int, null, ft ? "ft²" : "m²")
+        String n = ft ? "cleanArea (sq ft)" : "cleanArea (sq m)"
+        if (device.currentValue(n) == null) dropArea(n)   // unit just changed
+        sendIf(n, (ft ? (r.clean_area as long) / 92903.04 : (r.clean_area as long) / 1000000.0) as int, null, ft ? "sq ft" : "sq m")
     }
     if (r.clean_percent != null) {
         int pc = r.clean_percent as int
@@ -527,6 +530,11 @@ private void processStatus(Map r) {
 private boolean useFeet() {
     String u = settings.areaUnit ?: "auto"
     return u == "auto" ? location?.temperatureScale != "C" : u != "1"
+}
+
+// Only one clean area row on the device page.
+private void dropArea(String keep) {
+    ["cleanArea", "cleanArea (sq ft)", "cleanArea (sq m)"].each { if (it != keep && device.currentValue(it) != null) device.deleteCurrentState(it) }
 }
 
 private void codeAttr(String name, Map codes, v) {

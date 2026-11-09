@@ -514,7 +514,7 @@ private List tipsTopics() {
         [id: "updates", label: "Status updates", title: "How status stays up to date", group: "Getting started", icon: "pi-refresh",
             body: "<p>The vacuum doesn't send updates on its own, so the driver checks it: every 20 seconds while it's cleaning, returning or busy at the dock, every 1, 2 or 5 minutes while docked (the <b>Docked poll</b> setting), and 3 seconds after any command.</p>" +
                 "<p><b>switch</b> is on while the vacuum is working (cleaning, returning, washing or emptying at the dock) and off when it's docked, paused or idle.</p>" +
-                "<p><b>cleanArea</b> is in square feet or square meters. The <b>Area unit</b> preference on the vacuum device follows the hub (Celsius: square meters) unless you pick one.</p>" +
+                "<p>Clean area shows as <b>cleanArea (sq ft)</b> or <b>cleanArea (sq m)</b>. The <b>Area unit</b> preference on the vacuum device follows the hub (Celsius: square meters) unless you pick one.</p>" +
                 "<p><b>Refresh</b> checks the vacuum now and logs one line (Log level Normal): <i>Refreshed, no changes</i> or how many values changed.</p>" +
                 "<p>The vacuum closes its connection now and then. The driver reconnects within seconds and only shows offline if it stays down for 90 seconds.</p>"],
         [id: "rooms", label: "Rooms and scenes", title: "Rooms and scenes", group: "Using it", icon: "pi-th-large",

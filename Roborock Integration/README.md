@@ -54,7 +54,7 @@ The vacuum doesn't send updates on its own, so the driver checks it:
 - every **2 minutes** while docked (**Docked poll** setting: 1, 2 or 5 minutes)
 - **3 seconds** after any command
 
-**cleanArea** is in square feet or square meters (the unit shows with the value). The **Area unit** preference on the vacuum device follows the hub by default: square meters when the hub uses Celsius, square feet when it uses Fahrenheit. Pick one there to override it.
+Clean area shows as **cleanArea (sq ft)** or **cleanArea (sq m)**. The **Area unit** preference on the vacuum device follows the hub by default: square meters when the hub uses Celsius, square feet when it uses Fahrenheit. Pick one there to override it.
 
 A job started from the Roborock app or a schedule shows up within the docked poll time. A small keepalive every 30 seconds keeps the connection open.
 
@@ -86,7 +86,7 @@ Nothing is checked before sending. A wrong command or parameter is rejected by t
 
 ## Moving from bloodtick's driver
 
-Attributes are the same, apart from `rooms` and `scenes`, which are `roomsList` and `scenesList` here, and `cleanArea (sq ft)`, which is `cleanArea`. Commands take the same parameters, but the names changed, so update your rules:
+Attributes are the same, apart from `rooms` and `scenes`, which are `roomsList` and `scenesList` here. Commands take the same parameters, but the names changed, so update your rules:
 
 | bloodtick | Roborock Integration |
 |---|---|
@@ -105,7 +105,7 @@ Both can run side by side while you move rules over. Hubitat's **Swap Device** d
 3. Re-point each one to the new device, switching commands as in the table.
 4. Remove the old device once its In Use By list is empty.
 
-**From 0.2.3 or earlier of this integration:** vacuumStart, vacuumPause, vacuumResume and vacuumDock are now **Vacuum Control** with a Start, Pause, Resume or Dock choice. Update rules and Maker API calls that used them (on and off still work). In 0.2.5, `cleanArea (sq ft)` became `cleanArea`, so re-point dashboards and rules that use it.
+**From 0.2.3 or earlier of this integration:** vacuumStart, vacuumPause, vacuumResume and vacuumDock are now **Vacuum Control** with a Start, Pause, Resume or Dock choice. Update rules and Maker API calls that used them (on and off still work). Metric hubs now get `cleanArea (sq m)` in place of `cleanArea (sq ft)` (0.2.5).
 
 ## Logging
 
