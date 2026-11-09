@@ -1,6 +1,6 @@
 # Roborock Integration for Hubitat (beta)
 
-> **Status: v0.2.4 beta.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
+> **Status: v0.2.5 beta.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
 
 ## What you get
 
@@ -54,6 +54,8 @@ The vacuum doesn't send updates on its own, so the driver checks it:
 - every **2 minutes** while docked (**Docked poll** setting: 1, 2 or 5 minutes)
 - **3 seconds** after any command
 
+**cleanArea** is in square feet or square meters (the unit shows with the value). The **Area unit** preference on the vacuum device follows the hub by default: square meters when the hub uses Celsius, square feet when it uses Fahrenheit. Pick one there to override it.
+
 A job started from the Roborock app or a schedule shows up within the docked poll time. A small keepalive every 30 seconds keeps the connection open.
 
 **switch** is on while the vacuum is working (cleaning, returning, washing or emptying at the dock) and off when it's docked, paused or idle. **Refresh** checks right away and logs one line, for example "Refreshed, no changes".
@@ -84,7 +86,7 @@ Nothing is checked before sending. A wrong command or parameter is rejected by t
 
 ## Moving from bloodtick's driver
 
-Attributes are the same, apart from `rooms` and `scenes`, which are `roomsList` and `scenesList` here. Commands take the same parameters, but the names changed, so update your rules:
+Attributes are the same, apart from `rooms` and `scenes`, which are `roomsList` and `scenesList` here, and `cleanArea (sq ft)`, which is `cleanArea`. Commands take the same parameters, but the names changed, so update your rules:
 
 | bloodtick | Roborock Integration |
 |---|---|
@@ -103,7 +105,7 @@ Both can run side by side while you move rules over. Hubitat's **Swap Device** d
 3. Re-point each one to the new device, switching commands as in the table.
 4. Remove the old device once its In Use By list is empty.
 
-**From 0.2.3 or earlier of this integration:** vacuumStart, vacuumPause, vacuumResume and vacuumDock are now **Vacuum Control** with a Start, Pause, Resume or Dock choice. Update rules and Maker API calls that used them (on and off still work).
+**From 0.2.3 or earlier of this integration:** vacuumStart, vacuumPause, vacuumResume and vacuumDock are now **Vacuum Control** with a Start, Pause, Resume or Dock choice. Update rules and Maker API calls that used them (on and off still work). In 0.2.5, `cleanArea (sq ft)` became `cleanArea`, so re-point dashboards and rules that use it.
 
 ## Logging
 

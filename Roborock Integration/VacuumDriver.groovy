@@ -15,6 +15,8 @@
       and Dock share the Vacuum Control dropdown (0.2.4); on/off still start and dock. Scenes run through the app.
      -switch and the 20 s poll follow the state code, not in_cleaning: some models (Qrevo MaxV) keep in_cleaning 1
       while docked with no job (0.2.4).
+     -cleanArea (was "cleanArea (sq ft)") carries ft² or m² as its unit: the Area unit preference, else the hub's
+      temperature scale (°C gives m²). The old attribute is deleted once (0.2.5).
      -The local key is kept in memory only (from the app); state.keyFp is a short fingerprint to spot a change.
      -The vacuum closes the local connection now and then (reset by peer). A drop reconnects within a few seconds
       and healthStatus only goes offline if it isn't back within 90 s. A command sent while reconnecting is held and
@@ -36,7 +38,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "0.2.4"
+@Field static final String VERSION = "0.2.5"
 @Field static final int GRACE_SEC = 90
 @Field static final int PORT = 58867
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'
@@ -100,7 +102,7 @@ metadata {
         attribute "error", "enum", errorCodes.values().collect{ it.toLowerCase() }
         attribute "fanPower", "enum", fanPowerCodes.values().collect{ it.toLowerCase() }
         attribute "cleanTime (min)", "number"
-        attribute "cleanArea (sq ft)", "number"
+        attribute "cleanArea", "number"
         attribute "cleanPercent (%)", "number"
         attribute "remainingFilter (%)", "number"
         attribute "remainingMainBrush (%)", "number"
@@ -125,7 +127,8 @@ metadata {
 preferences {
     input(name: "dockedPoll", type: "enum", title: "<b>Docked poll:</b>", options: ["60": "1 minute", "120": "2 minutes", "300": "5 minutes"], defaultValue: "120", required: true, width: 4,
         description: "<i>How often to check the vacuum while docked. Jobs started outside Hubitat show up within this time.</i>")
-    input(name: "areaUnit", type: "enum", title: "<b>Device Area Unit:</b>", options: ["0": "Square Foot (ft²)", "1": "Square Meter (m²)"], defaultValue: "0", required: true, width: 4)
+    input(name: "areaUnit", type: "enum", title: "<b>Area unit:</b>", options: ["auto": "Hub setting (°F: ft², °C: m²)", "0": "Square feet (ft²)", "1": "Square meters (m²)"], defaultValue: "auto", required: true, width: 4,
+        description: "<i>For cleanArea.</i>")
     input(name: "numberOfButtons", type: "number", title: "<b>Set Number of Buttons:</b>", range: "1...", defaultValue: 1, required: true, width: 4)
 }
 
@@ -135,6 +138,7 @@ def updated() { sendEvent(name: "numberOfButtons", value: (settings.numberOfButt
 def initialize() {
     unschedule()
     state.remove("cfgKey")   // kept in State before 0.2.4
+    if (device.currentValue("cleanArea (sq ft)") != null) device.deleteCurrentState("cleanArea (sq ft)")   // renamed in 0.2.5
     closeSocket()
     state.retry = 0
     connect()
@@ -503,8 +507,8 @@ private void processStatus(Map r) {
     if (r.is_locating != null) sendIf("locating", (r.is_locating as int) == 0 ? "false" : "true")
     if (r.clean_time != null) sendIf("cleanTime (min)", Math.ceil((r.clean_time as int) / 60.0) as int)
     if (r.clean_area != null) {
-        boolean ft = settings.areaUnit != "1"
-        sendIf("cleanArea (sq ft)", (ft ? (r.clean_area as long) / 92903.04 : (r.clean_area as long) / 1000000.0) as int, null, ft ? "sq ft" : "m²")
+        boolean ft = useFeet()
+        sendIf("cleanArea", (ft ? (r.clean_area as long) / 92903.04 : (r.clean_area as long) / 1000000.0) as int, null, ft ? "ft²" : "m²")
     }
     if (r.clean_percent != null) {
         int pc = r.clean_percent as int
@@ -517,6 +521,12 @@ private void processStatus(Map r) {
     runIn(active ? 20 : ((settings.dockedPoll ?: "120") as int), "poll")
     Integer n = refreshed.remove(device.id) as Integer
     if (n != null) { unschedule("refreshTimeout"); logN(n == 0 ? "Refreshed, no changes" : "Refreshed, ${n} value${n == 1 ? '' : 's'} changed") }
+}
+
+// Square feet unless the preference says meters, or it's on Hub setting and the hub uses Celsius.
+private boolean useFeet() {
+    String u = settings.areaUnit ?: "auto"
+    return u == "auto" ? location?.temperatureScale != "C" : u != "1"
 }
 
 private void codeAttr(String name, Map codes, v) {
