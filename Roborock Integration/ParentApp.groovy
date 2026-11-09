@@ -19,12 +19,13 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import java.security.MessageDigest
 
-@Field static final String APP_VERSION = "0.2.3"
+@Field static final String APP_VERSION = "0.2.4"
 @Field static final String APP_NAME = "Roborock Integration"
 @Field static final String DRIVER = "Roborock Vacuum"
 @Field static final String CLOUD_DRIVER = "Roborock Cloud Helper"
 @Field static final String CLOUD_DNI = "RR-CLOUD"
 @Field static final long IP_LOOKUP_GAP_MS = 600000L   // one cloud IP lookup per vacuum per 10 min
+@Field static final long RESCAN_GAP_MS = 300000L      // Roborock allows home data about 5 times an hour
 @Field static final String NS = "jdthomas24"
 @Field static final String COFFEE_URL = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final Map REGIONS = ["https://usiot.roborock.com": "US", "https://euiot.roborock.com": "EU",
@@ -100,6 +101,7 @@ def mainPage() {
 
 private Map bannerState(List vacs) {
     if (!state.auth && !vacs) return [ok: false, title: "Setup required", summary: "Sign in to your Roborock account below to bring in your vacuums."]
+    if (state.authBad) return [ok: false, title: "Sign in again", summary: "Roborock didn't accept the saved sign-in. Local control keeps working; Rescan, scenes and finding a changed IP need you to sign out and sign in again."]
     List kids = vacs.collect { getChildDevice(dniFor(it.duid)) }.findAll { it }
     if (!kids) return [ok: false, title: "Setup required", summary: "Enter each vacuum's IP address below, then tap <b>Done</b>."]
     List off = kids.findAll { it.currentValue("healthStatus") != "online" }
@@ -111,7 +113,8 @@ private Map bannerState(List vacs) {
 
 private String vacuumCardHtml(Map v) {
     def child = getChildDevice(dniFor(v.duid))
-    String tag = !child ? "<span class='p-tag p-tag-warning border-round-xl px-2 py-1 text-xs font-bold'>Not added</span>" :
+    String tag = v.gone ? "<span class='p-tag p-tag-warning border-round-xl px-2 py-1 text-xs font-bold'>Not in your Roborock account</span>" :
+        !child ? "<span class='p-tag p-tag-warning border-round-xl px-2 py-1 text-xs font-bold'>Not added</span>" :
         child.currentValue("healthStatus") == "online" ? "<span class='p-tag p-tag-success border-round-xl px-2 py-1 text-xs font-bold'>Connected</span>" :
         "<span class='p-tag p-tag-danger border-round-xl px-2 py-1 text-xs font-bold'>Offline</span>"
     String proto = child?.currentValue("protocol") ?: "not connected"
@@ -144,9 +147,9 @@ def appButtonHandler(String btn) {
         switch (btn) {
             case "sendCode": requestCode(); break
             case "verify": verifyCode(); break
-            case "rescan": scan(); break
+            case "rescan": rescan(); break
             case "signOut":
-                ["auth", "homeId", "rooms", "scenes", "base", "country", "countryCode", "lookupFor"].each { state.remove(it) }
+                ["auth", "authBad", "homeId", "rooms", "scenes", "base", "country", "countryCode", "lookupFor"].each { state.remove(it) }
                 syncCloudHelper()
                 state.msg = "Signed out. Vacuums keep running locally, but a changed IP won't be found automatically."
                 break
@@ -203,6 +206,7 @@ private void verifyCode() {
         return
     }
     state.auth = [token: r.data.token, rriot: r.data.rriot]
+    state.remove("authBad")
     app.removeSetting("pin")
     logN "Signed in to Roborock"
     scan()
@@ -221,21 +225,68 @@ private Map agreementVersion() {
 
 private String err(String m) { "<span style='color:#c62828;'>${esc(m)}</span>" }
 
+// Rescan button: Roborock limits home data to about 5 times an hour, and blocks for hours past that.
+private void rescan() {
+    long ago = now() - ((state.lastScan ?: 0L) as long)
+    if (ago < RESCAN_GAP_MS) {
+        int mins = Math.max(1, Math.ceil((RESCAN_GAP_MS - ago) / 60000.0) as int)
+        state.msg = "Rescanned a moment ago. Roborock limits how often this can run, so try again in ${mins} minute${mins == 1 ? '' : 's'}."
+        return
+    }
+    scan()
+}
+
+// Too many requests (9002) or a rejected sign-in: a plain message, and the banner for the sign-in.
+private boolean cloudRefused(Map r, String what) {
+    int c = (r?.code ?: 0) as int
+    String m = (r?.msg ?: "").toString().toLowerCase()
+    if (c == 9002 || m.contains("frequen")) {
+        state.msg = err("Roborock says there have been too many requests. Wait an hour before ${what} again. Local control keeps working.")
+        logE "Roborock refused ${what}: too many requests (9002)"
+        return true
+    }
+    if (authRejected(c, m)) { markAuthBad(what); state.msg = err("Roborock didn't accept the saved sign-in. Sign out and sign in again."); return true }
+    return false
+}
+
+private boolean authRejected(int code, String msg) {
+    code in [401, 403, 2010] || ["token", "unauthori", "not authori", "login"].any { msg?.toLowerCase()?.contains(it) }
+}
+
+private void markAuthBad(String what) {
+    if (!state.authBad) logE "Roborock didn't accept the saved sign-in (${what}). Sign out and sign in again in the app; local control keeps working."
+    state.authBad = true
+}
+
 // Home detail -> HomeData (devices, products, rooms) -> scenes per vacuum.
 private void scan() {
     Map auth = state.auth as Map
     if (!auth) { state.msg = "Sign in first."; return }
-    Map detail = getJson(state.base ?: settings.region, "/api/v1/getHomeDetail",
-        ["header_clientid": md5hex(settings.email).bytes.encodeBase64().toString(), "Authorization": auth.token])
+    state.lastScan = now()
+    Map detail = null
+    try {
+        detail = getJson(state.base ?: settings.region, "/api/v1/getHomeDetail",
+            ["header_clientid": md5hex(settings.email).bytes.encodeBase64().toString(), "Authorization": auth.token])
+    } catch (e) {
+        if (authRejected(0, e.toString())) { markAuthBad("Rescan"); state.msg = err("Roborock didn't accept the saved sign-in. Sign out and sign in again."); return }
+        throw e
+    }
+    if (cloudRefused(detail, "Rescan")) return
     String homeId = detail?.data?.rrHomeId?.toString()
     if (!homeId) { state.msg = "<span style='color:#c62828;'>Couldn't read your Roborock home. Try signing in again.</span>"; return }
+    state.remove("authBad")
     state.homeId = homeId
     Map home = hawkGet("/v2/user/homes/${homeId}")?.result as Map
     if (!home) { state.msg = "<span style='color:#c62828;'>Couldn't read your vacuums.</span>"; return }
     Map prods = (home.products ?: []).collectEntries { [(it.id.toString()): it] }
     List devs = ((home.devices ?: []) + (home.receivedDevices ?: [])).findAll { it.localKey }
-    state.vacuums = devs.collect { Map p = (prods[it.productId?.toString()] ?: [:]) as Map
+    List found = devs.collect { Map p = (prods[it.productId?.toString()] ?: [:]) as Map
         [duid: it.duid, name: it.name, model: p.name ?: p.model, modelCode: p.model, fw: it.fv, pv: it.pv] }
+    // Vacuums with a device here that the account no longer lists: kept and flagged, not deleted.
+    List gone = ((state.vacuums ?: []) as List).findAll { Map o -> !found.any { it.duid == o.duid } && getChildDevice(dniFor(o.duid)) }
+        .collect { it + [gone: true] }
+    gone.each { logE "${vacName(it)} is no longer in your Roborock account. Its device is kept. To remove it, turn off Include on its card and tap Done." }
+    state.vacuums = found + gone
     Map keys = (state.keys ?: [:]) as Map
     devs.each { keys[it.duid] = it.localKey }
     state.keys = keys
@@ -246,7 +297,8 @@ private void scan() {
         scenes[d.duid] = (res ?: []).collectEntries { [(it.id.toString()): it.name] }
     }
     state.scenes = scenes
-    state.msg = "Found ${devs.size()} vacuum${devs.size() == 1 ? '' : 's'}. Enter the IP addresses below, then tap <b>Done</b>."
+    state.msg = "Found ${devs.size()} vacuum${devs.size() == 1 ? '' : 's'}. Enter the IP addresses below, then tap <b>Done</b>." +
+        (gone ? " ${gone.collect { esc(vacName(it)) }.join(', ')} ${gone.size() == 1 ? 'is' : 'are'} no longer in your Roborock account." : "")
     logN "Scan found ${devs.collect { it.name }.join(', ') ?: 'no vacuums'}"
     getChildDevices().each { it.configChanged() }
 }
@@ -269,8 +321,9 @@ void componentIpLost(String dni) {
     if (now() - ((last[v.duid] ?: 0L) as long) < IP_LOOKUP_GAP_MS) return
     last[v.duid] = now(); state.ipLookups = last
     def h = getChildDevice(CLOUD_DNI)
-    if (!state.auth || !h) { log.warn "${v.name} can't be reached at ${settings["ip_${v.duid}"]}. Sign in to Roborock in the app so its new IP can be found automatically, or update the IP by hand."; return }
-    logN "${v.name} can't be reached at ${settings["ip_${v.duid}"]}, asking Roborock's cloud for its current IP"
+    if (!state.auth || !h) { log.warn "${vacName(v)} isn't answering at ${settings["ip_${v.duid}"]}. Sign in to Roborock in the app so a changed IP can be found automatically, or update the IP by hand."; return }
+    if (state.authBad) { logN "${vacName(v)} isn't answering at ${settings["ip_${v.duid}"]}. Sign in again in the app so a changed IP can be found; keeps trying locally."; return }
+    logN "${vacName(v)} isn't answering at ${settings["ip_${v.duid}"]}, checking with Roborock's cloud in case its IP changed"
     h.lookupNetworkInfo(v.duid as String, [rriot: state.auth.rriot, localKey: state.keys?.get(v.duid)])
 }
 
@@ -278,11 +331,15 @@ void componentIpLost(String dni) {
 void componentNetworkInfo(String duid, Map info, String err, String via) {
     Map v = ((state.vacuums ?: []) as List).find { it.duid == duid } as Map
     if (!v) return
-    if (err) { log.warn "${v.name}: couldn't find its current IP through Roborock's cloud (${err}). Will try again in 10 minutes."; return }
+    if (err) {
+        if (authRejected(0, err)) { markAuthBad("IP lookup"); return }
+        logN "${vacName(v)}: Roborock's cloud can't reach it either (${err}). It's probably off, restarting or out of Wi-Fi. IP unchanged, keeps trying locally."
+        return
+    }
     String mac = info?.mac?.toString()?.toUpperCase()
     Map macs = (state.macs ?: [:]) as Map
     if (mac && macs[duid] && macs[duid] != mac) {
-        log.warn "${v.name}: the cloud reported MAC ${mac}, but this vacuum is ${macs[duid]}. IP not changed."
+        log.warn "${vacName(v)}: the cloud reported MAC ${mac}, but this vacuum is ${macs[duid]}. IP not changed."
         return
     }
     if (mac && macs[duid] != mac) { macs[duid] = mac; state.macs = macs }
@@ -290,9 +347,9 @@ void componentNetworkInfo(String duid, Map info, String err, String via) {
     String ip = info?.ip?.toString()
     String cur = settings["ip_${duid}"]?.toString()?.trim()
     if (!ip) return
-    if (ip == cur) { logN "${v.name}: Roborock's cloud says the IP is still ${ip}. It may be off or out of Wi-Fi range."; return }
+    if (ip == cur) { logN "${vacName(v)}: Roborock's cloud says the IP is still ${ip}. It's probably off, restarting or out of Wi-Fi. IP unchanged, keeps trying locally."; return }
     app.updateSetting("ip_${duid}", [type: "text", value: ip])
-    log.info "${v.name}: IP changed from ${cur} to ${ip} (found through Roborock's cloud). Reconnecting locally. A DHCP reservation for MAC ${macs[duid] ?: mac ?: '?'} will keep it from changing."
+    log.info "${vacName(v)}: IP changed from ${cur} to ${ip} (found through Roborock's cloud). Reconnecting locally. A DHCP reservation for MAC ${macs[duid] ?: mac ?: '?'} will keep it from changing."
     getChildDevice(dniFor(duid))?.configChanged()
 }
 
@@ -334,6 +391,7 @@ void componentScene(String dni, String sceneId) {
 
 def sceneDone(resp, data) {
     if (resp.status == 200) logN "Scene ${data.sceneId} started"
+    else if (resp.status in [401, 403]) markAuthBad("scene ${data.sceneId}")
     else logE "Scene ${data.sceneId} failed (HTTP ${resp.status})"
 }
 
@@ -420,6 +478,9 @@ private String enc(s) { URLEncoder.encode(s.toString(), "UTF-8") }
 private String esc(v) { (v == null ? "" : v.toString()).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("'", "&#39;") }
 private String dniFor(duid) { "RR-${duid}" }
 
+// The Hubitat device name if there is one, else the Roborock name.
+private String vacName(Map v) { getChildDevice(dniFor(v.duid))?.displayName ?: v.name }
+
 private void logN(String m) { if (settings.logLevel in ["Normal", "Full"]) log.info m }
 private void logE(String m) { log.error m }
 
@@ -434,7 +495,7 @@ private List tipsTopics() {
                 "<p><b>Local</b> (keeps working with your internet down):</p>",
             checklist: [
                 [title: "Status", detail: "State, current room, clean area, time and percent, battery, errors, fan and mop modes, consumables."],
-                [title: "Commands from Hubitat", detail: "Start, Dock, Pause, Resume, Vacuum Rooms, and fan and mop settings through Execute."]
+                [title: "Commands from Hubitat", detail: "Vacuum Control (Start, Pause, Resume, Dock), Vacuum Rooms, and fan and mop settings through Execute."]
             ],
             append: "cloud"],
         [id: "cloud", label: "Cloud only", title: "What still needs Roborock's cloud", group: "How it works", icon: "pi-cloud",
@@ -445,18 +506,21 @@ private List tipsTopics() {
                 [title: "Vacuum Scene", detail: "Roborock scenes live in your Roborock account, so running one goes through the cloud. It's the only device command that does."],
                 [title: "Jobs started from the Roborock app", detail: "The app sends its commands through Roborock's cloud. Hubitat still sees the job locally once it starts."]
             ],
-            warning: "<b>Signing out doesn't stop local control.</b><br>Vacuums keep running locally. You only need to sign in again to Rescan or run scenes."],
+            warning: "<b>Signing out doesn't stop local control.</b><br>Vacuums keep running locally. You only need to sign in again to Rescan or run scenes. If the banner says <b>Sign in again</b>, Roborock stopped accepting the saved sign-in: sign out and back in."],
         [id: "setup", label: "Setup", title: "Setting up a vacuum", group: "Getting started", icon: "pi-cog",
             body: "<p>Sign in with your Roborock email and the code they send you. Your vacuums appear on the main page.</p>" +
                 "<p>Enter each vacuum's <b>IP address</b>. Roborock doesn't share it, so find it in your router or the Roborock app (Device info). Once connected, the vacuum's card shows its <b>MAC</b> address for a DHCP reservation in your router. If the IP changes anyway, the app finds the new one through Roborock's cloud while you're signed in.</p>" +
                 "<p>Tap <b>Done</b>. Each vacuum gets a device and should show <b>healthStatus online</b> within a few seconds.</p>"],
         [id: "updates", label: "Status updates", title: "How status stays up to date", group: "Getting started", icon: "pi-refresh",
             body: "<p>The vacuum doesn't send updates on its own, so the driver checks it: every 20 seconds while it's cleaning, returning or busy at the dock, every 1, 2 or 5 minutes while docked (the <b>Docked poll</b> setting), and 3 seconds after any command.</p>" +
+                "<p><b>switch</b> is on while the vacuum is working (cleaning, returning, washing or emptying at the dock) and off when it's docked, paused or idle.</p>" +
+                "<p><b>Refresh</b> checks the vacuum now and logs one line (Log level Normal): <i>Refreshed, no changes</i> or how many values changed.</p>" +
                 "<p>The vacuum closes its connection now and then. The driver reconnects within seconds and only shows offline if it stays down for 90 seconds.</p>"],
         [id: "rooms", label: "Rooms and scenes", title: "Rooms and scenes", group: "Using it", icon: "pi-th-large",
             body: "<p><b>roomsList</b> on the device shows each room as <i>( Room name: ID )</i>. Use the IDs with <b>Vacuum Rooms</b>, for example <code>16, 17</code>.</p>" +
                 "<p><b>scenesList</b> shows your Roborock scenes for <b>Vacuum Scene</b> (cloud).</p>" +
-                "<p>Renamed a room or added a scene? Tap <b>Rescan vacuums and rooms</b> on the main page.</p>" +
+                "<p>Renamed a room or added a scene? Tap <b>Rescan vacuums and rooms</b> on the main page. Roborock limits how often this can run, so the button waits 5 minutes between scans.</p>" +
+                "<p><b>Multi-level homes:</b> room IDs only cover the map the vacuum has loaded. Switch maps in the Roborock app, then Rescan, to see the other floor's rooms.</p>" +
                 "<p><b>mopMode</b> and <b>mopWaterMode</b> show the vacuum's saved settings. A one-time choice in the Roborock app (like a Deep+ route for one run) isn't saved, so it won't show here. " +
                 "Vacuums with a water flow slider (like the Saros) also show the slider number in <b>mopWaterLevel</b>.</p>"],
         [id: "execute", label: "Execute (advanced)", title: "Sending a raw command with Execute", group: "Using it", icon: "pi-code",
@@ -470,6 +534,22 @@ private List tipsTopics() {
                 [title: "get_status", detail: "No parameters. With Log level on Full, the vacuum's raw reply shows in the logs."]
             ],
             warning: "Nothing is checked before sending. A wrong command or parameter is rejected by the vacuum and the reason shows in the logs."],
+        [id: "moving", label: "Moving from bloodtick", title: "Moving from bloodtick's driver", group: "Using it", icon: "pi-arrow-right-arrow-left",
+            body: "<p>Attributes match bloodtick's driver, apart from <b>roomsList</b> and <b>scenesList</b>. Commands take the same values but have new names, so rules need re-pointing. Hubitat's <b>Swap Device</b> doesn't list app devices, so move them by hand:</p>",
+            checklist: [
+                [title: "1. Add the vacuum here first", detail: "Both drivers can run side by side while you move rules over."],
+                [title: "2. Open the old device", detail: "Its <b>In Use By</b> list (bottom of the device page) shows every rule, dashboard and app that uses it."],
+                [title: "3. Re-point each one", detail: "Pick the new device. appClean, appDock, appPause and appRoomResume become <b>Vacuum Control</b> (Start, Dock, Pause, Resume); appRoomClean is <b>Vacuum Rooms</b>; appScene is <b>Vacuum Scene</b>."],
+                [title: "4. Remove the old device", detail: "Once its In Use By list is empty."]
+            ]],
+        [id: "offline", label: "Stays offline", title: "When a vacuum stays offline", group: "Troubleshooting", icon: "pi-wifi",
+            body: "<p>The driver retries on its own, and if you're signed in the app checks Roborock's cloud in case the IP changed.</p>",
+            checklist: [
+                [title: "Check the IP", detail: "In the app, against your router or the Roborock app (Device info)."],
+                [title: "Open the Roborock app", detail: "If the vacuum is powered and on Wi-Fi but stays offline, check the Roborock app is still signed in. An expired app session can cut off local access."],
+                [title: "Bought for the China market?", detail: "Units made for China and used elsewhere may refuse local status (error -10002 in the logs)."],
+                [title: "Too many requests", detail: "If Rescan or sign-in says Roborock had too many requests (9002), wait an hour. Local control keeps working."]
+            ]],
         [id: "diag", label: "Diagnostics (beta)", title: "Sending a diagnostics report", group: "Troubleshooting", icon: "pi-file",
             body: "<p>Tap <b>Diagnostics</b> on the vacuum device. One block appears in the logs from <b>DIAGNOSTICS</b> to <b>END</b> with your model, firmware, protocol and the raw status from the vacuum. Copy all of it. It never includes your vacuum's local key.</p>" +
                 "<p>For a problem, set Log level to <b>Full</b> (stays on for 3 hours during the beta), repeat it, and send those lines too.</p>"]
@@ -483,7 +563,7 @@ def tipsPage(params = null) {
     def next = i + 1 < topics.size() ? topics[i + 1] : null
     dynamicPage(name: "tipsPage", title: "Tips & Troubleshooting") {
         section(sectionClass: "app-ui-links app-tips-index app-ui-navigation") {
-            paragraph rawHtml: true, tipsStylesHtml()
+            paragraph rawHtml: true, tipsStylesHtml() + tipsScrollScript(params?.topic != null)
             topics.groupBy { it.group }.each { group, entries ->
                 paragraph rawHtml: true, "<div class='app-heading font-semibold mt-2'>${group}</div>"
                 entries.each { entry ->
@@ -506,6 +586,25 @@ def tipsPage(params = null) {
             }
         }
     }
+}
+
+// The page can open at the main page's scroll position. Start at the top; on a phone, after picking a topic,
+// at the article (the index sits above it there).
+private String tipsScrollScript(boolean picked) {
+    """
+<script>
+(function(){
+  function go(){
+    var art = document.querySelector('.app-tips-article');
+    if (${picked} && art && window.innerWidth <= 1000) { art.scrollIntoView(); return; }
+    var el = document.getElementById('formApp');
+    for (; el; el = el.parentElement) if (el.scrollTop) el.scrollTop = 0;
+    window.scrollTo(0, 0);
+  }
+  go(); setTimeout(go, 50); setTimeout(go, 300);
+})();
+</script>
+"""
 }
 
 private String tipsArticleHtml(Map topic) {

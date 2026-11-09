@@ -11,8 +11,11 @@
      -GCM is built from AES/ECB plus GHASH (the hub sandbox blocks GCMParameterSpec).
      -The vacuum doesn't push status locally, so the driver polls get_status: every 20 s while working, the
       Docked poll setting otherwise, 3 s after a command. Ping every 30 s keeps the socket open (vacuum drops at 60 s).
-     -Attribute names follow bloodtick's Roborock driver; command names differ (vacuumStart vs appClean, see README).
-      Scenes run through the app (cloud).
+     -Attribute names follow bloodtick's Roborock driver; command names differ (see README). Start, Pause, Resume
+      and Dock share the Vacuum Control dropdown (0.2.4); on/off still start and dock. Scenes run through the app.
+     -switch and the 20 s poll follow the state code, not in_cleaning: some models (Qrevo MaxV) keep in_cleaning 1
+      while docked with no job (0.2.4).
+     -The local key is kept in memory only (from the app); state.keyFp is a short fingerprint to spot a change.
      -The vacuum closes the local connection now and then (reset by peer). A drop reconnects within a few seconds
       and healthStatus only goes offline if it isn't back within 90 s. A command sent while reconnecting is held and
       sent once connected (if within 60 s).
@@ -33,7 +36,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "0.2.3"
+@Field static final String VERSION = "0.2.4"
 @Field static final int GRACE_SEC = 90
 @Field static final int PORT = 58867
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'
@@ -43,6 +46,8 @@ import javax.crypto.spec.SecretKeySpec
 @Field static Map rxBuf = [:]
 @Field static Map pending = [:]
 @Field static Map diag = [:]
+@Field static Map keys = [:]        // local key per device, memory only
+@Field static Map refreshed = [:]   // manual Refresh: values changed so far
 
 @Field static final Map errorCodes = [
     0: "No error", 1: "Laser sensor fault", 2: "Collision sensor fault", 3: "Wheel floating",
@@ -80,10 +85,7 @@ metadata {
         capability "Switch"
         capability "PushableButton"
 
-        command "vacuumStart"
-        command "vacuumDock"
-        command "vacuumPause"
-        command "vacuumResume"
+        command "vacuumControl", [[name: "Action*", type: "ENUM", constraints: ["Start", "Pause", "Resume", "Dock"]]]
         command "vacuumRooms", [[name: "Room IDs*", type: "STRING", description: "Comma or space delimited Room IDs"],
                                 [name: "MopWater",  type: "ENUM",   description: "Mop water mode. Optional.", constraints: mopWaterModeCodes.values().collect{ it.toUpperCase() }]]
         command "vacuumScene",  [[name: "Scene ID*", type: "STRING", description: "Single Scene ID"]]
@@ -132,6 +134,7 @@ def updated() { sendEvent(name: "numberOfButtons", value: (settings.numberOfButt
 
 def initialize() {
     unschedule()
+    state.remove("cfgKey")   // kept in State before 0.2.4
     closeSocket()
     state.retry = 0
     connect()
@@ -140,17 +143,35 @@ def initialize() {
 // Called by the app when sign-in data or the IP changes.
 void configChanged() {
     Map c = cfg()
-    if (c.ip != state.cfgIp || c.localKey != state.cfgKey || !sess[device.id]) initialize()
+    if (c.ip != state.cfgIp || fingerprint(c.localKey as String) != state.keyFp || !sess[device.id]) initialize()
     else pushLists(c)
 }
 
-def refresh() { if (session()) poll() else initialize() }
+def refresh() {
+    if (!session()) { logN "Refresh: not connected, reconnecting"; initialize(); return }
+    refreshed[device.id] = 0
+    poll()
+    runIn(8, "refreshTimeout")
+}
+
+def refreshTimeout() { if (refreshed.remove(device.id) != null) logN "Refresh: no reply from the vacuum" }
 
 // ---------- commands ----------
 
 def on() { vacuumStart() }
 def off() { vacuumDock() }
 def push(button) { sendEvent(name: "pushed", value: button, isStateChange: true) }
+def vacuumControl(String action) {
+    switch (action?.toLowerCase()) {
+        case "start": vacuumStart(); break
+        case "pause": vacuumPause(); break
+        case "resume": vacuumResume(); break
+        case "dock": vacuumDock(); break
+        default: logE "Unknown Vacuum Control action '${action}'. Use Start, Pause, Resume or Dock."
+    }
+}
+
+// Not listed as commands (Vacuum Control covers them); on and off use these.
 def vacuumStart() { vacCommand("app_start") }
 def vacuumDock() { vacCommand("app_charge") }
 def vacuumPause() { vacCommand("app_pause") }
@@ -189,10 +210,19 @@ private void vacCommand(String method, params = []) {
 
 private Map cfg() { (parent?.componentConfig(device.deviceNetworkId) ?: [:]) as Map }
 
+// Local key from memory, or the app after a code save cleared memory.
+private String key() {
+    String k = keys[device.id]
+    if (!k) { k = cfg().localKey; if (k) keys[device.id] = k }
+    return k
+}
+
+private String fingerprint(String k) { k ? md5(k.getBytes("UTF-8")).encodeHex().toString().take(8) : null }
+
 def connect() {
     Map c = cfg()
     state.cfgIp = c.ip
-    state.cfgKey = c.localKey
+    if (c.localKey) { keys[device.id] = c.localKey; state.keyFp = fingerprint(c.localKey as String) }
     pushLists(c)
     if (!c.ip || !c.localKey) { setHealth(false, "Waiting for an IP address and sign-in in the app"); return }
     sendIf("ip", c.ip)
@@ -264,7 +294,7 @@ def diagReport() {
         "\nState: ${device.currentValue('state')} | Error: ${device.currentValue('error')} | Dock error: ${device.currentValue('dockError')}" +
         "\nget_status: ${J(dg.get_status)}" +
         "\nget_consumable: ${J(dg.get_consumable)}" +
-        "\nRooms mapped: ${rm != null ? rm.size() : 'no reply'} | Rooms named in app: ${((c.rooms ?: [:]) as Map).size()}" +
+        "\nRooms mapped: ${rm != null ? rm.size() : 'no reply'} | Room names in account: ${((c.rooms ?: [:]) as Map).size()}" +
         "\nEND"
     parent ? parent.childLog("diag", device.displayName, out) : log.info(out)
 }
@@ -353,7 +383,7 @@ private void rpc(String method, params = []) {
     byte[] pt = ('{"dps":{"101":' + jsonString(inner) + '},"t":' + ts + '}').getBytes("UTF-8")
     s.seq = (s.seq as long) + 1
     long rnd = 10000 + new Random().nextInt(89999)
-    byte[] enc = s.ver == "L01" ? gcmEncrypt(pt, state.cfgKey, ts, s.seq as long, rnd, s.cn as long, s.an as Long) : ecbEncrypt(pt, state.cfgKey, ts)
+    byte[] enc = s.ver == "L01" ? gcmEncrypt(pt, key(), ts, s.seq as long, rnd, s.cn as long, s.an as Long) : ecbEncrypt(pt, key(), ts)
     Map p = (pending[device.id] ?: [:]) as Map
     p.keySet().findAll { (n2(p[it].at) < now() - 30000L) }.each { p.remove(it) }
     p[id] = [m: method, at: now()]
@@ -416,7 +446,7 @@ private void handleFrame(byte[] m) {
     if (proto == 3 || m.length <= 21 || !s?.open) return
     int plen = u16(m, 17)
     byte[] payload = slice(m, 19, plen)
-    byte[] pt = ver == "L01" ? gcmDecrypt(payload, state.cfgKey, ts, seq, rnd, s.cn as long, s.an as Long) : ecbDecrypt(payload, state.cfgKey, ts)
+    byte[] pt = ver == "L01" ? gcmDecrypt(payload, key(), ts, seq, rnd, s.cn as long, s.an as Long) : ecbDecrypt(payload, key(), ts)
     Map msg = new JsonSlurper().parseText(new String(pt, "UTF-8")) as Map
     msg?.dps?.each { k, v ->
         if (k.toString() == "102") handleRpc(new JsonSlurper().parseText(v.toString()) as Map)
@@ -453,7 +483,8 @@ private void handleRpc(Map r) {
 private void processStatus(Map r) {
     int st = (r.state ?: 0) as int
     if (st == 8 && ((r.battery ?: 0) as int) == 100) st = 100
-    boolean working = ((r.in_cleaning ?: 0) as int) != 0 || ((r.is_locating ?: 0) as int) != 0 || ((r.is_exploring ?: 0) as int) != 0
+    // By state code: some models keep in_cleaning set while docked with no job.
+    boolean working = (st in ACTIVE_STATES) || ((r.is_locating ?: 0) as int) != 0 || ((r.is_exploring ?: 0) as int) != 0
     sendIf("switch", working ? "on" : "off")
     sendIf("state", (stateCodes[st] ?: st.toString()).toLowerCase(), "state is ${stateCodes[st] ?: st}")
     if (r.battery != null) sendIf("battery", r.battery as int, null, "%")
@@ -482,8 +513,10 @@ private void processStatus(Map r) {
     }
     def seg = r.cleaning_info?.segment_id
     if (seg != null) sendIf("currentRoom", (seg as int) < 0 ? "none" : (roomName(seg as int) ?: seg.toString()))
-    boolean active = working || ((r.in_returning ?: 0) as int) != 0 || (st in ACTIVE_STATES)
+    boolean active = working || ((r.in_returning ?: 0) as int) != 0
     runIn(active ? 20 : ((settings.dockedPoll ?: "120") as int), "poll")
+    Integer n = refreshed.remove(device.id) as Integer
+    if (n != null) { unschedule("refreshTimeout"); logN(n == 0 ? "Refreshed, no changes" : "Refreshed, ${n} value${n == 1 ? '' : 's'} changed") }
 }
 
 private void codeAttr(String name, Map codes, v) {
@@ -551,6 +584,7 @@ private void setHealth(boolean ok, String why) {
 
 private boolean sendIf(String name, value, String desc = null, String unit = null) {
     if (device.currentValue(name)?.toString() == value?.toString()) return false
+    if (refreshed.containsKey(device.id)) refreshed[device.id] = ((refreshed[device.id] ?: 0) as int) + 1
     Map e = [name: name, value: value, descriptionText: desc ?: "${device.displayName} ${name} is ${value}"]
     if (unit) e.unit = unit
     sendEvent(e)

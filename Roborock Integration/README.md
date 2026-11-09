@@ -1,12 +1,12 @@
 # Roborock Integration for Hubitat (beta)
 
-> **Status: v0.2.3 beta.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
+> **Status: v0.2.4 beta.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
 
 ## What you get
 
 One device per vacuum with:
 - **Status:** state, battery, error, dock error, current room, clean time, area and percent, fan power, mop mode, mop water mode, consumables
-- **Commands:** Start, Dock, Pause, Resume, clean selected rooms (with optional mop water level), run a Roborock scene, raw commands
+- **Commands:** Vacuum Control (Start, Pause, Resume, Dock), clean selected rooms (with optional mop water level), run a Roborock scene, raw commands
 - **Connection:** healthStatus, IP and the local protocol in use
 
 Attribute names match bloodtick's Roborock driver, so dashboards carry over. Command names are different (see **Moving from bloodtick's driver** below).
@@ -16,7 +16,8 @@ Attribute names match bloodtick's Roborock driver, so dashboards carry over. Com
 | Vacuum | Local protocol | Status |
 |---|---|---|
 | Newer models (Qrevo Curv / Curv X, Saros, S8 MaxV Ultra) | L01 | Tested on a Qrevo Curv X and Saros 10R |
-| Older models (S5 to S8, earlier Qrevo and Q Max) | 1.0 | Built in, needs testers |
+| Older models (S5 to S8, earlier Qrevo and Q Max) | 1.0 | Tested on a Qrevo MaxV and Q5 Max+ |
+| China-market units used outside China | | May refuse local status (error -10002) |
 | Dyad, Zeo, Q7 / Q10 family | A01 / B01 | Not supported |
 
 ## Install
@@ -40,11 +41,11 @@ The vacuum's **MAC** shows on its card and device page once connected. Set a DHC
 | Local (works with the internet down) | Needs Roborock's cloud |
 |---|---|
 | All status: state, room, area, time, percent, battery, errors, modes, consumables | Sign-in and **Rescan** (vacuums, local keys, room names, scenes) |
-| Commands from Hubitat: Start, Dock, Pause, Resume, Vacuum Rooms, fan and mop settings through Execute | **Vacuum Scene** (scenes live in your Roborock account) |
+| Commands from Hubitat: Vacuum Control, Vacuum Rooms, fan and mop settings through Execute | **Vacuum Scene** (scenes live in your Roborock account) |
 | | **IP recovery**: finds a vacuum's new IP if it changes (automatic, only when it can't be reached) |
 | | Jobs started from the Roborock app (Hubitat still tracks them locally once they start) |
 
-Signing out doesn't stop local control. The same table is on the app's **Tips & Troubleshooting** page.
+Signing out doesn't stop local control. If the app's banner says **Sign in again**, Roborock stopped accepting the saved sign-in: sign out and back in. The same table is on the app's **Tips & Troubleshooting** page.
 
 ## How it stays up to date
 
@@ -55,11 +56,15 @@ The vacuum doesn't send updates on its own, so the driver checks it:
 
 A job started from the Roborock app or a schedule shows up within the docked poll time. A small keepalive every 30 seconds keeps the connection open.
 
+**switch** is on while the vacuum is working (cleaning, returning, washing or emptying at the dock) and off when it's docked, paused or idle. **Refresh** checks right away and logs one line, for example "Refreshed, no changes".
+
 ## Rooms and scenes
 
 - **roomsList** shows each room as `( Room name: ID )`. Use the IDs with **Vacuum Rooms**, e.g. `16, 17`.
 - **scenesList** shows your Roborock scenes. **Vacuum Scene** runs one through the Roborock cloud (the only command that does).
-- Renamed rooms or new scenes: tap **Rescan vacuums and rooms** in the app.
+- Renamed rooms or new scenes: tap **Rescan vacuums and rooms** in the app. Roborock limits how often home data can be read, so Rescan waits 5 minutes between scans. If Roborock says there were too many requests (9002), wait an hour.
+- Multi-level homes: room IDs only cover the map the vacuum has loaded. Switch maps in the Roborock app, then Rescan.
+- Rescan flags a vacuum that's no longer in your Roborock account (Not in your Roborock account on its card). Its device is kept until you turn off Include on its card and tap Done.
 - **mopMode** and **mopWaterMode** show the vacuum's saved settings, not a one-time choice made in the Roborock app for a single run.
 - Vacuums with a water flow slider (like the Saros) show the app's name in **mopWaterMode** and the slider number (1 to 30) in **mopWaterLevel**.
 
@@ -83,15 +88,22 @@ Attributes are the same, apart from `rooms` and `scenes`, which are `roomsList` 
 
 | bloodtick | Roborock Integration |
 |---|---|
-| appClean | vacuumStart |
-| appDock | vacuumDock |
-| appPause | vacuumPause |
-| appRoomResume | vacuumResume |
+| appClean | Vacuum Control: Start |
+| appDock | Vacuum Control: Dock |
+| appPause | Vacuum Control: Pause |
+| appRoomResume | Vacuum Control: Resume |
 | appRoomClean | vacuumRooms |
 | appScene | vacuumScene |
 | execute | execute |
 
-Both can run side by side while you move rules over.
+Both can run side by side while you move rules over. Hubitat's **Swap Device** doesn't list app devices, so:
+
+1. Add the vacuum here first.
+2. Open the old device. Its **In Use By** list (bottom of the device page) shows every rule, dashboard and app using it.
+3. Re-point each one to the new device, switching commands as in the table.
+4. Remove the old device once its In Use By list is empty.
+
+**From 0.2.3 or earlier of this integration:** vacuumStart, vacuumPause, vacuumResume and vacuumDock are now **Vacuum Control** with a Start, Pause, Resume or Dock choice. Update rules and Maker API calls that used them (on and off still work).
 
 ## Logging
 
@@ -105,7 +117,9 @@ Tap **Diagnostics** on the vacuum device. It logs one block (always shown, whate
 
 **Need help on the device?** Each vacuum device has a **help** link to the app's Tips & Troubleshooting page.
 
-**healthStatus stays offline.** Check the IP in the app, and that the vacuum is on the same network as the hub. Set Log level to Full, tap **Initialize** on the device, and look for "HELLO" lines.
+**healthStatus stays offline.** Check the IP in the app, and that the vacuum is on the same network as the hub. If it's powered and on Wi-Fi but stays offline, open the Roborock app and check it's still signed in (an expired app session can cut off local access). Set Log level to Full, tap **Initialize** on the device, and look for "HELLO" lines.
+
+**The local key isn't in State Variables.** On purpose since 0.2.4: the driver keeps it in memory and only stores a short fingerprint.
 
 **Commands are rejected.** The log shows the command and the vacuum's reply. Post it in the beta thread with your model.
 
