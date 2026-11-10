@@ -1,6 +1,6 @@
 # Bambu Lab Integration for Hubitat
 
-> **Status: v0.2.5 beta, tested on two H2Ds. X1, P1 and A1 should work but are untested.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
+> **Status: v0.2.6 beta, tested on two H2Ds. X1, P1 and A1 should work but are untested.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
 
 ## What you get
 
@@ -80,7 +80,7 @@ These are on each printer device's **Preferences** tab.
 - **wifiSignal (dBm)** is a number, updated when it moves 5 dBm or more.
 - **stage** shows what the printer is doing right now (Heating hotend, Changing filament, Paused: filament runout and so on).
 - **errorCodes** lists HMS codes in Bambu's format (HMS_0700_8000_0002_0001) and **errorText** says what they mean. The log and the app's printer card link each code to its Bambu Lab Wiki page.
-- **door** is open or closed (H2D tested). In Rule Machine, use **Custom Attribute**.
+- **door** is open or closed (H2D tested). In Rule Machine, use **Custom Attribute**. The printer's own "front door is open" notice isn't counted in errorCodes or errorCount, so opening the door to check a print doesn't trigger error rules.
 - **currentPrint** is the job printing now (its name in Bambu Studio), or Not printing. **lastPrint** keeps the last finished or failed file.
 - **ETA** is when the print should finish, to the nearest 5 minutes (with the weekday if it's not today), or -- when not printing.
 - **firmwareUpdate** is none, or available with the new version.

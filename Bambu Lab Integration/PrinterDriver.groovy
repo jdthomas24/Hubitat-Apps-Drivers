@@ -31,6 +31,7 @@
      -Errors: on a new code the driver fetches HMS/<module>.json from this integration's GitHub folder
       (ha-bambulab's English list, MIT) and keeps only that line in memory, for errorText, the log and a Wiki
       link. After a reboot or driver save, text for errors still showing is fetched again quietly. Nothing goes to Bambu.
+     -Door-open HMS notices (0.2.6) are left out of the errors: door covers them.
      -door from print.stat bit 0x00800000; firmwareUpdate from upgrade_state; external spools from vir_slot
       254/255 (or vt_tray), shown once loaded.
      -Children (app's Equipment page): one AMS device per unit and the chamber light. Exclusions as IntelliCenter.
@@ -102,7 +103,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.5"
+@Field static final String VERSION     = "0.2.6"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -128,6 +129,7 @@ import groovy.transform.Field
 @Field static final String DEV_MODE_ERR = "84033543"
 @Field static final Long DEV_MODE_PE    = 84033543L
 @Field static final List REFUSED_HMS    = ["0500050000010007"]   // MQTT command verification failed (unsigned)
+@Field static final List DOOR_HMS       = ["0300960000030001"]   // front door open: the door attribute covers it
 @Field static final Long DOOR_BIT       = 0x00800000L
 @Field static final String HMS_URL      = "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Bambu%20Lab%20Integration/HMS/"
 @Field static final String WIKI         = "https://wiki.bambulab.com"
@@ -715,6 +717,7 @@ private void errors(Map r) {
             if (a != null && c != null) {
                 String s = String.format("%08X%08X", a, c)
                 if (s in REFUSED_HMS) { wasRefused = true; return }
+                if (s in DOOR_HMS) return
                 codes << "HMS_${s[0..3]}_${s[4..7]}_${s[8..11]}_${s[12..15]}"
             }
         }

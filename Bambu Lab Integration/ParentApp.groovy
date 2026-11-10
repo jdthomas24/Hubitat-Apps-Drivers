@@ -30,7 +30,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.2.5"
+@Field static final String APP_VERSION   = "0.2.6"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -497,7 +497,7 @@ private List tipsTopics() {
             checklist: [
                 [title: "Print finished", detail: "printState becomes Finished: notify, or turn off the enclosure fan."],
                 [title: "Print failed or error", detail: "printState becomes Failed, or errorCount above 0. errorText says what's wrong in plain English, and the card links each code to the Bambu Lab Wiki."],
-                [title: "Door opened", detail: "door becomes open (H2D and printers with a door sensor). In Rule Machine it's under Custom Attribute."],
+                [title: "Door opened", detail: "door becomes open (H2D and printers with a door sensor). In Rule Machine it's under Custom Attribute. The printer's own \"front door is open\" notice isn't counted as an error, so errorCount rules don't fire when you check a print."],
                 [title: "What printed last", detail: "lastPrint keeps the last finished or failed file. currentPrint is the job printing now, or Not printing."],
                 [title: "Firmware update", detail: "firmwareUpdate becomes available. Update from the printer or the Bambu apps."],
                 [title: "Ready to print", detail: "bedStatus becomes At temp."],
