@@ -38,7 +38,7 @@ import groovy.json.JsonOutput
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Leviton Smart Load Center"
-@Field static final String APP_VERSION   = "2.0.4"
+@Field static final String APP_VERSION   = "2.0.5"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/release-leviton-smart-load-center/163950"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String API           = "https://my.leviton.com/api"
@@ -559,6 +559,7 @@ private List tipsTopics() {
             checklist: [
                 [title: "Sign-in failed", detail: "Check the email and password in the My Leviton app, fix them here and tap Done."],
                 [title: "Panel offline or Reconnecting", detail: "The panel reconnects on its own, waiting a little longer each try (up to 5 minutes). If the My Leviton app shows live data and Hubitat doesn't after 10 minutes, set Log level to Full, tap Initialize on the Panel and post the log in the community thread."],
+                [title: "Short cloud hiccups", detail: "Leviton's cloud sometimes answers with an error (HTTP 502) or drops the connection for a minute. Anything that recovers within 5 minutes logs at Normal level with a count for the day. Errors Only shows a warning after 5 minutes and an error after 30. HTTP 429 means Leviton asked us to slow down and always logs at Normal."],
                 [title: "A deleted device came back, or one is missing", detail: "Use the Equipment page."],
                 [title: "Total power doesn't match a CT clamp", detail: "Panel power is the sum of every smart breaker, including ones turned off in Equipment. Standard (non-smart) breakers report nothing."]
             ]]

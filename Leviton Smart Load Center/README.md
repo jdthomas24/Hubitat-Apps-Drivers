@@ -65,6 +65,8 @@ One **Log level** in the app covers the app, every panel and every breaker and C
 
 **Panel offline / Reconnecting.** The panel reconnects on its own, waiting a little longer each try (up to 5 minutes). Check the My Leviton app shows live data. If it does and Hubitat doesn't after 10 minutes, set Log level to Full, tap **Initialize** on the Panel device and post the log in the community thread.
 
+**Short cloud hiccups.** Leviton's cloud sometimes answers with an error (HTTP 502) or drops the connection for a minute. Anything that recovers within 5 minutes logs at **Normal** level with a count for the day. At **Errors Only** you only see a warning after 5 minutes and an error after 30. HTTP 429 means Leviton asked us to slow down; it always logs at Normal, so you can spot it if it repeats.
+
 **A device I deleted came back, or one is missing.** Use the app's **Equipment** page. Deleting a device from the Devices page turns it off there; turn it back on to recreate it.
 
 **Total power doesn't match a CT clamp.** Panel total power is the sum of every smart breaker, including ones you turned off in Equipment. Standard (non-smart) breakers report nothing.

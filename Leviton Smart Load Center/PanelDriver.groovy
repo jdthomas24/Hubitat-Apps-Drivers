@@ -27,7 +27,8 @@
       at a time, so a slow Leviton cloud never blocks the hub. On startup the WebSocket connects after that poll.
      -Exclusions as in IntelliCenter: deleting a device from the Devices page excludes it; the app's Equipment
       page turns it back on.
-     -Reconnect backoff 5 s to 5 min. A drop logs at Normal; still down after 4 tries warns once; recovery logs.
+     -Reconnect backoff 5 s to 5 min. 2.0.5 levels, WebSocket and REST alike: recovered within 5 min logs at Normal
+      with the day's count, warn once at 5 min, error once at 30 min, recovery after either logs. 429 always Normal.
       No message for 90 s (15 min with live updates off) reconnects.
      -Breaker On/Off only when the app allows it. The switch changes only after Leviton accepts the command.
 */
@@ -56,7 +57,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "2.0.4"
+@Field static final String VERSION     = "2.0.5"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/t/release-leviton-smart-load-center/163950"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -67,6 +68,8 @@ import groovy.transform.Field
                                  33, 34, 37, 38, 41, 42, 45, 46, 49, 50, 53, 54, 57, 58, 61, 62, 65, 66]
 @Field static final List BACKOFF = [5, 15, 30, 60, 120, 300]
 @Field static final long AUTH_CACHE_MS = 6L * 3600000L
+@Field static final long WARN_MS  = 300000L    // 5 min failing: warn
+@Field static final long ERROR_MS = 1800000L   // 30 min failing: error
 @Field static final Map DRIVER = [breaker: "Leviton Smart Load Center Breaker", ct: "Leviton Smart Load Center CT"]
 // Per-device working data: live values, last message time, subscription queue. Lost on a driver save, which is safe.
 @Field static final java.util.concurrent.ConcurrentHashMap RUNTIME = new java.util.concurrent.ConcurrentHashMap()
@@ -226,7 +229,9 @@ private void markDown(String why) {
     setStatus(device.currentValue("connectionStatus") == "Sign-in failed" ? "Sign-in failed" : "Reconnecting")
     if (state.downSince == null) {
         state.downSince = now()
-        logN "Leviton cloud connection dropped (${why}). Reconnecting."
+        mem().wsWhy = why
+        bump("drops")
+        logF "Leviton cloud connection dropped (${why}), reconnecting"
     } else {
         logF "still offline: ${why}"
     }
@@ -238,9 +243,9 @@ private void scheduleReconnect() {
     int a = (m.attempt ?: 0) as int
     int secs = BACKOFF[Math.min(a, BACKOFF.size() - 1)] as int
     m.attempt = a + 1
-    if (a == 3 && !state.downWarned) {
-        state.downWarned = true
-        logE "can't reach the Leviton cloud. Retrying on its own, at most every 5 minutes."
+    if (state.downSince != null) {
+        int lv = escalate(state.downSince as long, (state.downWarned ?: 0) as int, "connection to the Leviton cloud", (m.wsWhy ?: "connection lost") as String)
+        if (lv) state.downWarned = lv
     }
     m.reconnectPending = true
     runIn(secs, "connect")
@@ -256,9 +261,10 @@ private void onReady() {
     if (state.downSince != null) {
         int mins = ((now() - (state.downSince as long)) / 60000) as int
         if (state.downWarned) slog("info", "Leviton cloud back online after ${mins} min")
-        else logN "reconnected"
+        else logN "reconnected to the Leviton cloud after a short drop (${m.wsWhy ?: 'connection lost'}), ${ordinal(count('drops'))} today"
         state.remove("downSince")
         state.remove("downWarned")
+        m.remove("wsWhy")
     } else {
         logN "connected to the Leviton cloud"
     }
@@ -391,16 +397,63 @@ private boolean apiPut(String path, Map body, Map extra = [:]) {
     return false
 }
 
-// REST failures warn once per outage; recovery logs once.
+// REST failures: quiet if they clear within 5 min, warn at 5, error at 30. 429 always Normal.
 private void restDown(String why) {
     Map m = mem()
-    if (!m.restDown) { m.restDown = true; logE "Leviton cloud request failed (${why}). Will keep trying." }
-    else logF "Leviton cloud request failed: ${why}"
+    if (why?.contains("429")) logN "Leviton asked us to slow down (HTTP 429). Will retry on the next poll."
+    if (m.restSince == null) {
+        m.restSince = now()
+        m.restWhy = why
+        bump("hiccups")
+        logF "Leviton cloud request failed (${why})"
+        return
+    }
+    logF "Leviton cloud request failed: ${why}"
+    int lv = escalate(m.restSince as long, (m.restWarned ?: 0) as int, "Leviton cloud requests", why)
+    if (lv) m.restWarned = lv
 }
 
 private void restUp() {
     Map m = mem()
-    if (m.restDown) { m.restDown = false; slog("info", "Leviton cloud requests working again") }
+    if (m.restSince == null) return
+    int mins = ((now() - (m.restSince as long)) / 60000) as int
+    if (m.restWarned) slog("info", "Leviton cloud requests working again after ${mins} min")
+    else logN "Leviton cloud hiccup (${m.restWhy ?: 'request failed'}), working again, ${ordinal(count('hiccups'))} today"
+    ["restSince", "restWhy", "restWarned"].each { m.remove(it) }
+}
+
+// Returns the new level (1 warn, 2 error) when it logs, else 0.
+private int escalate(long since, int warned, String what, String why) {
+    long down = now() - since
+    int mins = (down / 60000) as int
+    if (down >= ERROR_MS && warned < 2) {
+        slog("error", "${what} failing for ${mins} minutes (${why}). Check the My Leviton app works. Still retrying on its own.")
+        return 2
+    }
+    if (down >= WARN_MS && warned < 1) {
+        logE "${what} failing for ${mins} minutes (${why}). Still retrying on its own."
+        return 1
+    }
+    return 0
+}
+
+// Per-day counts in memory (a driver save resets them).
+private void bump(String k) {
+    Map m = mem()
+    String day = new Date().format("yyyyMMdd", location.timeZone)
+    if (m[k + "Day"] != day) { m[k + "Day"] = day; m[k] = 0 }
+    m[k] = ((m[k] ?: 0) as int) + 1
+}
+
+private int count(String k) {
+    Map m = mem()
+    return m[k + "Day"] == new Date().format("yyyyMMdd", location.timeZone) ? ((m[k] ?: 1) as int) : 1
+}
+
+private String ordinal(int n) {
+    int t = n % 100
+    String suf = (t >= 11 && t <= 13) ? "th" : ["th", "st", "nd", "rd", "th", "th", "th", "th", "th", "th"][n % 10]
+    return "${n}${suf}"
 }
 
 private String panelPath() {
