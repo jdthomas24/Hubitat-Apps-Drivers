@@ -1,12 +1,12 @@
 # Bambu Lab Integration for Hubitat
 
-> **Status: v0.2.4 beta, tested on two H2Ds. X1, P1 and A1 should work but are untested.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
+> **Status: v0.2.5 beta, tested on two H2Ds. X1, P1 and A1 should work but are untested.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
 
 ## What you get
 
 | Device | What it does |
 |---|---|
-| **Printer** (one per printer) | Print state and stage, progress, elapsed time, time left and ETA, layers, file name and last print, heater status (Heating to target, At temp, Cooling, Off) and temperatures for the nozzle, bed and chamber (both nozzles on the H2D), speed, chamber light, door, active filament and external spools, errors in plain English with a Wiki link, firmware and firmware updates, dashboard tile |
+| **Printer** (one per printer) | Print state and stage, progress, elapsed time, time left and ETA, layers, current and last print, heater status (Heating to target, At temp, Cooling, Off) and temperatures for the nozzle, bed and chamber (right and left nozzles on the H2D), speed, chamber light, door, active filament and external spools, errors in plain English with a Wiki link, firmware and firmware updates, dashboard tile |
 | **Chamber light** | A switch for the printer's chamber light (both modes; on the H2D it switches both chamber lights) |
 | **AMS** (one per unit) | Humidity, temperature, and filament type, color and amount for each tray |
 
@@ -75,16 +75,18 @@ These are on each printer device's **Preferences** tab.
 - **Tile:** add the Printer as an Attribute tile and pick **tile**. A dark card that scales with the tile size: state, file, temperatures (an arrow and the target while heating), a progress bar and finish time while printing, the last print when idle, door open and errors. To keep the hub's database small it only changes every 5% and when something else on it changes; the device page has the exact numbers.
 - **printState** is Idle, Preparing, Printing, Paused, Finished or Failed, so a rule can announce a finished print or a failure.
 - **nozzleStatus** and **bedStatus** are "Heating to 220°", At temp, Cooling or Off. "bedStatus becomes At temp" is a clean trigger, with no watching numbers climb. **nozzleTemp** and **bedTemp** update at temperature or off.
-- **timeRemaining** and **elapsedTime** are in minutes and move in 5 minute steps. **currentLayer** moves in steps of 5.
+- **Dual-nozzle printers (H2D)** have **rightNozzleTemp / rightNozzleStatus** and **leftNozzleTemp / leftNozzleStatus** instead of nozzle. The tile shows R and L.
+- **timeRemaining (min)** and **elapsedTime (min)** move in 5 minute steps. **currentLayer** moves in steps of 5. The unit is in the name because the device page doesn't show units.
+- **wifiSignal (dBm)** is a number, updated when it moves 5 dBm or more.
 - **stage** shows what the printer is doing right now (Heating hotend, Changing filament, Paused: filament runout and so on).
-- **errors** lists HMS codes in Bambu's format (HMS_0700_8000_0002_0001) and **errorText** says what they mean. The log and the app's printer card link each code to its Bambu Lab Wiki page.
+- **errorCodes** lists HMS codes in Bambu's format (HMS_0700_8000_0002_0001) and **errorText** says what they mean. The log and the app's printer card link each code to its Bambu Lab Wiki page.
 - **door** is open or closed (H2D tested). In Rule Machine, use **Custom Attribute**.
-- **fileName** is the file printing now, or Not printing. **lastPrint** keeps the last finished or failed file.
+- **currentPrint** is the job printing now (its name in Bambu Studio), or Not printing. **lastPrint** keeps the last finished or failed file.
 - **ETA** is when the print should finish, to the nearest 5 minutes (with the weekday if it's not today), or -- when not printing.
 - **firmwareUpdate** is none, or available with the new version.
 - **externalSpool** and **externalSpool2** show the filament on the external holders once one is loaded.
 
-**Error text** comes from a small table in this folder's **HMS** directory, fetched from GitHub the first time a code shows up (nothing goes to Bambu); only the matching line is kept on the hub. The English text and Wiki links come from the [ha-bambulab](https://github.com/greghesp/ha-bambulab) project (MIT license).
+**Error text** comes from a small table in this folder's **HMS** directory, fetched from GitHub the first time a code shows up (nothing goes to Bambu); only the matching line is kept, in memory. After a reboot the text for errors still showing is fetched again. The English text and Wiki links come from the [ha-bambulab](https://github.com/greghesp/ha-bambulab) project (MIT license).
 
 ## Logging
 

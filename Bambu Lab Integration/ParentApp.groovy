@@ -30,7 +30,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.2.4"
+@Field static final String APP_VERSION   = "0.2.5"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -196,7 +196,7 @@ private String printerCardHtml(int i, dev) {
     if (busy) line = "Reconnecting&hellip;"
     else if (!ok) line = conn == "Waiting for printer" ? "Connected, waiting for the printer's first status" : conn
     else if (ps in ["Printing", "Paused", "Preparing"]) {
-        def pct = dev.currentValue("progress"), left = dev.currentValue("timeRemaining")
+        def pct = dev.currentValue("progress"), left = dev.currentValue("timeRemaining (min)")
         line = ps + (pct != null ? " &middot; ${pct}%" : "") + (left ? " &middot; ${hm(left as int)} left" : "") +
             (dev.currentValue("ETA") && dev.currentValue("ETA") != "--" ? " &middot; done at ${dev.currentValue('ETA')}" : "")
     } else line = ps ?: "Connected"
@@ -218,7 +218,7 @@ private String printerCardHtml(int i, dev) {
             c << "<div class='hub-text-warning' style='margin-top:4px;font-size:0.85em'>&#9888; ${d[1] ? esc(d[1]) + ' ' : ''}" +
                 "<a href='${esc(d[2])}' target='_blank' class='bb-link'>${esc(d[0])}<i class='fa-regular fa-external-link' style='margin-left:4px;font-size:0.8em'></i></a></div>"
         }
-        else c << "<div class='hub-text-warning' style='margin-top:4px;font-size:0.85em'>&#9888; ${errs} printer error${errs == 1 ? '' : 's'}: ${esc(dev.currentValue('errors') ?: '')}</div>"
+        else c << "<div class='hub-text-warning' style='margin-top:4px;font-size:0.85em'>&#9888; ${errs} printer error${errs == 1 ? '' : 's'}: ${esc(dev.currentValue('errorCodes') ?: '')}</div>"
     }
     if (dev.currentValue("door") == "open" || dev.currentValue("firmwareUpdate")?.toString()?.startsWith("available")) {
         List bits = []
@@ -490,6 +490,7 @@ private List tipsTopics() {
         [id: "temps", label: "Temperatures", title: "Heater status and temperatures", group: "How it works", icon: "pi-sun",
             body: "<p>Each heater has a <b>status</b> and a <b>temperature</b>. The status is <i>Heating to 220°</i>, <i>At temp</i>, <i>Cooling</i> or <i>Off</i>. " +
                 "The temperature only updates once the heater is at temperature or off, in 5° steps, so a warm-up doesn't send a burst of events.</p>" +
+                "<p>Dual-nozzle printers (H2D) have <b>rightNozzle</b> and <b>leftNozzle</b> attributes, and the tile shows <b>R</b> and <b>L</b>. Other printers have <b>nozzle</b>.</p>" +
                 "<p>Temperatures are in Celsius to match the printer. To follow the hub's units instead, open the printer device and change <b>Temperature units</b> under Preferences. The 5° step is there too.</p>"],
         [id: "rules", label: "Rules and dashboards", title: "Rules and dashboards", group: "Using it", icon: "pi-bolt",
             body: "<p>Some ideas:</p>",
@@ -497,7 +498,7 @@ private List tipsTopics() {
                 [title: "Print finished", detail: "printState becomes Finished: notify, or turn off the enclosure fan."],
                 [title: "Print failed or error", detail: "printState becomes Failed, or errorCount above 0. errorText says what's wrong in plain English, and the card links each code to the Bambu Lab Wiki."],
                 [title: "Door opened", detail: "door becomes open (H2D and printers with a door sensor). In Rule Machine it's under Custom Attribute."],
-                [title: "What printed last", detail: "lastPrint keeps the last finished or failed file. fileName says Not printing between prints."],
+                [title: "What printed last", detail: "lastPrint keeps the last finished or failed file. currentPrint is the job printing now, or Not printing."],
                 [title: "Firmware update", detail: "firmwareUpdate becomes available. Update from the printer or the Bambu apps."],
                 [title: "Ready to print", detail: "bedStatus becomes At temp."],
                 [title: "Dashboard", detail: "Add the printer as an Attribute tile and pick tile: state, file, progress bar, layers, time left and temperatures."]

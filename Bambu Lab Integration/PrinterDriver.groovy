@@ -16,8 +16,11 @@
      -Change-only events. Heaters: status (Heating to N, At temp, Cooling, Off) and the temperature only at temp
       or off, in the preference step; H2 temps are packed (current low 16 bits, target high 16). Times and layers
       in 5 steps, wifi 5 dB, AMS humidity 5%. The printer keeps the last job's numbers: layers 0 when not
-      printing, progress 0 when Idle, fileName "Not printing", lastPrint keeps the finished or failed file.
-      H2D sends no gcode_start_time, so elapsedTime counts from a print start the driver saw.
+      printing, progress 0 when Idle, currentPrint "Not printing", lastPrint keeps the finished or failed file.
+      H2D sends no gcode_start_time, so elapsed time counts from a print start the driver saw.
+     -Fixed units go in the name (device page shows none): timeRemaining (min), elapsedTime (min), wifiSignal (dBm).
+      Dual-nozzle printers (H2D) report rightNozzle* (extruder 0) and leftNozzle* (extruder 1), others nozzle*.
+      0.2.5 renames delete the old attributes once per driver run.
      -Tile (Moonraker driver style, under 1024 bytes) only changes on state, file, 5% progress, ETA, heater
       status, door and errors, since every tile event is a ~900 byte row in the hub database.
      -Monitor only (default) works with Bambu Cloud; Printer Control is refused locally. Monitor and control
@@ -26,8 +29,8 @@
      -After a command the driver listens 5 s and checks the result at the end of that window: done, refused
       (err_code 84033543 or HMS 0500_0500_0001_0007, not counted as an error) or ignored (after a second check).
      -Errors: on a new code the driver fetches HMS/<module>.json from this integration's GitHub folder
-      (ha-bambulab's English list, MIT) and keeps only that line in state.hmsText, for errorText, the log and a
-      Wiki link. Nothing goes to Bambu.
+      (ha-bambulab's English list, MIT) and keeps only that line in memory, for errorText, the log and a Wiki
+      link. After a reboot or driver save, text for errors still showing is fetched again quietly. Nothing goes to Bambu.
      -door from print.stat bit 0x00800000; firmwareUpdate from upgrade_state; external spools from vir_slot
       254/255 (or vt_tray), shown once loaded.
      -Children (app's Equipment page): one AMS device per unit and the chamber light. Exclusions as IntelliCenter.
@@ -44,18 +47,20 @@ metadata {
         attribute "printState",       "string"
         attribute "stage",            "string"
         attribute "progress",         "number"
-        attribute "timeRemaining",    "number"
-        attribute "elapsedTime",      "number"
+        attribute "timeRemaining (min)", "number"
+        attribute "elapsedTime (min)", "number"
         attribute "ETA",              "string"
         attribute "currentLayer",     "number"
         attribute "totalLayers",      "number"
-        attribute "fileName",         "string"
+        attribute "currentPrint",     "string"
         attribute "lastPrint",        "string"
         attribute "door",             "string"
         attribute "nozzleTemp",       "number"
         attribute "nozzleStatus",     "string"
-        attribute "nozzle2Temp",      "number"
-        attribute "nozzle2Status",    "string"
+        attribute "rightNozzleTemp",  "number"
+        attribute "rightNozzleStatus", "string"
+        attribute "leftNozzleTemp",   "number"
+        attribute "leftNozzleStatus", "string"
         attribute "bedTemp",          "number"
         attribute "bedStatus",        "string"
         attribute "chamberTemp",      "number"
@@ -64,14 +69,14 @@ metadata {
         attribute "mode",             "string"
         attribute "activeTray",       "string"
         attribute "errorCount",       "number"
-        attribute "errors",           "string"
+        attribute "errorCodes",       "string"
         attribute "errorText",        "string"
         attribute "externalSpool",    "string"
         attribute "externalSpoolColor", "string"
         attribute "externalSpool2",   "string"
         attribute "externalSpool2Color", "string"
         attribute "firmwareUpdate",   "string"
-        attribute "wifiSignal",       "string"
+        attribute "wifiSignal (dBm)", "number"
         attribute "firmware",         "string"
         attribute "model",            "string"
         attribute "connectionStatus", "string"
@@ -97,7 +102,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.4"
+@Field static final String VERSION     = "0.2.5"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -127,6 +132,10 @@ import groovy.transform.Field
 @Field static final String HMS_URL      = "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Bambu%20Lab%20Integration/HMS/"
 @Field static final String WIKI         = "https://wiki.bambulab.com"
 @Field static final String WIKI_HOME    = "https://wiki.bambulab.com/en/hms/home"
+@Field static final String T_LEFT      = "timeRemaining (min)"
+@Field static final String T_ELAPSED   = "elapsedTime (min)"
+@Field static final String WIFI        = "wifiSignal (dBm)"
+@Field static final List RETIRED       = ["fileName", "errors", "wifiSignal", "timeRemaining", "elapsedTime", "nozzle2Temp", "nozzle2Status"]   // 0.2.5 renames
 @Field static final Map AMS_FAMILY      = ["07": "AMS ", "18": "AMS-HT ", "12": "AMS Lite "]   // one table per family, unit A
 // Per-device working data: merged report, last message time, sequence id. Lost on a driver save, which is safe.
 @Field static final java.util.concurrent.ConcurrentHashMap RUNTIME = new java.util.concurrent.ConcurrentHashMap()
@@ -550,6 +559,7 @@ private void readVersion(Map info) {
 
 // Merged report -> attributes, children and tile.
 private void render() {
+    retireOld()
     Map r = mem().rep as Map
     String gs = r.gcode_state?.toString()
     // This run's value: currentValue can still return the old one right after the event.
@@ -574,7 +584,7 @@ private void render() {
     if (r.containsKey("mc_percent")) report("progress", ps == "Idle" ? 0 : (toInt(r.mc_percent) ?: 0), "%")
     if (r.containsKey("mc_remaining_time")) {
         int mins = active ? (toInt(r.mc_remaining_time) ?: 0) : 0
-        report("timeRemaining", mins, "min", 5)
+        report(T_LEFT, mins, "min", 5)
         String eta = "--"
         if (active && mins > 0) {
             long fiveMin = 300000L
@@ -582,22 +592,21 @@ private void render() {
             boolean today = at.format("yyyyMMdd", location.timeZone) == new Date(now()).format("yyyyMMdd", location.timeZone)
             eta = at.format(today ? "h:mm a" : "EEE h:mm a", location.timeZone)
         }
-        if (eta == "--" || (cv("timeRemaining") as Integer) == mins) report("ETA", eta)   // ETA moves with timeRemaining's 5 min steps
+        if (eta == "--" || (cv(T_LEFT) as Integer) == mins) report("ETA", eta)   // ETA moves with time remaining's 5 min steps
     } else if (!active) report("ETA", "--")
     Long start = toLong(r.gcode_start_time)
     Long startMs = (start && start > 0) ? start * 1000L : (state.printStartAt as Long)
-    if (active && startMs) report("elapsedTime", Math.max(0, ((now() - startMs) / 60000) as int), "min", 5)
-    else if (ps == "Idle") report("elapsedTime", 0, "min")
+    if (active && startMs) report(T_ELAPSED, Math.max(0, ((now() - startMs) / 60000) as int), "min", 5)
+    else if (ps == "Idle") report(T_ELAPSED, 0, "min")
     if (r.containsKey("layer_num")) report("currentLayer", active ? (toInt(r.layer_num) ?: 0) : 0, null, 5)
     if (r.containsKey("total_layer_num")) report("totalLayers", active ? (toInt(r.total_layer_num) ?: 0) : 0)
     String fn = (r.subtask_name ?: r.gcode_file ?: "").toString()
-    if (gs || fn) report("fileName", active && fn ? fn : "Not printing")
+    if (gs || fn) report("currentPrint", active && fn ? fn : "Not printing")
     if (fn && ps in ["Finished", "Failed"]) report("lastPrint", fn)
     if (r.containsKey("spd_lvl")) { Integer s = toInt(r.spd_lvl); report("speed", s in 1..4 ? SPEEDS[s] : "Standard") }
     if (r.wifi_signal) {
         Integer db = toInt(r.wifi_signal.toString().replaceAll(/[^\-0-9]/, ""))
-        Integer last = mem().wifiDb as Integer
-        if (db == null || last == null || Math.abs(db - last) >= 5) { mem().wifiDb = db; report("wifiSignal", r.wifi_signal.toString()) }
+        if (db != null) report(WIFI, db, "dBm", 5)
     }
     temps(r)
     errors(r)
@@ -651,13 +660,13 @@ private void spools(Map r) {
 private void temps(Map r) {
     BigDecimal step = (opt("tempStep") ?: 5) as BigDecimal
     List ext = (r.device instanceof Map && r.device.extruder instanceof Map && r.device.extruder.info instanceof List) ? r.device.extruder.info as List : []
+    boolean dual = ext.size() > 1 || (cv("model") ?: "").toString().toUpperCase().startsWith("H2D")
+    if (dual) retireSingle()
     def n1 = r.nozzle_temper, n1t = r.nozzle_target_temper
     if (n1 == null && ext) { Map e = ext.find { toInt(it.id) == 0 } as Map ?: ext[0] as Map; n1 = packedCur(e?.temp); n1t = packedTarget(e?.temp) }
-    heater("nozzle", n1, n1t, step, true)
-    if (ext.size() > 1) {
-        Map e2 = ext.find { toInt(it.id) == 1 } as Map
-        if (e2) heater("nozzle2", packedCur(e2.temp), packedTarget(e2.temp), step, false)
-    }
+    heater(dual ? "rightNozzle" : "nozzle", n1, n1t, step, true)
+    Map e2 = ext.size() > 1 ? ext.find { toInt(it.id) == 1 } as Map : null
+    if (e2) heater("leftNozzle", packedCur(e2.temp), packedTarget(e2.temp), step, false)
     def b = r.bed_temper, bt = r.bed_target_temper
     if (b == null && r.device instanceof Map && r.device.bed instanceof Map && r.device.bed.info instanceof Map) {
         b = packedCur(r.device.bed.info.temp); bt = packedTarget(r.device.bed.info.temp)
@@ -723,13 +732,13 @@ private void errors(Map r) {
     } else if (m.refusedPresent) m.remove("refusedPresent")
     codes = codes.unique()
     String joined = codes.join(", ")
-    String was = device.currentValue("errors") ?: "none"
+    String was = device.currentValue("errorCodes") ?: "none"
     if ((joined ?: "none") != was && codes) {
         List old = was == "none" ? [] : was.split(", ").toList()
         (codes - old).each { announce(it as String) }
     }
     report("errorCount", codes.size())
-    report("errors", joined ?: "none")
+    report("errorCodes", joined ?: "none")
     errorText(codes)
 }
 
@@ -737,7 +746,11 @@ private void errors(Map r) {
 // Error text: per-module tables in this integration's GitHub folder
 // ============================================================
 
-private Map hmsCache() { (state.hmsText ?: [:]) as Map }
+// In memory, not state: no database writes. Refilled quietly after a reboot or driver save.
+private Map hmsCache() {
+    Map m = mem()
+    return (m.hms ?: (m.hms = new java.util.concurrent.ConcurrentHashMap())) as Map
+}
 
 // Log one new code: with its text if known, else after the lookup.
 private void announce(String code) {
@@ -748,13 +761,14 @@ private void announce(String code) {
 
 private void errorText(List codes) {
     Map c = hmsCache()
+    codes.each { if (!(c[it] as Map)?.t) hmsLookup(it as String, true) }
     String t = codes.collect { (c[it] as Map)?.t ?: it }.join(" | ")
     report("errorText", t ?: "none")
 }
 
 // For the app's card: [code, text, link] per current error.
 List getErrorDetails() {
-    String e = device.currentValue("errors") ?: "none"
+    String e = device.currentValue("errorCodes") ?: "none"
     if (e == "none") return []
     Map c = hmsCache()
     return e.split(", ").collect { String k -> Map h = c[k] as Map; [k, h?.t ?: "", h?.u ?: WIKI_HOME] }
@@ -767,13 +781,13 @@ private String hmsFile(String hex) {
     return (AMS_FAMILY.containsKey(p) && hex.length() >= 4 && hex[2..3] ==~ /0[0-7]/) ? p + "00" : hex.take(4)
 }
 
-// true if a lookup started (once per code per driver run).
-private boolean hmsLookup(String code) {
+// true if a lookup started (once per code per driver run). quiet: refill after a reboot, no log.
+private boolean hmsLookup(String code, boolean quiet = false) {
     Map m = mem()
     Set asked = (m.hmsAsked ?: (m.hmsAsked = java.util.concurrent.ConcurrentHashMap.newKeySet())) as Set
     if (!asked.add(code)) return false
     try {
-        asynchttpGet("hmsFetched", [uri: HMS_URL + hmsFile(hexOf(code)) + ".json", contentType: "text/plain", timeout: 20], [code: code])
+        asynchttpGet("hmsFetched", [uri: HMS_URL + hmsFile(hexOf(code)) + ".json", contentType: "text/plain", timeout: 20], [code: code, quiet: quiet])
         return true
     } catch (e) {
         logF "error text lookup failed: ${e.message}"
@@ -791,13 +805,13 @@ def hmsFetched(resp, Map data) {
             if (tbl instanceof Map) hit = hmsFind(tbl as Map, hexOf(code))
         } else logF "no error text for ${code} (HTTP ${resp.status})"
     } catch (e) { logF "error text lookup failed: ${e.message}" }
-    if (!hit) { logE "printer error ${code}. Look it up: ${WIKI_HOME}"; return }
+    boolean quiet = data?.quiet == true
+    if (!hit) { if (!quiet) logE "printer error ${code}. Look it up: ${WIKI_HOME}"; return }
     Map c = hmsCache()
     c[code] = hit
     while (c.size() > 40) c.remove(c.keySet().iterator().next())
-    state.hmsText = c
-    logE "printer error ${code}: ${hit.t} ${hit.u}"
-    String e = device.currentValue("errors") ?: "none"
+    if (!quiet) logE "printer error ${code}: ${hit.t} ${hit.u}"
+    String e = device.currentValue("errorCodes") ?: "none"
     errorText(e == "none" ? [] : e.split(", ").toList())
 }
 
@@ -1018,10 +1032,10 @@ private String tileHtml(int fileMax, int errMax) {
     StringBuilder t = new StringBuilder()
     t << "<div><b style='color:#00ae42'>${short_(device.displayName, 28)}</b> <span style='color:${up ? '#00ff87' : '#ffd166'}'>&#9679;</span></div>"
     t << "<div style='color:${col}'>${icon}${ps}"
-    String file = cv("fileName")
+    String file = cv("currentPrint")
     if (active && file && file != "Not printing") t << " &middot; <span style='color:#eee'>${short_(file, fileMax)}</span>"
     t << "</div>"
-    String noz = heat("nozzle") + (cv("nozzle2Status") != null ? "/" + heat("nozzle2") : "")
+    String noz = cv("rightNozzleStatus") != null ? "R ${heat('rightNozzle')} L ${heat('leftNozzle')}" : heat("nozzle")
     t << "<div>Nozzle <b style='color:#ff6b6b'>${noz}</b> &middot; Bed <b style='color:#ffa94d'>${heat('bed')}</b>" +
         (cv("chamberTemp") != null ? " &middot; Ch <b>${Math.round(cv('chamberTemp') as double)}&deg;</b>" : "") + "</div>"
     if (active) {
@@ -1150,6 +1164,31 @@ void removeAllChildren() {
 // ============================================================
 // Events and helpers
 // ============================================================
+
+// 0.2.5 renames: drop the old attributes once per driver run (and the old error text cache in state).
+private void retireOld() {
+    Map m = mem()
+    if (m.retired) return
+    m.retired = true
+    if (state.hmsText != null) state.remove("hmsText")
+    dropAttrs(RETIRED)
+}
+
+// Dual-nozzle printer: drop single-nozzle attributes reported before the model was known.
+private void retireSingle() {
+    Map m = mem()
+    if (m.dualClean) return
+    m.dualClean = true
+    dropAttrs(["nozzleTemp", "nozzleStatus"])
+}
+
+private void dropAttrs(List names) {
+    Map c = mem().cv as Map
+    names.each { n ->
+        c?.remove(n)
+        if (device.currentValue(n) != null) { device.deleteCurrentState(n); logF "removed old attribute ${n}" }
+    }
+}
 
 private boolean report(String name, value, String unit = null, delta = 0) {
     if (!moved(cv(name), value, delta)) return false
