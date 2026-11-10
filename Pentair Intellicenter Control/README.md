@@ -68,7 +68,7 @@ Rules made with the 1.6.x command names (🔥 Heat and Start Pump, ⚙ Set Heat 
 
 One **Log level** in the app covers the app, the Bridge and every pool device, and all of it shows under the app in **Logs**, labeled by device:
 
-- **Errors Only** (default): problems only, like the controller going offline.
+- **Errors Only** (default): problems only, like the controller offline for 5 minutes (warning) or 30 minutes (error).
 - **Normal**: plus connections, commands, equipment turning on and off, and devices added or removed.
 - **Full**: everything, including every message to and from the controller. Turns itself off after 30 minutes.
 
@@ -79,6 +79,8 @@ One **Log level** in the app covers the app, the Bridge and every pool device, a
 **Bridge shows "Waiting for hub startup".** Normal right after a hub reboot. The Bridge waits 3 minutes so the hub can finish starting up, then connects on its own. Tap **Refresh** on the Bridge if you need it sooner.
 
 **Controller offline.** The Bridge retries every 2 minutes and reconnects on its own if the controller goes quiet. Check the controller has power and network, and that nothing blocks port 6680.
+
+**Short drops.** A controller on Wi-Fi or a wireless bridge can stop answering for a few seconds now and then. A drop that reconnects within 5 minutes logs at **Normal** level with a count for the day ("reconnected after a short drop, 4th today"). At **Errors Only** you only see a warning after 5 minutes offline and an error after 30.
 
 **A device I deleted came back, or one is missing.** Use the app's **Equipment** page. Deleting a device from the Devices page turns it off there; turn it back on to recreate it.
 

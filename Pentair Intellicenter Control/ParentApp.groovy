@@ -34,7 +34,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Pentair IntelliCenter"
-@Field static final String APP_VERSION   = "1.8.1"
+@Field static final String APP_VERSION   = "1.8.2"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/release-pentair-intellicenter-controller-beta/162876/31"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -324,6 +324,7 @@ private List tipsTopics() {
                 [title: "No devices after setup", detail: "Check the IP, and that the Bridge shows connectionStatus Connected. Set Log level to Full, tap Initialize on the Bridge, and check the logs."],
                 [title: "Waiting for hub startup", detail: "Normal right after a hub reboot. The Bridge waits 3 minutes, then connects on its own. Tap Refresh on the Bridge if you need it sooner."],
                 [title: "Controller offline", detail: "The Bridge retries every 2 minutes and reconnects on its own. Check the controller has power and network, and that nothing blocks port 6680."],
+                [title: "Short drops", detail: "A drop that reconnects within 5 minutes is normal, especially when the controller is on Wi-Fi or a wireless bridge. It logs at Normal level with a count for the day. Errors Only shows a warning at 5 minutes offline and an error at 30."],
                 [title: "A deleted device came back, or one is missing", detail: "Use the Equipment page."],
                 [title: "Heat commands do nothing", detail: "Check Heat Lock is unlocked and the heater is assigned to that body in the Pentair app (Settings, Advanced Settings, Heaters). On 3.002 and later the heater type also has to match how it's wired, or it won't fire even from the Pentair app. The log shows what was sent; post those lines in the community thread."],
                 [title: "No chlorinator device", detail: "If the Pentair app shows salt but Hubitat doesn't, set Log level to Full, tap Initialize on the Bridge, and post the lines with CHEM in the community thread."]

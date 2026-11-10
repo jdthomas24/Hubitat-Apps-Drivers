@@ -20,8 +20,9 @@
      -After a hub reboot (uptime under 5 min) the connect waits 3 min, so live pushes don't arrive while the hub is
       still starting up (1.7.1: a boot backlog dropped a parse at ~95s). Otherwise it connects right away.
      -Health: every message stamps lastRx in memory. An open socket with no data for max(3 polls, 3 min)
-      reconnects (a half-open socket looks connected). Reconnect check every 2 min. Offline warns once,
-      back online logs once.
+      reconnects (a half-open socket looks connected). Reconnect check every 2 min.
+     -1.8.2 drop levels: back within 5 min is info (Normal) with the day's count, warn once at 5 min, error once
+      at 30 min, back online after a warn or error logs at info. Wi-Fi/wireless bridges drop for seconds often.
      -Commands return true only when sent. Devices update only then, so a dropped command never shows a
       state that didn't happen; the controller's push confirms it within about a second.
      -Heat (method from the Home Assistant integration): a body's heat source is selected by writing HEATER
@@ -59,7 +60,7 @@ metadata {
 
 import groovy.transform.Field
 
-@Field static final String VERSION     = "1.8.1"
+@Field static final String VERSION     = "1.8.2"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/t/release-pentair-intellicenter-controller-beta/162876/31"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -69,6 +70,8 @@ import groovy.transform.Field
 @Field static final Map SOLAR_MODES = ["Solar Only": "3", "Solar Preferred": "4"]
 @Field static final Map HCOMBO_MODES = ["Gas Only": "7", "Heat Pump Only": "8", "Hybrid": "9", "Dual": "10"]
 // Per-device working data (last message time, expected close). Lost on a driver save, which is safe.
+@Field static final long WARN_MS  = 300000L    // 5 min offline: warn
+@Field static final long ERROR_MS = 1800000L   // 30 min offline: error
 @Field static final java.util.concurrent.ConcurrentHashMap RUNTIME = new java.util.concurrent.ConcurrentHashMap()
 
 String fmtHelpInfo() {
@@ -179,8 +182,11 @@ def webSocketStatus(String message) {
         setStatus("Connected")
         if (state.downSince != null) {
             int mins = ((now() - (state.downSince as long)) / 60000) as int
-            slog("info", "IntelliCenter back online after ${mins} min")
+            if (state.downWarned) slog("info", "IntelliCenter back online after ${mins} min")
+            else logN "IntelliCenter reconnected after a short drop (${m.downWhy ?: 'connection lost'}), ${ordinal(dropsToday())} today"
             state.remove("downSince")
+            state.remove("downWarned")
+            m.remove("downWhy")
         } else {
             logN "connected to ${ipAddress}"
         }
@@ -197,7 +203,9 @@ private void markDown(String why) {
     setStatus("Disconnected")
     if (state.downSince == null) {
         state.downSince = now()
-        logE "IntelliCenter connection lost (${why}). Retrying every 2 minutes."
+        mem().downWhy = shortWhy(why)
+        countDrop()
+        logF "connection lost (${why}), reconnecting"
     } else {
         logF "still offline: ${why}"
     }
@@ -205,9 +213,52 @@ private void markDown(String why) {
 
 def reconnectIfNeeded() {
     if (!state.connected && !bootWait()) {
+        escalate()
         logF "reconnecting"
         connect()
     }
+}
+
+// Warn once at 5 minutes offline, error once at 30.
+private void escalate() {
+    if (state.downSince == null) return
+    long down = now() - (state.downSince as long)
+    int w = (state.downWarned ?: 0) as int
+    String why = mem().downWhy ?: "connection lost"
+    if (down >= ERROR_MS && w < 2) {
+        state.downWarned = 2
+        slog("error", "Can't reach the IntelliCenter for ${(down / 60000) as int} minutes (${why}). Check it has power and network. Still retrying every 2 minutes.")
+    } else if (down >= WARN_MS && w < 1) {
+        state.downWarned = 1
+        logE "IntelliCenter offline for ${(down / 60000) as int} minutes (${why}). Still retrying every 2 minutes."
+    }
+}
+
+private String shortWhy(String why) {
+    String w = (why ?: "").toLowerCase()
+    if (w.contains("pong")) return "no reply to ping"
+    if (w.contains("timeout")) return "timeout"
+    if (w.startsWith("no data")) return why
+    return (why ?: "connection lost").replaceFirst(/^failure:\s*/, "").take(80)
+}
+
+// Drops today, in memory only (a driver save resets it).
+private void countDrop() {
+    Map m = mem()
+    String day = new Date().format("yyyyMMdd", location.timeZone)
+    if (m.dropDay != day) { m.dropDay = day; m.drops = 0 }
+    m.drops = ((m.drops ?: 0) as int) + 1
+}
+
+private int dropsToday() {
+    Map m = mem()
+    return m.dropDay == new Date().format("yyyyMMdd", location.timeZone) ? ((m.drops ?: 1) as int) : 1
+}
+
+private String ordinal(int n) {
+    int t = n % 100
+    String suf = (t >= 11 && t <= 13) ? "th" : ["th", "st", "nd", "rd", "th", "th", "th", "th", "th", "th"][n % 10]
+    return "${n}${suf}"
 }
 
 // Every minute: reconnect a silent socket, and restart the poll chain if it stopped.
