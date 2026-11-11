@@ -2,7 +2,7 @@
 
 Native, local control of Apple TVs from Hubitat Elevation. Turn your Apple TVs on and off, control playback, press remote buttons and launch apps from scenes, rules and dashboards, with live power and playback state. No Homebridge, no Home Assistant, no Raspberry Pi, no Python.
 
-> **Status: v1.2.4.** Install through HPM: search for **Apple TV Integration**, or use the manifest URL below.
+> **Status: v1.2.5.** Install through HPM: search for **Apple TV Integration**, or use the manifest URL below.
 
 **Forum thread:** [Apple TV Integration on the Hubitat Community](https://community.hubitat.com/t/166801)
 
@@ -76,7 +76,7 @@ After pairing, the Apple TV lists **Hubitat** under Settings → Remotes and Dev
 | `push` | Button number 1 to 12 in the order above (1 `up` ... 12 `volumeDown`), or a button name. For dashboard button tiles and Button Controller actions |
 | `sendText` | Types into a search box that's open on the TV. `replace` clears it first, `add` adds to it |
 | `launchApp` | Opens an app picked from the list, or typed under Other (name, bundle ID or app link) |
-| `transportStatus` | `playing`, `paused` or `stopped`, including changes made with the Siri Remote |
+| `transportStatus` | `playing`, `paused` or `stopped`, including changes made with the Siri Remote. Follows the app's own playback state where it reports one (TV app, YouTube, Plex), so pausing shows in every app |
 | `nowPlaying` | The title, for apps that share it, otherwise `none`. Arrives when playback starts |
 
 **State Variables** show **Installed Apps** (names you can type under Other) and **Last Launch From Hubitat**, for example `Netflix (launched)` or `Hulu (failed: not installed)`. It only covers launches sent from Hubitat. For the app actually playing, use Track current app below.

@@ -25,9 +25,12 @@
       health check, so a status update lost at boot can't leave it stuck on "connecting".
       on/off with no reply in 5s reconnects and retries once. Initialize reconnects after reboots.
      -Playback: play/pause/next/previous/skip via _mcc (MediaControl), buttons via HID press+release.
-      transportStatus comes from the allowed-controls flags (_iMC _mcF or MediaControlStatus
-      MediaControlFlags): Pause allowed = playing, Play allowed = paused, neither = stopped.
-      Flags of 0 are seen briefly while waking, so they only count after 3s.
+      transportStatus (1.2.5): NowPlayingInfo playbackState leads (1 playing, 2 paused, 3 stopped); playbackRate
+      only for apps that never send it; flags (_iMC _mcF / MediaControlStatus) only when neither (Netflix).
+      Flags only list allowed controls: TV app and Plex keep Play and Pause both allowed while paused.
+      No Play/Pause bit (256), or asleep = stopped at once, locked until something says playing, so the
+      state 2 Plex sends after exit is ignored. State 2 and 3 wait 1s: YouTube sends 2 just before exit,
+      Plex and the TV app send a brief 3 when playback starts. Flags of 0 only count after 3s (waking).
      -Buttons: back (HID 5, short press), homeScreen (Back held 1s, always the Home Screen, like the
       Siri Remote), tvButton (HID 7, the TV button: one press follows the Apple TV's TV Button setting,
       two back to back open the App Switcher, as pyatv's double tap; max 2 so a triple press never
@@ -75,7 +78,7 @@
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { return "1.2.4" }
+def version() { return "1.2.5" }
 
 metadata {
     definition(name: "Apple TV", namespace: "jdthomas24", author: "Jason Thomas", importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/AppleTVDriver.groovy") {
@@ -391,7 +394,7 @@ private void press(String name, int times = 1) {
     logN("pressed ${name}${times > 1 ? " x${times}" : ""}")
 }
 
-// Allowed-controls flags -> transportStatus. 0 is seen briefly while waking, so it waits 3s.
+// Allowed-controls flags. 0 is seen briefly while waking, so it waits 3s.
 private void mediaFlags(def raw) {
     if (raw == null) return
     Map m = mem()
@@ -405,8 +408,40 @@ private void mediaFlags(def raw) {
 def applyFlags() {
     Map m = mem()
     long f = (m.flags ?: 0L) as long
-    String t = device.currentValue("power") == "asleep" ? "stopped" : (f & 2L) ? "playing" : (f & 1L) ? "paused" : "stopped"
-    setTransport(t)
+    boolean play = (f & 1L) != 0L, pause = (f & 2L) != 0L
+    if (device.currentValue("power") == "asleep" || (!play && !pause)) { stopNow(); return }
+    if (m.npState || m.npRate) return                         // NowPlayingInfo decides
+    if (pause && !play) playNow()
+    else if (play && !pause) holdTransport("paused")
+    else if (m.stopLock || !m.transport || m.transport == "stopped") playNow()  // both allowed: only a start
+}
+
+private void playNow() {
+    Map m = mem()
+    m.remove("stopLock"); m.remove("pendingT"); unschedule("applyPending")
+    setTransport("playing")
+}
+
+// Stopped from flags or sleep: immediate, locked until something says playing. Clears the per-app source.
+private void stopNow() {
+    Map m = mem()
+    m.stopLock = true; m.remove("pendingT"); m.remove("npState"); m.remove("npRate"); unschedule("applyPending")
+    setTransport("stopped")
+}
+
+// paused and stopped from NowPlayingInfo wait 1s, so a stop or playing that follows wins.
+private void holdTransport(String t) {
+    Map m = mem()
+    if (m.stopLock) return
+    m.pendingT = t
+    runIn(1, "applyPending", [overwrite: true])
+}
+
+def applyPending() {
+    Map m = mem()
+    String t = m.remove("pendingT")
+    if (!t || m.stopLock) return
+    if (t == "stopped") stopNow() else setTransport(t)
 }
 
 // Both _iMC and MediaControlStatus report each change, so compare against memory, not the
@@ -422,8 +457,23 @@ private void nowPlayingInfo(raw) {
     if (!(raw instanceof byte[])) return
     Map info
     try { info = keyedArchive((byte[]) raw) } catch (e) { logF("could not decode NowPlayingInfo: ${e.message}"); return }
-    if (!(info?.metadata instanceof Map)) return   // partial update
-    setNowPlaying((info.metadata.title ?: "").toString().trim())
+    if (!info) return
+    Map md = info.metadata instanceof Map ? (Map) info.metadata : [:]
+    def st = info.playbackState != null ? info.playbackState : md.playbackState
+    def rt = info.playbackRate != null ? info.playbackRate : md.playbackRate
+    Map m = mem()
+    if (m.stopLock && !(st instanceof Number && (st as Number).intValue() == 1) && !(st == null && rt instanceof Number && rt > 0)) return  // late exit report
+    if (st instanceof Number) {
+        m.npState = true
+        int v = (st as Number).intValue()
+        if (v == 1) playNow()
+        else if (v == 2) holdTransport("paused")
+        else if (v == 3) holdTransport("stopped")
+    } else if (rt instanceof Number && !m.npState) {
+        m.npRate = true
+        if ((rt as Number).doubleValue() > 0) playNow() else holdTransport("paused")
+    }
+    if (info.metadata instanceof Map) setNowPlaying((md.title ?: "").toString().trim())   // partial updates leave it
 }
 
 private void setNowPlaying(String title) {
@@ -926,7 +976,7 @@ private void setPower(int s, String source) {
     if (device.currentValue("power") != v) logN("power ${v} (${source})")
     sendIfChanged("power", v)
     sendIfChanged("switch", v == "asleep" ? "off" : "on")
-    if (v == "asleep") setTransport("stopped")
+    if (v == "asleep") stopNow()
 }
 
 // Full only, once per distinct payload, so NowPlayingInfo bursts don't flood the log.
