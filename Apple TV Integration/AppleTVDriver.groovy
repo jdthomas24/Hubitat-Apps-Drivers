@@ -8,6 +8,9 @@
      -One device per Apple TV, created by the app. Holds an always-open Companion session
       (pair-verify, ChaCha20-Poly1305). Switch on = wake (HID 13), off = standby (HID 12).
       power = asleep/screensaver/awake from TVSystemStatus events; screensaver counts as on.
+     -PushableButton (1.2.4): push(1-12) or push("down") runs remoteButton in the BUTTON_ORDER order, for dashboard
+      button tiles and Button Controller actions. No pushed event is sent, so a Button Controller rule on this device
+      can't trigger itself into a double press.
      -Pairing (PIN) runs here because raw sockets only work in drivers. Keys go back to the app
       and are loaded into memory only, so they never show in State Variables.
      -Reconnects with backoff (5s to 5 min). "offline" only after 4 failed attempts, then
@@ -72,7 +75,7 @@
 import groovy.transform.Field
 import java.security.MessageDigest
 
-def version() { return "1.2.3" }
+def version() { return "1.2.4" }
 
 metadata {
     definition(name: "Apple TV", namespace: "jdthomas24", author: "Jason Thomas", importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Apple%20TV%20Integration/AppleTVDriver.groovy") {
@@ -81,6 +84,7 @@ metadata {
         capability "Refresh"
         capability "Initialize"
         capability "MediaTransport"
+        capability "PushableButton"
         attribute "power", "string"
         attribute "connection", "string"
         attribute "nowPlaying", "string"
@@ -121,6 +125,8 @@ metadata {
 @Field static final Map MC_CMD = [play: 1, pause: 2, nextTrack: 3, previousTrack: 4, skipForward: 7, skipBackward: 7]
 @Field static final Map HID_BTN = [up: 1, down: 2, left: 3, right: 4, back: 5, select: 6,
                                    volumeUp: 8, volumeDown: 9, playPause: 14, homeScreen: 5, tvButton: 7, controlCenter: 7]
+@Field static final List BUTTON_ORDER = ["up", "down", "left", "right", "select", "back", "homeScreen", "tvButton",
+    "controlCenter", "closeApp", "volumeUp", "volumeDown"]   // push(1-12); matches the remoteButton list
 @Field static final Map BTN_ALIAS = [menu: "back", home: "homeScreen", tv: "tvButton", tvbutton: "tvButton", controlcenter: "controlCenter", cc: "controlCenter", closeapp: "closeApp",
                                      enter: "select", ok: "select", homescreen: "homeScreen", mainmenu: "homeScreen"]
 // Dropdown pick -> names the Apple TV may use for it, tried exactly, in order.
@@ -141,6 +147,7 @@ def updated() { initialize() }
 
 def initialize() {
     state.version = version()
+    if (device.currentValue("numberOfButtons") != BUTTON_ORDER.size()) sendEvent(name: "numberOfButtons", value: BUTTON_ORDER.size())
     fixModel()
     unschedule()
     runEvery5Minutes("healthCheck")
@@ -335,6 +342,14 @@ def playPause() { press("playPause", 1) }
 // Counts are untyped: Rule Machine passes NUMBER as BigDecimal. Blank = 1.
 def volumeUp(steps = null) { press("volumeUp", count(steps, 20)) }
 def volumeDown(steps = null) { press("volumeDown", count(steps, 20)) }
+
+// Button number (1-12) or name; "down" works the same as remoteButton("down").
+def push(button) {
+    String s = (button ?: "").toString().trim()
+    String name = (s ==~ /\d+/) ? ((s as int) in 1..BUTTON_ORDER.size() ? BUTTON_ORDER[(s as int) - 1] : null) : s
+    if (!name) { logE("no button ${s}. Use 1 to ${BUTTON_ORDER.size()}: ${BUTTON_ORDER.withIndex().collect { b, i -> "${i + 1} ${b}" }.join(', ')}."); return }
+    remoteButton(name)
+}
 
 def remoteButton(String button, times = null) {
     String key = (button ?: "").trim().toLowerCase()

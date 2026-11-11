@@ -2,7 +2,7 @@
 
 Native, local control of Apple TVs from Hubitat Elevation. Turn your Apple TVs on and off, control playback, press remote buttons and launch apps from scenes, rules and dashboards, with live power and playback state. No Homebridge, no Home Assistant, no Raspberry Pi, no Python.
 
-> **Status: v1.2.2.** Install through HPM: search for **Apple TV Integration**, or use the manifest URL below.
+> **Status: v1.2.4.** Install through HPM: search for **Apple TV Integration**, or use the manifest URL below.
 
 **Forum thread:** [Apple TV Integration on the Hubitat Community](https://community.hubitat.com/t/166801)
 
@@ -73,6 +73,7 @@ After pairing, the Apple TV lists **Hubitat** under Settings → Remotes and Dev
 | `play`, `pause`, `stop` | Playback. Play always plays and Pause always pauses. The Apple TV has no real stop, so `stop` pauses |
 | `playback` | `playPause` (toggles), `nextTrack`, `previousTrack`, `skipForward`, `skipBackward` (10 seconds) |
 | `remoteButton` | `up`, `down`, `left`, `right`, `select`, `back`, `homeScreen`, `tvButton`, `controlCenter`, `closeApp`, `volumeUp`, `volumeDown`, with an optional number of presses (volume up to 20) |
+| `push` | Button number 1 to 12 in the order above (1 `up` ... 12 `volumeDown`), or a button name. For dashboard button tiles and Button Controller actions |
 | `sendText` | Types into a search box that's open on the TV. `replace` clears it first, `add` adds to it |
 | `launchApp` | Opens an app picked from the list, or typed under Other (name, bundle ID or app link) |
 | `transportStatus` | `playing`, `paused` or `stopped`, including changes made with the Siri Remote |
@@ -117,6 +118,9 @@ All logs for the integration show under the app, labeled by device. Set **Log le
 ## Troubleshooting
 
 - **Apple TV not found:** wake it with its remote, then click Refresh. If it still isn't listed, add it by IP (find the IP on the Apple TV under Settings → Network). Networks that separate devices into VLANs need an mDNS repeater.
+- **"No Apple TV answered" when adding by IP:** the app checks the Apple TV on port 7000 (AirPlay), and ping can work while that's blocked. Compare with a working Apple TV: Settings → AirPlay and HomeKit → Allow Access set to Everyone on the Same Network, Require Password off, and no firewall or VLAN rule blocking ports 7000 and 49153 between the hub and the Apple TV. Test from a computer by opening `http://<Apple TV IP>:7000/info`: a working one downloads a small file.
+- **Pairs, then won't connect:** check Settings → Remotes and Devices → Remote App and Devices on the Apple TV. Remove any old Hubitat entry, remove the Apple TV in the app, and pair again.
+- **Button rules fail with NumberFormatException:** the action ran `push('down')` on a virtual button device, which only takes numbers. Run the action on the Apple TV device instead, with `remoteButton` `down` or `push` `2`.
 - **No PIN on screen:** wake the Apple TV first, and check that its AirPlay access setting (Allow Access) lets devices on your network connect.
 - **"Back off" error while pairing:** too many attempts in a row. Wait a minute and try again.
 - **Wrong name in the Found list:** the name comes from the Apple TV (Settings → General → About → Name). Your Hubitat device name is separate and never overwritten.

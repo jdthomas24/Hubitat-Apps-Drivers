@@ -50,7 +50,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Apple TV Integration"
-@Field static final String APP_VERSION = "1.2.3"
+@Field static final String APP_VERSION = "1.2.4"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/166801"
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
@@ -356,7 +356,7 @@ private void addByIp() {
     Map info = fetchInfo(ip)
     if (!info?.model?.startsWith("AppleTV")) {
         state.pageNote = info ? "${ip} answered, but it isn't an Apple TV (${info.model ?: 'unknown model'})." :
-            "No Apple TV answered at ${ip}. Check the address and that the Apple TV is on."
+            "No Apple TV answered at ${ip} on port 7000. Check the address, that it's awake, its AirPlay access (Settings, AirPlay and HomeKit, Allow Access) and that no firewall blocks port 7000. See Tips, Apple TV not found."
         logInfo "Add by IP: ${state.pageNote}"
         return
     }
@@ -445,7 +445,7 @@ private void saveAddress(String key) {
     Map info = fetchInfo(ip)
     if (!info?.model?.startsWith("AppleTV")) {
         state.pageNote = info ? "${ip} answered, but it isn't an Apple TV (${info.model ?: 'unknown model'})." :
-            "No Apple TV answered at ${ip}. Check the address and that the Apple TV is on."
+            "No Apple TV answered at ${ip} on port 7000. Check the address, that it's awake, its AirPlay access (Settings, AirPlay and HomeKit, Allow Access) and that no firewall blocks port 7000. See Tips, Apple TV not found."
         return
     }
     // Not enforced: pair-verify on connect is the real identity check. Logged to confirm /info carries the pairing ID.
@@ -784,6 +784,28 @@ private List tipsTopics() {
                 "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'><b>refresh</b></td><td style='padding:8px'>Re-reads the power state</td></tr>" +
                 "</table>" +
                 "<p>Power changes made with the Siri Remote show up in Hubitat right away, so rules can react when someone turns the Apple TV on or off.</p>"],
+        [id: "buttons", label: "Buttons and dashboards", title: "Dashboard buttons and Button Controller", group: "Using it", icon: "pi-th-large",
+            body: "<p>Each Apple TV also works as a <b>12-button device</b>. Tap a button tile on a dashboard, or use <b>push</b> in a rule, " +
+                "and it presses that Siri Remote button.</p>" +
+                "<table style='width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px'>" +
+                "<tr style='background:var(--surface-ground, #f5f7fa)'><th style='text-align:left;padding:8px'>Button</th><th style='text-align:left;padding:8px'>Presses</th></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'>1</td><td style='padding:8px'><b>up</b></td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'>2</td><td style='padding:8px'><b>down</b></td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'>3</td><td style='padding:8px'><b>left</b></td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'>4</td><td style='padding:8px'><b>right</b></td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'>5</td><td style='padding:8px'><b>select</b></td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'>6</td><td style='padding:8px'><b>back</b></td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'>7</td><td style='padding:8px'><b>homeScreen</b></td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'>8</td><td style='padding:8px'><b>tvButton</b></td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'>9</td><td style='padding:8px'><b>controlCenter</b></td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'>10</td><td style='padding:8px'><b>closeApp</b></td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'>11</td><td style='padding:8px'><b>volumeUp</b></td></tr>" +
+                "<tr style='border-top:1px solid var(--surface-border, rgba(0,0,0,.12))'><td style='padding:8px'>12</td><td style='padding:8px'><b>volumeDown</b></td></tr>" + "</table>" +
+                "<p><b>Dashboard:</b> add the Apple TV as a <b>Button</b> tile and pick the button number.</p>" +
+                "<p><b>Button Controller or Rule Machine:</b> use a <b>custom action</b> on the Apple TV device with <b>remoteButton</b> and the name " +
+                "(e.g. <b>down</b>), or <b>push</b> with the number or the name. Make sure the action runs on the <b>Apple TV device</b>, " +
+                "not on a separate virtual button: a virtual button's push only takes numbers, so push(down) fails there.</p>",
+            warning: "Pressing a button doesn't fire a button pushed event on the Apple TV, so a Button Controller rule can't trigger itself and double press."],
         [id: "track", label: "Track current app", title: "Track the current app", group: "Using it", icon: "pi-eye",
             body: "<p>${HUBITAT_PILL}<br>Turn on <b>Track current app</b> under Quick Settings. Each Apple TV then reports which app is playing, " +
                 "so a rule can start movie night when Plex plays, or something else when Netflix or YouTube does. No extra PIN is needed.</p>" +
@@ -817,13 +839,24 @@ private List tipsTopics() {
                 "<p><b>Still not listed?</b> Type its IP address under <b>Not listed? Add by IP</b> and tap <b>Add</b>. " +
                 "The app checks it's an Apple TV, then you pair it the same way. You'll find the IP on the Apple TV under " +
                 "<b>Settings &rarr; Network</b>. A DHCP reservation on your router keeps it from changing.</p>" +
-                "<p>If your network separates devices into VLANs, Bonjour has to reach the hub's network. Most routers call this an mDNS repeater or reflector.</p>"],
+                "<p>If your network separates devices into VLANs, Bonjour has to reach the hub's network. Most routers call this an mDNS repeater or reflector.</p>" +
+                "<p><b>\"No Apple TV answered\" when adding by IP?</b> The app asks the Apple TV for its AirPlay info on <b>port 7000</b>. " +
+                "Ping uses a different path, so ping can work while this doesn't. Check these, comparing with an Apple TV that works:</p>" +
+                "<ul style='margin:0 0 12px 18px;padding:0'>" +
+                "<li>${APPLETV_PILL} <b>Settings &rarr; AirPlay and HomeKit &rarr; Allow Access</b>: <b>Everyone on the Same Network</b> (or <b>Everyone</b>), and <b>Require Password</b> off.</li>" +
+                "<li>${APPLETV_PILL} <b>AirPlay</b> is turned on, and the Apple TV is up to date (<b>Settings &rarr; System &rarr; Software Updates</b>).</li>" +
+                "<li><b>Network:</b> the hub and the Apple TV are on the same subnet, or your router allows port 7000 and the Companion port (49153) between them. Firewalls and VLAN rules often allow ping but block these.</li>" +
+                "<li><b>Quick test:</b> from a computer on the hub's network, open <b>http://&lt;Apple TV IP&gt;:7000/info</b> in a browser. A working Apple TV downloads a small file. If it times out, something is blocking it.</li>" +
+                "<li>Still stuck: unplug the Apple TV for 30 seconds, then try again.</li></ul>"],
         [id: "pairing", label: "Pairing problems", title: "Pairing problems", group: "Troubleshooting", icon: "pi-exclamation-triangle",
             body: "<p><b>No PIN on screen:</b> wake the Apple TV first, then tap Pair again. Also check its AirPlay access setting " +
                 "(<b>Allow Access</b>) lets devices on your network connect.</p>" +
                 "<p><b>Wrong PIN:</b> tap <b>Try Again</b>. The TV shows a new PIN each time.</p>" +
                 "<p><b>\"Back off, try later\":</b> too many attempts in a row. Wait a minute, then try again.</p>" +
-                "<p><b>No reply from the Apple TV:</b> the PIN screen timed out. Tap <b>Try Again</b> and enter the PIN a little sooner.</p>"],
+                "<p><b>No reply from the Apple TV:</b> the PIN screen timed out. Tap <b>Try Again</b> and enter the PIN a little sooner.</p>" +
+                "<p><b>Pairs, then won't connect, or keeps asking to pair:</b> ${APPLETV_PILL} check <b>Settings &rarr; Remotes and Devices &rarr; Remote App and Devices</b>. " +
+                "Hubitat should be listed there. If it isn't, or there's an old Hubitat entry, remove it, then ${HUBITAT_PILL} tap <b>Remove</b> on the main page and pair again.</p>" +
+                "<p><b>Restrictions:</b> ${APPLETV_PILL} <b>Settings &rarr; General &rarr; Restrictions</b> can block remote pairing on some setups. Turn it off while pairing.</p>"],
         [id: "offline", label: "Offline or reconnecting", title: "Offline or reconnecting", group: "Troubleshooting", icon: "pi-wifi",
             body: "<p>Each Apple TV keeps one encrypted connection open, so commands are instant. It reconnects on its own after hub reboots, " +
                 "Apple TV reboots, network drops and IP changes, and checks the connection every 5 minutes.</p>" +
