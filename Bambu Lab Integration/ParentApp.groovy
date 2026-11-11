@@ -30,7 +30,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.2.6"
+@Field static final String APP_VERSION   = "0.2.7"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -487,6 +487,20 @@ private List tipsTopics() {
                 [title: "Refresh", detail: "Tap Refresh on the printer device for a status now."],
                 [title: "P1 and A1 series", detail: "These printers lag if asked for a full status too often, so they get one at most every 5 minutes. The checks in between listen for 5 seconds and pick up what changed, so progress and temperatures stay current, but a finished or paused print can take up to 5 minutes to show. Refresh always gets a full status. This switches on by itself from the model the printer reports."]
             ]],
+        [id: "events", label: "Events and history", title: "Events and device history", group: "How it works", icon: "pi-chart-bar",
+            body: "<p>Every change to an attribute is an event, and the hub keeps a history of them. To keep that history small, values that change " +
+                "steadily during a print are reported in steps:</p>",
+            checklist: [
+                [title: "progress", detail: "Every 2%, plus 0 and 100 exactly."],
+                [title: "timeRemaining", detail: "Every 10 minutes, then every 5 in the last hour."],
+                [title: "ETA", detail: "Set when the print starts and moved only when the estimate shifts by 10 minutes or more, or in the last 10 minutes. It's checked on every status, so it stays right."],
+                [title: "elapsedTime", detail: "Every 15 minutes."],
+                [title: "currentLayer", detail: "Every 5 layers."],
+                [title: "Temperatures", detail: "Only at temperature or off, in 5° steps (see Temperatures)."],
+                [title: "wifiSignal", detail: "Changes of 10 dBm or more, at most every 15 minutes. Turn off Report Wi-Fi signal in the printer device's Preferences to stop it."],
+                [title: "Tile", detail: "Redraws when what it shows changes. An idle heater shows off, so a cooling nozzle doesn't redraw it."]
+            ],
+            warning: "Print state, stage, door, errors, the active tray and heater status are always reported right away, so rules react immediately."],
         [id: "temps", label: "Temperatures", title: "Heater status and temperatures", group: "How it works", icon: "pi-sun",
             body: "<p>Each heater has a <b>status</b> and a <b>temperature</b>. The status is <i>Heating to 220°</i>, <i>At temp</i>, <i>Cooling</i> or <i>Off</i>. " +
                 "The temperature only updates once the heater is at temperature or off, in 5° steps, so a warm-up doesn't send a burst of events.</p>" +

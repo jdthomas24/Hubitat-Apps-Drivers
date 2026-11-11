@@ -9,6 +9,9 @@
      -Sampling: X1/H2 stream an 8.6 KB status every second while subscribed, printing or idle. The link stays up
       but the driver subscribes only for one full report per check (pushall, first report, unsubscribe): every
       30 s while printing, every 15 min idle (preferences). 3 misses reconnect. Watchdog every 5 min.
+     -Event steps (0.2.7, to keep device history small): progress 2% (0 and 100 exact), time left 10 min (5 in the
+      last hour), elapsed 15 min, layers 5, ETA only when it moves 10+ min (or in the last 10), Wi-Fi 10 dBm and at most
+      every 15 min (reportWifi pref, on by default). The tile shows "off" for an idle heater so cooling doesn't redraw it.
      -P1/A1 (0.2.3): pushall at most every 5 min (more lags them; they send changes only, not full reports).
       Checks in between listen 5 s and merge what arrives, never a miss. X1/H2 by model; unknown counts as P1/A1.
       Refresh always sends pushall.
@@ -95,6 +98,8 @@ metadata {
             defaultValue: "30"
         input name: "idleEvery", type: "enum", title: "Check while idle every", options: ["5": "5 minutes", "15": "15 minutes", "30": "30 minutes", "60": "1 hour"],
             defaultValue: "15", description: "A print that starts shows up within this time, or right away on Refresh"
+        input name: "reportWifi", type: "bool", title: "Report Wi-Fi signal", defaultValue: true,
+            description: "Changes of 10 dBm or more, at most every 15 minutes"
         input name: "helpInfo", type: "hidden", title: fmtHelpInfo()
     }
 }
@@ -103,7 +108,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.6"
+@Field static final String VERSION     = "0.2.7"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -169,6 +174,7 @@ def installed() { }
 
 // Preferences saved: new options take effect on the next check. Reconnect only if not connected.
 def updated() {
+    if (settings?.reportWifi == false && device.currentValue(WIFI) != null) device.deleteCurrentState(WIFI)
     mem().remove("opts")
     if (!state.connected) initialize()
     else render()
@@ -583,22 +589,29 @@ private void render() {
     Integer stg = toInt(r.stg_cur)
     report("stage", active ? (stg && stg != 255 && stg > 0 ? (STAGES[stg] ?: "Stage ${stg}") : (ps == "Printing" ? "Printing" : ps)) : ps)
     // The printer keeps the last job's numbers. Progress stays at 100 on Finished; Idle reads 0.
-    if (r.containsKey("mc_percent")) report("progress", ps == "Idle" ? 0 : (toInt(r.mc_percent) ?: 0), "%")
+    if (r.containsKey("mc_percent")) {
+        int pct = ps == "Idle" ? 0 : (toInt(r.mc_percent) ?: 0)
+        report("progress", pct, "%", pct in [0, 100] ? 0 : 2)
+    }
     if (r.containsKey("mc_remaining_time")) {
         int mins = active ? (toInt(r.mc_remaining_time) ?: 0) : 0
-        report(T_LEFT, mins, "min", 5)
-        String eta = "--"
+        report(T_LEFT, mins, "min", mins > 60 ? 10 : 5)
         if (active && mins > 0) {
             long fiveMin = 300000L
-            Date at = new Date((((now() + mins * 60000L) + fiveMin / 2) / fiveMin as long) * fiveMin)   // nearest 5 min, so small estimate changes don't move it
-            boolean today = at.format("yyyyMMdd", location.timeZone) == new Date(now()).format("yyyyMMdd", location.timeZone)
-            eta = at.format(today ? "h:mm a" : "EEE h:mm a", location.timeZone)
-        }
-        if (eta == "--" || (cv(T_LEFT) as Integer) == mins) report("ETA", eta)   // ETA moves with time remaining's 5 min steps
-    } else if (!active) report("ETA", "--")
+            long at = (((now() + mins * 60000L) + fiveMin / 2) / fiveMin as long) * fiveMin   // nearest 5 min
+            Long shown = mem().etaAt as Long
+            // Mostly static: move only when the estimate shifts 10+ min, or near the end.
+            if (shown == null || cv("ETA") == "--" || Math.abs(at - shown) >= 600000L || (mins <= 10 && at != shown)) {
+                Date d = new Date(at)
+                boolean today = d.format("yyyyMMdd", location.timeZone) == new Date(now()).format("yyyyMMdd", location.timeZone)
+                report("ETA", d.format(today ? "h:mm a" : "EEE h:mm a", location.timeZone))
+                mem().etaAt = at
+            }
+        } else { report("ETA", "--"); mem().remove("etaAt") }
+    } else if (!active) { report("ETA", "--"); mem().remove("etaAt") }
     Long start = toLong(r.gcode_start_time)
     Long startMs = (start && start > 0) ? start * 1000L : (state.printStartAt as Long)
-    if (active && startMs) report(T_ELAPSED, Math.max(0, ((now() - startMs) / 60000) as int), "min", 5)
+    if (active && startMs) report(T_ELAPSED, Math.max(0, ((now() - startMs) / 60000) as int), "min", 15)
     else if (ps == "Idle") report(T_ELAPSED, 0, "min")
     if (r.containsKey("layer_num")) report("currentLayer", active ? (toInt(r.layer_num) ?: 0) : 0, null, 5)
     if (r.containsKey("total_layer_num")) report("totalLayers", active ? (toInt(r.total_layer_num) ?: 0) : 0)
@@ -606,9 +619,10 @@ private void render() {
     if (gs || fn) report("currentPrint", active && fn ? fn : "Not printing")
     if (fn && ps in ["Finished", "Failed"]) report("lastPrint", fn)
     if (r.containsKey("spd_lvl")) { Integer s = toInt(r.spd_lvl); report("speed", s in 1..4 ? SPEEDS[s] : "Standard") }
-    if (r.wifi_signal) {
+    if (r.wifi_signal && settings?.reportWifi != false) {
         Integer db = toInt(r.wifi_signal.toString().replaceAll(/[^\-0-9]/, ""))
-        if (db != null) report(WIFI, db, "dBm", 5)
+        Map m = mem()
+        if (db != null && (cv(WIFI) == null || now() - ((m.wifiAt ?: 0L) as long) >= 900000L) && report(WIFI, db, "dBm", 10)) m.wifiAt = now()
     }
     temps(r)
     errors(r)
@@ -815,7 +829,7 @@ def hmsFetched(resp, Map data) {
     while (c.size() > 40) c.remove(c.keySet().iterator().next())
     if (!quiet) logE "printer error ${code}: ${hit.t} ${hit.u}"
     String e = device.currentValue("errorCodes") ?: "none"
-    errorText(e == "none" ? [] : e.split(", ").toList())
+    if (e != "none") errorText(e.split(", ").toList())   // "none" is already set by errors(); a second one raced it
 }
 
 // Table rows: [text, wiki, h2 wiki]. A wiki value is a model folder (x1, h2), "folder|-" for dashed codes,
@@ -1063,6 +1077,7 @@ private String tileHtml(int fileMax, int errMax) {
 // Heater for the tile: arrow and target while heating, else the temperature.
 private String heat(String n) {
     String st = cv("${n}Status")
+    if (st == "Off") return "off"   // a cooling idle heater doesn't redraw the tile
     def mt = (st ?: "") =~ /^Heating to (\d+)/
     if (mt.find()) return "&rarr;${mt.group(1)}&deg;"
     def v = cv("${n}Temp")

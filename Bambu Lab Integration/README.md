@@ -1,6 +1,6 @@
 # Bambu Lab Integration for Hubitat
 
-> **Status: v0.2.6 beta, tested on two H2Ds. X1, P1 and A1 should work but are untested.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
+> **Status: v0.2.7 beta, tested on two H2Ds. X1, P1 and A1 should work but are untested.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
 
 ## What you get
 
@@ -63,10 +63,13 @@ These are on each printer device's **Preferences** tab.
 |---|---|---|
 | Check while printing every | 30 seconds | How often Hubitat asks a printing printer for its status. A finished print or an error shows up within this time. |
 | Check while idle every | 15 minutes | A health check while idle. A print that starts shows up within this time, or right away if you tap Refresh. |
+| Report Wi-Fi signal | On | wifiSignal on changes of 10 dBm or more, at most every 15 minutes. Turn off to stop Wi-Fi events. |
 | At temperature, report changes of | 5° | While a heater warms up or cools down only its status changes. Once it's at temperature (or off), smaller changes are skipped. |
 | Temperature units | Celsius | Matches the printer screen, slicers and filament specs. Choose **Hub's setting** for °F. |
 
 **Why sampling:** X1 and H2 printers push an 8 KB status every second once Hubitat listens, printing or idle. The integration stays connected but only listens for one status per check, so a 30 hour print costs the hub about 3,600 messages instead of over 100,000, and an idle day about 100.
+
+**Events and device history.** To keep the hub's device history small, values that change steadily during a print are reported in steps: progress every 2% (0 and 100 exact), time remaining every 10 minutes (5 in the last hour), elapsed time every 15 minutes, the current layer every 5 layers, and the ETA only when it moves by 10 minutes or more (or in the last 10 minutes). Print state, stage, errors, door and heater status are always reported right away.
 
 **P1 and A1 printers** lag if asked for a full status too often, so the integration asks them at most every 5 minutes. Checks in between just listen for 5 seconds and pick up what changed, so progress and temperatures stay current, but a finished or paused print can take up to 5 minutes to show. **Refresh** always gets a full status. This is automatic, from the model the printer reports. X1 and H2 printers are unchanged.
 
