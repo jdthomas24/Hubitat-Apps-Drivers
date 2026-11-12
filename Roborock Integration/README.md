@@ -1,6 +1,6 @@
 # Roborock Integration for Hubitat (beta)
 
-> **Status: v0.2.5 beta.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
+> **Status: v0.2.6 beta.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
 
 ## What you get
 
@@ -63,6 +63,7 @@ A job started from the Roborock app or a schedule shows up within the docked pol
 ## Rooms and scenes
 
 - **roomsList** shows each room as `( Room name: ID )`. Use the IDs with **Vacuum Rooms**, e.g. `16, 17`.
+- **tile:** turn on **Dashboard tile** on the vacuum device, then add an **Attribute** tile on a dashboard with the attribute `tile`. It shows the vacuum's status, battery, online or offline, any error, the last or current clean, and progress while cleaning, or filter and brush life while docked. It updates at most once a minute. A 2 x 2 tile fits the card. Coming from bloodtick's driver with the xxTile card, point that dashboard tile at this vacuum's `tile` attribute.
 - **scenesList** shows your Roborock scenes. **Vacuum Scene** runs one through the Roborock cloud (the only command that does).
 - Renamed rooms or new scenes: tap **Rescan vacuums and rooms** in the app. Roborock limits how often home data can be read, so Rescan waits 5 minutes between scans. If Roborock says there were too many requests (9002), wait an hour.
 - Multi-level homes: room IDs only cover the map the vacuum has loaded. Switch maps in the Roborock app, then Rescan.

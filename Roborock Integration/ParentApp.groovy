@@ -19,7 +19,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import java.security.MessageDigest
 
-@Field static final String APP_VERSION = "0.2.5"
+@Field static final String APP_VERSION = "0.2.6"
 @Field static final String APP_NAME = "Roborock Integration"
 @Field static final String DRIVER = "Roborock Vacuum"
 @Field static final String CLOUD_DRIVER = "Roborock Cloud Helper"
@@ -524,6 +524,15 @@ private List tipsTopics() {
                 "<p><b>Multi-level homes:</b> room IDs only cover the map the vacuum has loaded. Switch maps in the Roborock app, then Rescan, to see the other floor's rooms.</p>" +
                 "<p><b>mopMode</b> and <b>mopWaterMode</b> show the vacuum's saved settings. A one-time choice in the Roborock app (like a Deep+ route for one run) isn't saved, so it won't show here. " +
                 "Vacuums with a water flow slider (like the Saros) also show the slider number in <b>mopWaterLevel</b>.</p>"],
+        [id: "tile", label: "Dashboard tile", title: "Showing a vacuum's health on a dashboard", group: "Using it", icon: "pi-desktop",
+            body: "<p>Each vacuum can build a small health card in its <b>tile</b> attribute: status and battery, online or offline, any vacuum or dock error, the current or last clean, " +
+                "and cleaning progress while it runs, or filter and brush life while docked. It's off by default.</p>",
+            checklist: [
+                [title: "1. Turn it on", detail: "Open the vacuum device, turn on <b>Dashboard tile</b> under Preferences and tap <b>Save Preferences</b>. The card appears in a few seconds."],
+                [title: "2. Add a dashboard tile", detail: "On your dashboard, add a tile, pick the vacuum, choose the <b>Attribute</b> template and the <b>tile</b> attribute."],
+                [title: "3. Size it", detail: "A 2 x 2 tile fits the card. Raise the tile's height if your vacuum's name wraps."]
+            ],
+            warning: "The card updates at most once a minute, so a change can take up to a minute to show. Turning Dashboard tile off removes the attribute."],
         [id: "execute", label: "Execute (advanced)", title: "Sending a raw command with Execute", group: "Using it", icon: "pi-code",
             body: "<p><b>Execute</b> sends a Roborock command straight to the vacuum. Type the command, and any parameters as a JSON list (leave blank if none). " +
                 "It also works from a Rule Machine custom action, for example to set fan power before a room clean.</p>",
@@ -541,7 +550,8 @@ private List tipsTopics() {
                 [title: "1. Add the vacuum here first", detail: "Both drivers can run side by side while you move rules over."],
                 [title: "2. Open the old device", detail: "Its <b>In Use By</b> list (bottom of the device page) shows every rule, dashboard and app that uses it."],
                 [title: "3. Re-point each one", detail: "Pick the new device. appClean, appDock, appPause and appRoomResume become <b>Vacuum Control</b> (Start, Dock, Pause, Resume); appRoomClean is <b>Vacuum Rooms</b>; appScene is <b>Vacuum Scene</b>."],
-                [title: "4. Remove the old device", detail: "Once its In Use By list is empty."]
+                [title: "4. Dashboard tiles", detail: "An xxTile health card on the old device is <b>tile</b> here (see Dashboard tile)."],
+                [title: "5. Remove the old device", detail: "Once its In Use By list is empty."]
             ]],
         [id: "offline", label: "Stays offline", title: "When a vacuum stays offline", group: "Troubleshooting", icon: "pi-wifi",
             body: "<p>The driver retries on its own, and if you're signed in the app checks Roborock's cloud in case the IP changed.</p>",

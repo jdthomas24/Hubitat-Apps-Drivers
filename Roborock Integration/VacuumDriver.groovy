@@ -29,6 +29,9 @@
       mopWaterLevel the number. Older models keep the fixed 200-209 codes.
      -Saving the driver code (HPM update or Repair) clears the in-memory connection. The next poll or ping,
       Done in the app, or Diagnostics reconnects instead of stopping (0.2.3).
+     -tile (0.2.6, Dashboard tile preference, off by default): HTML health card for an attribute tile (status, battery,
+      online, errors, last or current clean, progress or filter/brush life). Same card as the one added to bloodtick's
+      driver (xxTile). Rebuilt at most once a minute, only when it changes; kept under the dashboard's 1024 characters.
      -Log level comes from the app.
 */
 
@@ -38,7 +41,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "0.2.5"
+@Field static final String VERSION = "0.2.6"
 @Field static final int GRACE_SEC = 90
 @Field static final int PORT = 58867
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'
@@ -50,6 +53,7 @@ import javax.crypto.spec.SecretKeySpec
 @Field static Map diag = [:]
 @Field static Map keys = [:]        // local key per device, memory only
 @Field static Map refreshed = [:]   // manual Refresh: values changed so far
+@Field static Map tileAt = [:]      // last tile build time
 
 @Field static final Map errorCodes = [
     0: "No error", 1: "Laser sensor fault", 2: "Collision sensor fault", 3: "Wheel floating",
@@ -122,6 +126,7 @@ metadata {
         attribute "mac", "string"
         attribute "protocol", "string"
         attribute "currentRoom", "string"
+        attribute "tile", "string"
     }
 }
 
@@ -131,10 +136,16 @@ preferences {
     input(name: "areaUnit", type: "enum", title: "<b>Area unit:</b>", options: ["auto": "Hub setting (°F: ft², °C: m²)", "0": "Square feet (ft²)", "1": "Square meters (m²)"], defaultValue: "auto", required: true, width: 4,
         description: "<i>Clean area shows as cleanArea (sq ft) or cleanArea (sq m).</i>")
     input(name: "numberOfButtons", type: "number", title: "<b>Set Number of Buttons:</b>", range: "1...", defaultValue: 1, required: true, width: 4)
+    input(name: "tileEnable", type: "bool", title: "<b>Dashboard tile:</b>", defaultValue: false, width: 4,
+        description: "<i>A health card in the tile attribute, for a dashboard Attribute tile.</i>")
 }
 
 def installed() { initialize() }
-def updated() { sendEvent(name: "numberOfButtons", value: (settings.numberOfButtons ?: 1) as int); initialize() }
+def updated() {
+    sendEvent(name: "numberOfButtons", value: (settings.numberOfButtons ?: 1) as int)
+    if (settings.tileEnable) runIn(2, "updateTile") else if (device.currentValue("tile") != null) device.deleteCurrentState("tile")
+    initialize()
+}
 
 def initialize() {
     unschedule()
@@ -607,7 +618,54 @@ private boolean sendIf(String name, value, String desc = null, String unit = nul
     if (unit) e.unit = unit
     sendEvent(e)
     if (name in ["state", "switch", "healthStatus", "error", "dockError"]) logN e.descriptionText
+    if (settings.tileEnable && name != "tile" && name in TILE_INPUTS) scheduleTile()
     return true
+}
+
+// ---------- dashboard tile ----------
+
+@Field static final List TILE_INPUTS = ["state", "battery", "healthStatus", "error", "dockError", "dustCollection", "cleanTime (min)",
+    "cleanArea (sq ft)", "cleanArea (sq m)", "cleanPercent (%)", "remainingFilter (%)", "remainingMainBrush (%)", "remainingSideBrush (%)", "name"]
+
+private void scheduleTile() {
+    long wait = 60000L - (now() - ((tileAt[device.id] ?: 0L) as long))
+    runIn(wait > 0 ? Math.max(2, (int) (wait / 1000L) + 1) : 2, "updateTile")
+}
+
+def updateTile() {
+    if (!settings.tileEnable) return
+    tileAt[device.id] = now()
+    Closure a = { String n -> def v = device.currentValue(n); String s = v?.toString()?.trim(); (s && s != "null") ? s : null }
+    Closure num = { String n -> String v = a(n); v?.isNumber() ? (v as BigDecimal).toInteger() : null }
+    String nm = device.displayName, st = a("state"), err = a("error"), derr = a("dockError"), du = a("dustCollection")
+    boolean on = a("healthStatus") == "online"
+    boolean act = st in ["cleaning", "spot cleaning", "room clean", "zone clean", "go to", "mapping"]
+    boolean dok = st in ["charged", "charging", "docking", "returning dock", "emptying dust bin", "washing the mop"]
+    Integer bat = num("battery"), ct = num("cleanTime (min)"), cp = num("cleanPercent (%)")
+    Integer fp = num("remainingFilter (%)"), mp = num("remainingMainBrush (%)"), sp = num("remainingSideBrush (%)")
+    Integer caFt = num("cleanArea (sq ft)"), caM = num("cleanArea (sq m)")
+    List errs = [err, derr].findAll { it && it != "no error" }.collect { it.capitalize() }
+    String sbc = act ? "#0d3060" : dok ? "#0d2a1a" : "#162032", slc = act ? "#60a5fa" : dok ? "#4ade80" : "#94a3b8"
+    Closure pc = { int p -> p >= 50 ? "#4ade80" : p >= 25 ? "#fbbf24" : "#f87171" }
+    List pts = []
+    if (ct != null) pts << "${ct}m"
+    if (caFt != null) pts << "${caFt}sf" else if (caM != null) pts << "${caM}m²"
+    String stats = pts ? "<div style='font-size:13px;color:#64748b;margin-top:6px'>${act ? 'Now' : 'Last'}: ${pts.join(' · ')}</div>" : ""
+    String duH = du ? "<span style='font-size:11px;background:${du == 'on' ? '#1a3a6e' : '#1a2535'};color:${du == 'on' ? '#60a5fa' : '#475569'};padding:2px 7px;border-radius:6px;margin-left:4px'>D:${du}</span>" : ""
+    String erH = errs ? "<div style='background:#4a1515;color:#fca5a5;border-radius:4px;padding:3px 7px;font-size:11px;margin-bottom:4px'>&#9888; ${errs.join(' · ')}</div>" : ""
+    String bottom = ""
+    if (!errs) {
+        if (act && cp != null) {
+            int v = Math.max(0, Math.min(100, cp))
+            bottom = "<div style='margin-top:7px;font-size:11px;color:#64748b'>Progress <b style='color:#60a5fa'>${v}%</b><div style='background:#1e3a5f;border-radius:3px;height:6px;margin-top:3px'><div style='background:#3b82f6;height:6px;width:${v}%'></div></div></div>"
+        } else if (fp != null || mp != null || sp != null) {
+            bottom = "<div style='font-size:13px;margin-top:12px;display:flex;gap:14px;color:#64748b'>" +
+                [["Flt", fp], ["Main", mp], ["Side", sp]].findAll { it[1] != null }.collect { "<span>${it[0]}:<b style='color:${pc(it[1] as int)}'>${it[1]}%</b></span>" }.join("") + "</div>"
+        }
+    }
+    String html = "${erH}<div style='background:#0a1628;border-radius:10px;padding:16px'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px'><b style='color:#e2e8f0;font-size:14px'>${nm}${duH}</b><span style='font-size:11px;background:${on ? '#1a4731' : '#4a1515'};color:${on ? '#4ade80' : '#f87171'};padding:2px 9px;border-radius:8px'>${on ? 'Online' : 'Offline'}</span></div><div style='background:${sbc};border-radius:8px;padding:12px 14px;border-left:3px solid ${slc};'><b style='color:#f1f5f9;font-size:16px'>${st ? st.capitalize() : 'Unknown'}${bat != null ? " · ${bat}%" : ''}</b>${stats}</div>${bottom}</div>"
+    if (html.length() > 1024) logW "tile is ${html.length()} characters, over the dashboard's 1024"
+    if (device.currentValue("tile") != html) sendEvent(name: "tile", value: html, descriptionText: "${device.displayName} tile updated")
 }
 
 // ---------- logging (routed through the app) ----------
