@@ -1,10 +1,10 @@
 {
     "packageName": "Moonraker Klipper Printer",
-    "releaseNotes": "v1.0.49 - Dashboard tiles now display. The status and recent-files tiles were too long for Hubitat dashboards (1024 character limit), so each is now saved as a small file on the hub and shown through a short link. Just add an Attribute tile for aaStatusTile or filesListTile. Added a support link on the device page. v1.0.48 - Consecutive failure threshold before marking offline (default 3, configurable). Auto-reconnect after outage, driver self-heals without manual intervention. Status tile now correctly shows offline state with last known temps instead of stuck online badge.",
+    "releaseNotes": "v1.0.50 - Read print_stats.exception.message and expose it as a pauseReason attribute for Hubitat.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Moonraker%20Klipper%203D%20Printer",
     "communityLink": "https://community.hubitat.com/t/release-moonraker-klipper-3d-printer-driver/163584",
     "author": "jdthomas24",
-    "version": "1.0.49",
+    "version": "1.0.50",
     "minimumHEVersion": "2.3.0",
     "dateReleased": "2026-10-09",
     "category": "Utility",
