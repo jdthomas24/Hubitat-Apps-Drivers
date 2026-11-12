@@ -94,6 +94,7 @@ metadata {
         attribute "lastPrint",             "string"
         attribute "filesList (1-10)",      "string"
         attribute "filesList (11-20)",     "string"
+        attribute "pauseReason",           "string"
     }
 }
 
@@ -417,6 +418,13 @@ void statusCallback(resp, data) {
 
         Map printStats = status?.print_stats ?: [:]
         String printState = printStats?.state ?: "standby"
+        
+        String pauseReason = printState == "paused" ?
+            (printStats?.exception?.message ?: printStats?.message ?: "Unknown") :
+            "none"
+
+    	sendEventX(name: "pauseReason", value: pauseReason)
+
         String prevPrintState = device.currentValue("printState") ?: ""
         Boolean stateChanged = (prevPrintState != printState)
 
@@ -440,7 +448,9 @@ void statusCallback(resp, data) {
                 scheduleStandbyPoll()
             }
         }
-        sendEventX(name: "printState", value: printState,
+        sendEventX(name: "printState",
+                   value: printState,
+                   descriptionText: printState == "paused" ? pauseReason : "",
                    logLevel: (printState == "error" ? "warn" : null))
 
         String filename = printStats?.filename ?: ""
