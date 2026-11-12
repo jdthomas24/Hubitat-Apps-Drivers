@@ -19,7 +19,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import java.security.MessageDigest
 
-@Field static final String APP_VERSION = "0.2.8"
+@Field static final String APP_VERSION = "0.2.9"
 @Field static final String APP_NAME = "Roborock Integration"
 @Field static final String DRIVER = "Roborock Vacuum"
 @Field static final String CLOUD_DRIVER = "Roborock Cloud Helper"
@@ -530,7 +530,8 @@ private List tipsTopics() {
             checklist: [
                 [title: "1. Turn it on", detail: "Open the vacuum device, turn on <b>Dashboard tile</b> under Preferences and tap <b>Save Preferences</b>. The card appears in a few seconds."],
                 [title: "2. Add a dashboard tile", detail: "On your dashboard, add a tile, pick the vacuum, choose the <b>Attribute</b> template and the <b>tile</b> attribute."],
-                [title: "3. Size it", detail: "A 2 x 2 tile fits the card. Raise the tile's height if your vacuum's name wraps."]
+                [title: "3. Size it", detail: "A 2 x 2 tile fits the card. Raise the tile's height if your vacuum's name wraps."],
+                [title: "4. Keep the name short", detail: "Dashboards cut a tile off at 1,024 characters, and the card uses most of that. Keep the vacuum's device name to <b>40 characters or fewer</b>. A longer name can leave the card blank or broken; the logs warn when it goes over."]
             ],
             warning: "The card updates at most once a minute, so a change can take up to a minute to show. Turning Dashboard tile off removes the attribute."],
         [id: "execute", label: "Execute (advanced)", title: "Sending a raw command with Execute", group: "Using it", icon: "pi-code",

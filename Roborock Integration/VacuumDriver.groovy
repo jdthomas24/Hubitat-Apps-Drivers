@@ -33,7 +33,8 @@
       online, errors, last or current clean, progress or filter/brush life). Same card as the one added to bloodtick's
       driver (xxTile). Rebuilt at most once a minute, only when it changes; kept under the dashboard's 1024 characters.
       Built right after Save Preferences and on the first status if missing (0.2.7). Badge and life values never split
-      mid-word in the narrow device page column; whole items wrap instead (0.2.8).
+      mid-word in the narrow device page column; whole items wrap instead (0.2.8). Life values spread edge to edge
+      with a small gap so all three fit on a dashboard tile (0.2.9).
      -Log level comes from the app.
 */
 
@@ -43,7 +44,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "0.2.8"
+@Field static final String VERSION = "0.2.9"
 @Field static final int GRACE_SEC = 90
 @Field static final int PORT = 58867
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'
@@ -649,25 +650,25 @@ def updateTile() {
     Integer fp = num("remainingFilter (%)"), mp = num("remainingMainBrush (%)"), sp = num("remainingSideBrush (%)")
     Integer caFt = num("cleanArea (sq ft)"), caM = num("cleanArea (sq m)")
     List errs = [err, derr].findAll { it && it != "no error" }.collect { it.capitalize() }
-    String sbc = act ? "#0d3060" : dok ? "#0d2a1a" : "#162032", slc = act ? "#60a5fa" : dok ? "#4ade80" : "#94a3b8"
-    Closure pc = { int p -> p >= 50 ? "#4ade80" : p >= 25 ? "#fbbf24" : "#f87171" }
+    String sbc = act ? "#0d3060" : dok ? "#0d2a1a" : "#162032", slc = act ? "#6af" : dok ? "#4d8" : "#94a3b8"
+    Closure pc = { int p -> p >= 50 ? "#4d8" : p >= 25 ? "#fbbf24" : "#f77" }
     List pts = []
     if (ct != null) pts << "${ct}m"
     if (caFt != null) pts << "${caFt}sf" else if (caM != null) pts << "${caM}m²"
-    String stats = pts ? "<div style='font-size:13px;color:#64748b;margin-top:6px'>${act ? 'Now' : 'Last'}: ${pts.join(' · ')}</div>" : ""
-    String duH = du ? "<span style='font-size:11px;background:${du == 'on' ? '#1a3a6e' : '#1a2535'};color:${du == 'on' ? '#60a5fa' : '#475569'};padding:2px 7px;border-radius:6px;margin-left:4px'>D:${du}</span>" : ""
+    String stats = pts ? "<div style='font-size:13px;color:#678;margin-top:6px'>${act ? 'Now' : 'Last'}: ${pts.join(' · ')}</div>" : ""
+    String duH = du ? "<span style='font-size:11px;background:${du == 'on' ? '#1a3a6e' : '#1a2535'};color:${du == 'on' ? '#6af' : '#475569'};padding:2px 7px;border-radius:6px;margin-left:4px'>D:${du}</span>" : ""
     String erH = errs ? "<div style='background:#4a1515;color:#fca5a5;border-radius:4px;padding:3px 7px;font-size:11px;margin-bottom:4px'>&#9888; ${errs.join(' · ')}</div>" : ""
     String bottom = ""
     if (!errs) {
         if (act && cp != null) {
             int v = Math.max(0, Math.min(100, cp))
-            bottom = "<div style='margin-top:7px;font-size:11px;color:#64748b'>Progress <b style='color:#60a5fa'>${v}%</b><div style='background:#1e3a5f;border-radius:3px;height:6px;margin-top:3px'><div style='background:#3b82f6;height:6px;width:${v}%'></div></div></div>"
+            bottom = "<div style='margin-top:7px;font-size:11px;color:#678'>Progress <b style='color:#6af'>${v}%</b><div style='background:#1e3a5f;border-radius:3px;height:6px;margin-top:3px'><div style='background:#3b82f6;height:6px;width:${v}%'></div></div></div>"
         } else if (fp != null || mp != null || sp != null) {
-            bottom = "<div style='font-size:13px;margin-top:12px;display:flex;flex-wrap:wrap;gap:4px 14px;white-space:nowrap;color:#64748b'>" +
+            bottom = "<div style='font-size:13px;margin-top:12px;display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px;white-space:nowrap;color:#678'>" +
                 [["Flt", fp], ["Main", mp], ["Side", sp]].findAll { it[1] != null }.collect { "<span>${it[0]}:<b style='color:${pc(it[1] as int)}'>${it[1]}%</b></span>" }.join("") + "</div>"
         }
     }
-    String html = "${erH}<div style='background:#0a1628;border-radius:10px;padding:16px'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px'><b style='color:#e2e8f0;font-size:14px'>${nm}${duH}</b><span style='font-size:11px;background:${on ? '#1a4731' : '#4a1515'};color:${on ? '#4ade80' : '#f87171'};padding:2px 9px;border-radius:8px;white-space:nowrap'>${on ? 'Online' : 'Offline'}</span></div><div style='background:${sbc};border-radius:8px;padding:12px 14px;border-left:3px solid ${slc};'><b style='color:#f1f5f9;font-size:16px'>${st ? st.capitalize() : 'Unknown'}${bat != null ? " · ${bat}%" : ''}</b>${stats}</div>${bottom}</div>"
+    String html = "${erH}<div style='background:#012;border-radius:10px;padding:16px'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px'><b style='color:#eef;font-size:14px'>${nm}${duH}</b><span style='font-size:11px;background:${on ? '#1a4731' : '#4a1515'};color:${on ? '#4d8' : '#f77'};padding:2px 9px;border-radius:8px;white-space:nowrap'>${on ? 'Online' : 'Offline'}</span></div><div style='background:${sbc};border-radius:8px;padding:12px 14px;border-left:3px solid ${slc};'><b style='color:#fff;font-size:16px'>${st ? st.capitalize() : 'Unknown'}${bat != null ? " · ${bat}%" : ''}</b>${stats}</div>${bottom}</div>"
     if (html.length() > 1024) logW "tile is ${html.length()} characters, over the dashboard's 1024"
     if (device.currentValue("tile") != html) sendEvent(name: "tile", value: html, descriptionText: "${device.displayName} tile updated")
 }
