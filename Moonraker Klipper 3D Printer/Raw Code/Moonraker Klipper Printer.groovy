@@ -2,7 +2,7 @@
  *  Moonraker / Klipper 3D Printer Driver for Hubitat
  *
  *  Author:  jdthomas24
- *  Version: 1.0.49
+ *  Version: 1.0.50
  *  Date:    2026-10-09
  *
  *  Copyright 2026
@@ -59,7 +59,7 @@
  *    - aaStatusTile fingerprint suppression (Option D)
  *    - filesListTile suppressed when content unchanged
  */
-public static String version() { return "1.0.49" }
+public static String version() { return "1.0.50" }
 
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
