@@ -32,6 +32,7 @@
      -tile (0.2.6, Dashboard tile preference, off by default): HTML health card for an attribute tile (status, battery,
       online, errors, last or current clean, progress or filter/brush life). Same card as the one added to bloodtick's
       driver (xxTile). Rebuilt at most once a minute, only when it changes; kept under the dashboard's 1024 characters.
+      Built right after Save Preferences and on the first status if missing (0.2.7).
      -Log level comes from the app.
 */
 
@@ -41,7 +42,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "0.2.6"
+@Field static final String VERSION = "0.2.7"
 @Field static final int GRACE_SEC = 90
 @Field static final int PORT = 58867
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'
@@ -143,8 +144,9 @@ preferences {
 def installed() { initialize() }
 def updated() {
     sendEvent(name: "numberOfButtons", value: (settings.numberOfButtons ?: 1) as int)
-    if (settings.tileEnable) runIn(2, "updateTile") else if (device.currentValue("tile") != null) device.deleteCurrentState("tile")
+    if (!settings.tileEnable && device.currentValue("tile") != null) device.deleteCurrentState("tile")
     initialize()
+    if (settings.tileEnable) runIn(2, "updateTile")   // after initialize(), which unschedules everything
 }
 
 def initialize() {
@@ -531,6 +533,7 @@ private void processStatus(Map r) {
     }
     def seg = r.cleaning_info?.segment_id
     if (seg != null) sendIf("currentRoom", (seg as int) < 0 ? "none" : (roomName(seg as int) ?: seg.toString()))
+    if (settings.tileEnable && device.currentValue("tile") == null) scheduleTile()   // first build, or after it was cleared
     boolean active = working || ((r.in_returning ?: 0) as int) != 0
     runIn(active ? 20 : ((settings.dockedPoll ?: "120") as int), "poll")
     Integer n = refreshed.remove(device.id) as Integer
