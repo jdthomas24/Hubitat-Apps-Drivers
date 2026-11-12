@@ -32,7 +32,8 @@
      -tile (0.2.6, Dashboard tile preference, off by default): HTML health card for an attribute tile (status, battery,
       online, errors, last or current clean, progress or filter/brush life). Same card as the one added to bloodtick's
       driver (xxTile). Rebuilt at most once a minute, only when it changes; kept under the dashboard's 1024 characters.
-      Built right after Save Preferences and on the first status if missing (0.2.7).
+      Built right after Save Preferences and on the first status if missing (0.2.7). Badge and life values never split
+      mid-word in the narrow device page column; whole items wrap instead (0.2.8).
      -Log level comes from the app.
 */
 
@@ -42,7 +43,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "0.2.7"
+@Field static final String VERSION = "0.2.8"
 @Field static final int GRACE_SEC = 90
 @Field static final int PORT = 58867
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'
@@ -662,11 +663,11 @@ def updateTile() {
             int v = Math.max(0, Math.min(100, cp))
             bottom = "<div style='margin-top:7px;font-size:11px;color:#64748b'>Progress <b style='color:#60a5fa'>${v}%</b><div style='background:#1e3a5f;border-radius:3px;height:6px;margin-top:3px'><div style='background:#3b82f6;height:6px;width:${v}%'></div></div></div>"
         } else if (fp != null || mp != null || sp != null) {
-            bottom = "<div style='font-size:13px;margin-top:12px;display:flex;gap:14px;color:#64748b'>" +
+            bottom = "<div style='font-size:13px;margin-top:12px;display:flex;flex-wrap:wrap;gap:4px 14px;white-space:nowrap;color:#64748b'>" +
                 [["Flt", fp], ["Main", mp], ["Side", sp]].findAll { it[1] != null }.collect { "<span>${it[0]}:<b style='color:${pc(it[1] as int)}'>${it[1]}%</b></span>" }.join("") + "</div>"
         }
     }
-    String html = "${erH}<div style='background:#0a1628;border-radius:10px;padding:16px'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px'><b style='color:#e2e8f0;font-size:14px'>${nm}${duH}</b><span style='font-size:11px;background:${on ? '#1a4731' : '#4a1515'};color:${on ? '#4ade80' : '#f87171'};padding:2px 9px;border-radius:8px'>${on ? 'Online' : 'Offline'}</span></div><div style='background:${sbc};border-radius:8px;padding:12px 14px;border-left:3px solid ${slc};'><b style='color:#f1f5f9;font-size:16px'>${st ? st.capitalize() : 'Unknown'}${bat != null ? " · ${bat}%" : ''}</b>${stats}</div>${bottom}</div>"
+    String html = "${erH}<div style='background:#0a1628;border-radius:10px;padding:16px'><div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px'><b style='color:#e2e8f0;font-size:14px'>${nm}${duH}</b><span style='font-size:11px;background:${on ? '#1a4731' : '#4a1515'};color:${on ? '#4ade80' : '#f87171'};padding:2px 9px;border-radius:8px;white-space:nowrap'>${on ? 'Online' : 'Offline'}</span></div><div style='background:${sbc};border-radius:8px;padding:12px 14px;border-left:3px solid ${slc};'><b style='color:#f1f5f9;font-size:16px'>${st ? st.capitalize() : 'Unknown'}${bat != null ? " · ${bat}%" : ''}</b>${stats}</div>${bottom}</div>"
     if (html.length() > 1024) logW "tile is ${html.length()} characters, over the dashboard's 1024"
     if (device.currentValue("tile") != html) sendEvent(name: "tile", value: html, descriptionText: "${device.displayName} tile updated")
 }
