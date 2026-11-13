@@ -1,6 +1,6 @@
 # Roborock Integration for Hubitat (beta)
 
-> **Status: v0.2.9 beta.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
+> **Status: v0.2.10 beta.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
 
 ## What you get
 
@@ -65,7 +65,8 @@ A job started from the Roborock app or a schedule shows up within the docked pol
 - **roomsList** shows each room as `( Room name: ID )`. Use the IDs with **Vacuum Rooms**, e.g. `16, 17`.
 - **tile:** turn on **Dashboard tile** on the vacuum device, then add an **Attribute** tile on a dashboard with the attribute `tile`. It shows the vacuum's status, battery, online or offline, any error, the last or current clean, and progress while cleaning, or filter and brush life while docked. It updates at most once a minute. A 2 x 2 tile fits the card. Dashboards cut a tile off at 1,024 characters, so keep the vacuum's device name to 40 characters or fewer (the logs warn if the card goes over). Coming from bloodtick's driver with the xxTile card, point that dashboard tile at this vacuum's `tile` attribute.
 - **scenesList** shows your Roborock scenes. **Vacuum Scene** runs one through the Roborock cloud (the only command that does).
-- Renamed rooms or new scenes: tap **Rescan vacuums and rooms** in the app. Roborock limits how often home data can be read, so Rescan waits 5 minutes between scans. If Roborock says there were too many requests (9002), wait an hour.
+- **Scenes list stays current by itself:** it's re-read from Roborock once a day (early morning), when you tap **Initialize** on the vacuum (at most once every 5 minutes), and after a scene fails to run (usually a deleted one). Only the scene list is read. Needs you to be signed in.
+- Renamed rooms: tap **Rescan vacuums and rooms** in the app (it refreshes scenes too). Roborock limits how often home data can be read, so Rescan waits 5 minutes between scans. If Roborock says there were too many requests (9002), wait an hour.
 - Multi-level homes: room IDs only cover the map the vacuum has loaded. Switch maps in the Roborock app, then Rescan.
 - Rescan flags a vacuum that's no longer in your Roborock account (Not in your Roborock account on its card). Its device is kept until you turn off Include on its card and tap Done.
 - **mopMode** and **mopWaterMode** show the vacuum's saved settings, not a one-time choice made in the Roborock app for a single run.

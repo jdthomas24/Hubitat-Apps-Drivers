@@ -11,6 +11,8 @@
       asks Roborock's cloud for its current IP (get_network_info). A matching MAC updates the IP setting and the
       driver reconnects locally. The MAC is learned locally on every connect. Needs a sign-in; signed out = no lookups.
      -Log level is the only logging control; children log through childLog(). Full turns off after 3 hours (beta).
+     -0.2.10: scenes list refreshes itself: daily (random 3-5 am per install), on a vacuum's Initialize (5-min cooldown),
+      after a failed scene, and with Rescan. Scene list request only, one vacuum at a time.
 */
 
 import groovy.transform.Field
@@ -18,8 +20,11 @@ import groovy.json.JsonSlurper
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String APP_VERSION = "0.2.9"
+@Field static final String APP_VERSION = "0.2.10"
+@Field static final long SCENES_COOLDOWN_MS = 300000L
+@Field static final Map scenesPending = new ConcurrentHashMap()
 @Field static final String APP_NAME = "Roborock Integration"
 @Field static final String DRIVER = "Roborock Vacuum"
 @Field static final String CLOUD_DRIVER = "Roborock Cloud Helper"
@@ -134,6 +139,7 @@ def uninstalled() { getChildDevices().each { deleteChildDevice(it.deviceNetworkI
 def initialize() {
     unschedule("fullLogsOff")
     if (settings.logLevel == "Full") runIn(FULL_LOG_SEC, "fullLogsOff")
+    scheduleDailyScenes()
     syncChildren()
 }
 
@@ -297,6 +303,7 @@ private void scan() {
         scenes[d.duid] = (res ?: []).collectEntries { [(it.id.toString()): it.name] }
     }
     state.scenes = scenes
+    state.scenesLast = devs.collectEntries { [(it.duid): now()] }
     state.msg = "Found ${devs.size()} vacuum${devs.size() == 1 ? '' : 's'}. Enter the IP addresses below, then tap <b>Done</b>." +
         (gone ? " ${gone.collect { esc(vacName(it)) }.join(', ')} ${gone.size() == 1 ? 'is' : 'are'} no longer in your Roborock account." : "")
     logN "Scan found ${devs.collect { it.name }.join(', ') ?: 'no vacuums'}"
@@ -374,6 +381,7 @@ private void syncChildren() {
 }
 
 Map componentConfig(String dni) {
+    if (!state.scenesAt) scheduleDailyScenes()   // installs updated through HPM without a Done
     Map v = ((state.vacuums ?: []) as List).find { dniFor(it.duid) == dni } as Map
     if (!v) return [:]
     return [duid: v.duid, ip: settings["ip_${v.duid}"]?.toString()?.trim(), localKey: state.keys?.get(v.duid), model: v.model,
@@ -386,13 +394,93 @@ void componentScene(String dni, String sceneId) {
     String path = "/user/scene/${sceneId}/execute"
     Map rriot = state.auth.rriot as Map
     asynchttpPost("sceneDone", [uri: rriot.r.a, path: path, contentType: "application/json", body: [sceneId: sceneId],
-        headers: ["Authorization": hawk(path)]], [sceneId: sceneId])
+        headers: ["Authorization": hawk(path)]], [sceneId: sceneId, dni: dni])
 }
 
 def sceneDone(resp, data) {
-    if (resp.status == 200) logN "Scene ${data.sceneId} started"
-    else if (resp.status in [401, 403]) markAuthBad("scene ${data.sceneId}")
-    else logE "Scene ${data.sceneId} failed (HTTP ${resp.status})"
+    def body = null
+    try { body = resp.status == 200 ? resp.json : null } catch (ignored) { }
+    if (resp.status == 200 && !(body instanceof Map && body.success == false)) { logN "Scene ${data.sceneId} started"; return }
+    if (resp.status in [401, 403]) { markAuthBad("scene ${data.sceneId}"); return }
+    logE "Scene ${data.sceneId} failed (${resp.status == 200 ? (body?.msg ?: 'not accepted') : 'HTTP ' + resp.status}). It may have been deleted in the Roborock app; refreshing the scenes list."
+    if (data.dni) scenesRefresh([duidFor(data.dni as String)].findAll(), "scene failed", true)
+}
+
+// ---------- scenes refresh (cloud, scene list only) ----------
+// Daily at a fixed random time per install (3:00-4:59 am), on a vacuum's Initialize (5-minute cooldown per vacuum),
+// after a scene fails, and with Rescan. One request per vacuum, run one after another.
+
+private void scheduleDailyScenes() {
+    if (!state.scenesAt) state.scenesAt = [new Random().nextInt(2) + 3, new Random().nextInt(60)]
+    unschedule("dailyScenes")
+    schedule("0 ${state.scenesAt[1]} ${state.scenesAt[0]} * * ?", "dailyScenes")
+}
+
+def dailyScenes() { scenesRefresh(((state.vacuums ?: []) as List).findAll { !it.gone }.collect { it.duid as String }, "daily", true) }
+
+// Vacuums that Initialize together (hub start) are batched into one queued run.
+void componentScenesRefresh(String dni) {
+    if (!state.scenesAt) scheduleDailyScenes()   // installs updated through HPM without a Done
+    String duid = duidFor(dni)
+    if (!duid) return
+    String k = app.id.toString()
+    scenesPending.putIfAbsent(k, new ConcurrentHashMap())
+    scenesPending[k][duid] = true
+    runIn(3, "scenesQueued")
+}
+
+def scenesQueued() {
+    Map q = scenesPending[app.id.toString()] as Map
+    List duids = q ? q.keySet().collect { it } : []
+    duids.each { q.remove(it) }
+    scenesRefresh(duids, "Initialize", false)
+}
+
+private String duidFor(String dni) { ((state.vacuums ?: []) as List).find { dniFor(it.duid) == dni }?.duid as String }
+
+private void scenesRefresh(List duids, String why, boolean force) {
+    if (!state.auth || !duids) return
+    Map last = (state.scenesLast ?: [:]) as Map
+    List due = force ? duids : duids.findAll { now() - ((last[it] ?: 0L) as long) >= SCENES_COOLDOWN_MS }
+    if (!due) { logN "Scenes for ${duids.collect { vacNameFor(it) }.join(', ')} were refreshed less than 5 minutes ago, skipped"; return }
+    due.each { last[it] = now() }
+    state.scenesLast = last
+    scenesNext(due, why)
+}
+
+private void scenesNext(List queue, String why) {
+    if (!queue) return
+    String duid = queue[0]
+    String path = "/user/scene/device/${duid}"
+    try {
+        asynchttpGet("scenesFetched", [uri: state.auth.rriot.r.a, path: path, contentType: "application/json", headers: ["Authorization": hawk(path)]],
+            [duid: duid, rest: queue.drop(1), why: why])
+    } catch (e) { logN "Scenes refresh for ${vacNameFor(duid)} failed: ${e.message}"; scenesNext(queue.drop(1), why) }
+}
+
+def scenesFetched(resp, data) {
+    String duid = data.duid
+    if (resp.status in [401, 403]) { markAuthBad("scenes refresh"); return }
+    def body = null
+    try { body = resp.status == 200 ? resp.json : null } catch (ignored) { }
+    List res = body instanceof Map ? body.result as List : null
+    if (res == null) logN "Scenes refresh (${data.why}) for ${vacNameFor(duid)} failed (${resp.status == 200 ? 'no list returned' : 'HTTP ' + resp.status}). The list stays as it was."
+    else {
+        Map fresh = res.collectEntries { [(it.id.toString()): it.name] }
+        Map all = ((state.scenes ?: [:]) as Map) + [:]
+        if (fresh != (all[duid] ?: [:])) {
+            all[duid] = fresh
+            state.scenes = all
+            logN "Scenes for ${vacNameFor(duid)} updated (${data.why}): ${fresh.values().join(', ') ?: 'none'}"
+            getChildDevice(dniFor(duid))?.configChanged()
+        } else if (settings.logLevel == "Full") log.debug "Scenes for ${vacNameFor(duid)} unchanged (${data.why})"
+    }
+    scenesNext((data.rest ?: []) as List, data.why as String)
+}
+
+private String vacNameFor(String duid) {
+    Map v = ((state.vacuums ?: []) as List).find { it.duid == duid } as Map
+    return v ? vacName(v) : duid
 }
 
 void childLog(String level, String source, String msg) {
@@ -501,7 +589,8 @@ private List tipsTopics() {
         [id: "cloud", label: "Cloud only", title: "What still needs Roborock's cloud", group: "How it works", icon: "pi-cloud",
             body: "<p>These go through Roborock's servers and stop working if your internet or Roborock's cloud is down:</p>",
             checklist: [
-                [title: "Sign-in and Rescan", detail: "Brings in your vacuums, their local keys, room names and scenes. Only needed at setup or after you rename rooms or add scenes."],
+                [title: "Sign-in and Rescan", detail: "Brings in your vacuums, their local keys, room names and scenes. Only needed at setup or after you rename rooms."],
+                [title: "Scenes list (automatic)", detail: "Your scenes are re-read from Roborock once a day (early morning), when you tap Initialize on a vacuum, and after a scene fails to run. Only the scene list is read, nothing else."],
                 [title: "IP recovery (automatic)", detail: "If a vacuum can't be reached for 90 seconds, the app asks Roborock's cloud for its current IP, checks the MAC matches, updates the IP and reconnects locally. At most once every 10 minutes per vacuum. Needs you to be signed in."],
                 [title: "Vacuum Scene", detail: "Roborock scenes live in your Roborock account, so running one goes through the cloud. It's the only device command that does."],
                 [title: "Jobs started from the Roborock app", detail: "The app sends its commands through Roborock's cloud. Hubitat still sees the job locally once it starts."]
@@ -519,8 +608,14 @@ private List tipsTopics() {
                 "<p>The vacuum closes its connection now and then. The driver reconnects within seconds and only shows offline if it stays down for 90 seconds.</p>"],
         [id: "rooms", label: "Rooms and scenes", title: "Rooms and scenes", group: "Using it", icon: "pi-th-large",
             body: "<p><b>roomsList</b> on the device shows each room as <i>( Room name: ID )</i>. Use the IDs with <b>Vacuum Rooms</b>, for example <code>16, 17</code>.</p>" +
-                "<p><b>scenesList</b> shows your Roborock scenes for <b>Vacuum Scene</b> (cloud).</p>" +
-                "<p>Renamed a room or added a scene? Tap <b>Rescan vacuums and rooms</b> on the main page. Roborock limits how often this can run, so the button waits 5 minutes between scans.</p>" +
+                "<p><b>scenesList</b> shows your Roborock scenes (the routines you build in the Roborock app) for <b>Vacuum Scene</b> (cloud).</p>" +
+                "<p><b>Added, renamed or deleted a scene?</b> The list catches up by itself:</p>" +
+                "<ul><li><b>Once a day</b>, early in the morning.</li>" +
+                "<li><b>Right away:</b> tap <b>Initialize</b> on the vacuum device. It refreshes that vacuum's scenes, at most once every 5 minutes.</li>" +
+                "<li><b>After a scene fails</b> to run (usually a deleted one), so it drops off the list.</li>" +
+                "<li><b>Rescan</b> on the main page also refreshes scenes, along with rooms.</li></ul>" +
+                "<p>This needs you to be signed in. If you're signed out, the list stays as it was.</p>" +
+                "<p>Renamed a room? Tap <b>Rescan vacuums and rooms</b> on the main page. Roborock limits how often this can run, so the button waits 5 minutes between scans.</p>" +
                 "<p><b>Multi-level homes:</b> room IDs only cover the map the vacuum has loaded. Switch maps in the Roborock app, then Rescan, to see the other floor's rooms.</p>" +
                 "<p><b>mopMode</b> and <b>mopWaterMode</b> show the vacuum's saved settings. A one-time choice in the Roborock app (like a Deep+ route for one run) isn't saved, so it won't show here. " +
                 "Vacuums with a water flow slider (like the Saros) also show the slider number in <b>mopWaterLevel</b>.</p>"],

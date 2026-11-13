@@ -32,7 +32,9 @@
      -tile (0.2.6, Dashboard tile preference, off by default): HTML health card for an attribute tile (status, battery,
       online, errors, last or current clean, progress or filter/brush life). Same card as the one added to bloodtick's
       driver (xxTile). Rebuilt at most once a minute, only when it changes; kept under the dashboard's 1024 characters.
-      Built right after Save Preferences and on the first status if missing (0.2.7). Badge and life values never split
+      Built right after Save Preferences and on the first status if missing (0.2.7).
+     -Initialize (button or hub start) also asks the app to refresh this vacuum's scenes from the cloud (0.2.10). Internal
+      reconnects use reconnect(), so they never touch the cloud. Badge and life values never split
       mid-word in the narrow device page column; whole items wrap instead (0.2.8). Life values spread edge to edge
       with a small gap so all three fit on a dashboard tile (0.2.9).
      -Log level comes from the app.
@@ -44,7 +46,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "0.2.9"
+@Field static final String VERSION = "0.2.10"
 @Field static final int GRACE_SEC = 90
 @Field static final int PORT = 58867
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'
@@ -143,15 +145,20 @@ preferences {
         description: "<i>A health card in the tile attribute, for a dashboard Attribute tile.</i>")
 }
 
-def installed() { initialize() }
+def installed() { reconnect() }
 def updated() {
     sendEvent(name: "numberOfButtons", value: (settings.numberOfButtons ?: 1) as int)
     if (!settings.tileEnable && device.currentValue("tile") != null) device.deleteCurrentState("tile")
-    initialize()
-    if (settings.tileEnable) runIn(2, "updateTile")   // after initialize(), which unschedules everything
+    reconnect()
+    if (settings.tileEnable) runIn(2, "updateTile")   // after reconnect(), which unschedules everything
 }
 
 def initialize() {
+    parent?.componentScenesRefresh(device.deviceNetworkId)   // app applies a 5-minute cooldown
+    reconnect()
+}
+
+private void reconnect() {
     unschedule()
     state.remove("cfgKey")   // kept in State before 0.2.4
     dropArea(useFeet() ? "cleanArea (sq ft)" : "cleanArea (sq m)")
@@ -163,12 +170,12 @@ def initialize() {
 // Called by the app when sign-in data or the IP changes.
 void configChanged() {
     Map c = cfg()
-    if (c.ip != state.cfgIp || fingerprint(c.localKey as String) != state.keyFp || !sess[device.id]) initialize()
+    if (c.ip != state.cfgIp || fingerprint(c.localKey as String) != state.keyFp || !sess[device.id]) reconnect()
     else pushLists(c)
 }
 
 def refresh() {
-    if (!session()) { logN "Refresh: not connected, reconnecting"; initialize(); return }
+    if (!session()) { logN "Refresh: not connected, reconnecting"; reconnect(); return }
     refreshed[device.id] = 0
     poll()
     runIn(8, "refreshTimeout")
@@ -219,7 +226,7 @@ private void vacCommand(String method, params = []) {
     if (!session()) {
         state.pendingCmd = [m: method, p: params, at: now()]
         logN "Reconnecting, '${method}' will be sent once connected"
-        if (!graceActive()) { initialize(); startGrace() }
+        if (!graceActive()) { reconnect(); startGrace() }
         return
     }
     rpc(method, params)
