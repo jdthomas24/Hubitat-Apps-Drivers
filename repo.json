@@ -106,6 +106,17 @@
                 "Energy Monitoring",
                 "Monitoring"
             ]
+        },
+        {
+            "name": "Roborock Integration",
+            "category": "Integrations",
+            "location": "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/refs/heads/main/Roborock%20Integration/packageManifest.json",
+            "description": "Local control of Roborock robot vacuums after a one-time sign-in: live status, start, pause, dock and room cleaning, fan and mop settings, consumables, Roborock scenes, automatic IP recovery and an optional dashboard tile.",
+            "descriptive": "",
+            "tags": [
+                "Cleaning",
+                "Appliances"
+            ]
         }
     ]
 }
