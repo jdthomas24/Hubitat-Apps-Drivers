@@ -1,6 +1,6 @@
-# Roborock Integration for Hubitat (beta)
+# Roborock Integration for Hubitat
 
-> **Status: v0.2.10 beta.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
+> **Status: v1.0.0.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
 
 ## What you get
 
@@ -11,18 +11,23 @@ One device per vacuum with:
 
 Attribute names match bloodtick's Roborock driver, so dashboards carry over. Command names are different (see **Moving from bloodtick's driver** below).
 
-## Supported vacuums
+## Confirmed models
 
-| Vacuum | Local protocol | Status |
-|---|---|---|
-| Newer models (Qrevo Curv / Curv X, Saros, S8 MaxV Ultra) | L01 | Tested on a Qrevo Curv X and Saros 10R |
-| Older models (S5 to S8, earlier Qrevo and Q Max) | 1.0 | Tested on a Qrevo MaxV and Q5 Max+ |
-| China-market units used outside China | | May refuse local status (error -10002) |
-| Dyad, Zeo, Q7 / Q10 family | A01 / B01 | Not supported |
+| Model | Local protocol |
+|---|---|
+| Qrevo Curv X | L01 |
+| Saros 10R | L01 |
+| S8 MaxV Ultra | L01 |
+| Qrevo MaxV | 1.0 |
+| Q5 Max+ | 1.0 |
+
+Other models that use L01 (newer: Qrevo, Saros, S8 MaxV) or 1.0 (older: S5 to S8, earlier Qrevo and Q Max) should work too. If yours isn't listed, post its **Diagnostics** report in the forum thread so it can be added.
+
+**Not supported:** Dyad, Zeo and the Q7 / Q10 family (A01 / B01 protocols). China-market units used outside China may refuse local status (error -10002).
 
 ## Install
 
-**HPM:** Install → From a URL:
+**HPM:** Install → Search by Keywords → **Roborock Integration**. Or Install → From a URL:
 `https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Roborock%20Integration/packageManifest.json`
 
 **By hand:** add `VacuumDriver.groovy` and `CloudHelper.groovy` in **Drivers Code** and `ParentApp.groovy` in **Apps Code**.
@@ -111,11 +116,11 @@ Both can run side by side while you move rules over. Hubitat's **Swap Device** d
 
 ## Logging
 
-One **Log level** in the app covers every vacuum. **Full** includes every request and turns itself off after 3 hours (during the beta).
+One **Log level** in the app covers every vacuum. **Full** includes every request and turns itself off after 30 minutes.
 
-## Beta testers: Diagnostics
+## Diagnostics
 
-Tap **Diagnostics** on the vacuum device. It logs one block (always shown, whatever the log level) with your model, model code, firmware, protocol and the raw status the vacuum reports. Copy everything from `DIAGNOSTICS` to `END` and send it along with any warnings or errors. It never includes your local key. If Model code or Firmware says "tap Rescan", tap **Rescan vacuums and rooms** in the app first.
+Only needed when you're asking for help, and it doesn't change anything on the vacuum. Tap **Diagnostics** on the vacuum device. It logs one block (always shown, whatever the log level) with your model, model code, firmware, protocol and the raw status the vacuum reports. Copy everything from `DIAGNOSTICS` to `END` and post it in the forum thread along with any warnings or errors. It never includes your local key. If Model code or Firmware says "tap Rescan", tap **Rescan vacuums and rooms** in the app first.
 
 ## Troubleshooting
 
@@ -125,7 +130,7 @@ Tap **Diagnostics** on the vacuum device. It logs one block (always shown, whate
 
 **The local key isn't in State Variables.** On purpose since 0.2.4: the driver keeps it in memory and only stores a short fingerprint.
 
-**Commands are rejected.** The log shows the command and the vacuum's reply. Post it in the beta thread with your model.
+**Commands are rejected.** The log shows the command and the vacuum's reply. Post it in the forum thread with your model.
 
 ## Credits
 

@@ -18,7 +18,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "0.2.10"
+@Field static final String VERSION = "1.0.0"
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'
 @Field static final int TIMEOUT_SEC = 30
 @Field static Map run = [:]   // per device: [duid, id, key, topicIn, topicOut]

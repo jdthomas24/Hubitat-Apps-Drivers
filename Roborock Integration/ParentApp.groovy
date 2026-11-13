@@ -10,9 +10,10 @@
      -IP recovery (0.2.0): when a vacuum can't be reached past its grace period, the hidden Roborock Cloud Helper
       asks Roborock's cloud for its current IP (get_network_info). A matching MAC updates the IP setting and the
       driver reconnects locally. The MAC is learned locally on every connect. Needs a sign-in; signed out = no lookups.
-     -Log level is the only logging control; children log through childLog(). Full turns off after 3 hours (beta).
+     -Log level is the only logging control; children log through childLog(). Full turns off after 30 minutes.
      -0.2.10: scenes list refreshes itself: daily (random 3-5 am per install), on a vacuum's Initialize (5-min cooldown),
       after a failed scene, and with Rescan. Scene list request only, one vacuum at a time.
+     -1.0.0: first release. Full logging back to 30 minutes, Diagnostics kept for support, Confirmed models in Tips.
 */
 
 import groovy.transform.Field
@@ -22,7 +23,7 @@ import javax.crypto.spec.SecretKeySpec
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String APP_VERSION = "0.2.10"
+@Field static final String APP_VERSION = "1.0.0"
 @Field static final long SCENES_COOLDOWN_MS = 300000L
 @Field static final Map scenesPending = new ConcurrentHashMap()
 @Field static final String APP_NAME = "Roborock Integration"
@@ -36,7 +37,7 @@ import java.util.concurrent.ConcurrentHashMap
 @Field static final Map REGIONS = ["https://usiot.roborock.com": "US", "https://euiot.roborock.com": "EU",
                                    "https://cniot.roborock.com": "CN", "https://ruiot.roborock.com": "RU"]
 @Field static final List LOG_LEVELS = ["Errors Only", "Normal", "Full"]
-@Field static final int FULL_LOG_SEC = 10800   // 3 hours while in beta
+@Field static final int FULL_LOG_SEC = 1800   // 30 minutes
 
 definition(
     name: "Roborock Integration",
@@ -143,7 +144,7 @@ def initialize() {
     syncChildren()
 }
 
-def fullLogsOff() { app.updateSetting("logLevel", [type: "enum", value: "Normal"]); logN "Full logging turned off after 3 hours" }
+def fullLogsOff() { app.updateSetting("logLevel", [type: "enum", value: "Normal"]); logN "Full logging turned off after 30 minutes" }
 
 // ---------- buttons ----------
 
@@ -596,6 +597,13 @@ private List tipsTopics() {
                 [title: "Jobs started from the Roborock app", detail: "The app sends its commands through Roborock's cloud. Hubitat still sees the job locally once it starts."]
             ],
             warning: "<b>Signing out doesn't stop local control.</b><br>Vacuums keep running locally. You only need to sign in again to Rescan or run scenes. If the banner says <b>Sign in again</b>, Roborock stopped accepting the saved sign-in: sign out and back in."],
+        [id: "models", label: "Confirmed models", title: "Confirmed models", group: "Getting started", icon: "pi-check-circle",
+            body: "<p>Confirmed working locally:</p>" +
+                "<table style='border-collapse:collapse;margin:6px 0 10px'><tr><th style='text-align:left;padding:3px 14px 3px 0'>Model</th><th style='text-align:left;padding:3px 0'>Local protocol</th></tr>" +
+                [["Qrevo Curv X", "L01"], ["Saros 10R", "L01"], ["S8 MaxV Ultra", "L01"], ["Qrevo MaxV", "1.0"], ["Q5 Max+", "1.0"]]
+                    .collect { "<tr><td style='padding:3px 14px 3px 0'>${it[0]}</td><td style='padding:3px 0'>${it[1]}</td></tr>" }.join("") + "</table>" +
+                "<p>Other models that use L01 or 1.0 should work too. Your vacuum's card in the app shows which one it uses. If yours isn't listed, tap <b>Diagnostics</b> on its device and post the report in the forum thread so it can be added.</p>" +
+                "<p><b>Not supported:</b> Dyad, Zeo and the Q7 / Q10 family (they use other protocols). Units made for the China market may refuse local status outside China.</p>"],
         [id: "setup", label: "Setup", title: "Setting up a vacuum", group: "Getting started", icon: "pi-cog",
             body: "<p>Sign in with your Roborock email and the code they send you. Your vacuums appear on the main page.</p>" +
                 "<p>Enter each vacuum's <b>IP address</b>. Roborock doesn't share it, so find it in your router or the Roborock app (Device info). Once connected, the vacuum's card shows its <b>MAC</b> address for a DHCP reservation in your router. If the IP changes anyway, the app finds the new one through Roborock's cloud while you're signed in.</p>" +
@@ -657,9 +665,10 @@ private List tipsTopics() {
                 [title: "Bought for the China market?", detail: "Units made for China and used elsewhere may refuse local status (error -10002 in the logs)."],
                 [title: "Too many requests", detail: "If Rescan or sign-in says Roborock had too many requests (9002), wait an hour. Local control keeps working."]
             ]],
-        [id: "diag", label: "Diagnostics (beta)", title: "Sending a diagnostics report", group: "Troubleshooting", icon: "pi-file",
-            body: "<p>Tap <b>Diagnostics</b> on the vacuum device. One block appears in the logs from <b>DIAGNOSTICS</b> to <b>END</b> with your model, firmware, protocol and the raw status from the vacuum. Copy all of it. It never includes your vacuum's local key.</p>" +
-                "<p>For a problem, set Log level to <b>Full</b> (stays on for 3 hours during the beta), repeat it, and send those lines too.</p>"]
+        [id: "diag", label: "Diagnostics", title: "Sending a diagnostics report", group: "Troubleshooting", icon: "pi-file",
+            body: "<p>Only needed when you're asking for help. It doesn't change anything on the vacuum.</p>" +
+                "<p>Tap <b>Diagnostics</b> on the vacuum device. One block appears in the logs from <b>DIAGNOSTICS</b> to <b>END</b> with your model, firmware, protocol and the raw status from the vacuum. Copy all of it into your forum post. It never includes your vacuum's local key.</p>" +
+                "<p>For a problem, set Log level to <b>Full</b> (stays on for 30 minutes), repeat it, and send those lines too.</p>"]
     ]
 }
 
@@ -855,7 +864,7 @@ private String loggingDetailsPopupHtml() {
   <div class='text-color-secondary text-base mb-3'>One setting for the app and every vacuum.</div>
   ${logLevelDetailHtml("Errors Only", "Warnings and errors only, such as a vacuum going offline or a command being rejected.", current)}
   ${logLevelDetailHtml("Normal", "Errors, plus connections, commands, state changes (cleaning, returning, charged) and vacuums added or removed.", current)}
-  ${logLevelDetailHtml("Full", "Everything, including every request to the vacuum. Use while troubleshooting. Turns off after 3 hours.", current)}
+  ${logLevelDetailHtml("Full", "Everything, including every request to the vacuum. Use while troubleshooting. Turns off after 30 minutes.", current)}
 </div>
 """
     String js = groovy.json.JsonOutput.toJson(details)

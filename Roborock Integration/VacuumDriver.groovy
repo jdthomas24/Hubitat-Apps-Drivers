@@ -21,8 +21,9 @@
      -The vacuum closes the local connection now and then (reset by peer). A drop reconnects within a few seconds
       and healthStatus only goes offline if it isn't back within 90 s. A command sent while reconnecting is held and
       sent once connected (if within 60 s).
-     -Diagnostics (beta only): logs one block with model code, firmware, protocol and the raw get_status /
-      get_consumable replies, so testers can send everything in one paste. Never includes the local key.
+     -Diagnostics: logs one block with model code, firmware, protocol and the raw get_status /
+      get_consumable replies, for support in one paste. Never includes the local key. Commands sort alphabetically,
+      so a note in Preferences says what it's for.
      -IP changes (0.2.0): get_network_info on each connect records the MAC (mac attribute). If the vacuum stays
       unreachable past the grace period, the app asks Roborock's cloud for its current IP (see Cloud Helper).
      -Saros-style vacuums report water flow as 220 + slider level (1-30); mopWaterMode shows the app's name for it,
@@ -46,7 +47,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "0.2.10"
+@Field static final String VERSION = "1.0.0"
 @Field static final int GRACE_SEC = 90
 @Field static final int PORT = 58867
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'
@@ -141,6 +142,8 @@ preferences {
     input(name: "areaUnit", type: "enum", title: "<b>Area unit:</b>", options: ["auto": "Hub setting (°F: ft², °C: m²)", "0": "Square feet (ft²)", "1": "Square meters (m²)"], defaultValue: "auto", required: true, width: 4,
         description: "<i>Clean area shows as cleanArea (sq ft) or cleanArea (sq m).</i>")
     input(name: "numberOfButtons", type: "number", title: "<b>Set Number of Buttons:</b>", range: "1...", defaultValue: 1, required: true, width: 4)
+    input(name: "diagNote", type: "paragraph", title: "<b>Diagnostics button</b>",
+        description: "<i>Only needed when asking for help. It writes one support report to Logs (DIAGNOSTICS to END) to copy into a forum post. It doesn't change anything on the vacuum.</i>")
     input(name: "tileEnable", type: "bool", title: "<b>Dashboard tile:</b>", defaultValue: false, width: 4,
         description: "<i>A health card in the tile attribute, for a dashboard Attribute tile.</i>")
 }
