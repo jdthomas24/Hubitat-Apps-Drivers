@@ -1,3 +1,18 @@
+**Release: Roborock Integration v1.0.1**
+Rescan no longer throws an error, and your vacuums pick up new rooms and scenes right away.
+
+**Problem:**
+- After a Rescan, the logs showed `No signature of method: ...Roborock_Cloud_Helper...configChanged()`.
+- Rescan was telling every device under the app to reload, including the hidden Roborock Cloud Helper, which has nothing to reload. The error stopped that step partway, so a vacuum could keep its old rooms and scenes lists until its daily refresh.
+
+**The Fix:**
+- Rescan now only reloads the vacuums and skips the Cloud Helper. No more error, and every vacuum gets the new lists as soon as the scan finishes.
+
+**Action needed:**
+Update through HPM. If you added or renamed rooms or scenes recently, tap **Rescan** once afterward.
+
+---
+
 **Release: Roborock Integration v1.0.0**
 Roborock Integration is out of beta.
 

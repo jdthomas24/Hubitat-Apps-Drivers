@@ -13,6 +13,7 @@
      -Log level is the only logging control; children log through childLog(). Full turns off after 30 minutes.
      -0.2.10: scenes list refreshes itself: daily (random 3-5 am per install), on a vacuum's Initialize (5-min cooldown),
       after a failed scene, and with Rescan. Scene list request only, one vacuum at a time.
+     -1.0.1: Rescan no longer errors on the Cloud Helper; vacuums get the new rooms/scenes right away.
      -1.0.0: first release. Full logging back to 30 minutes, Diagnostics kept for support, Confirmed models in Tips.
 */
 
@@ -23,7 +24,7 @@ import javax.crypto.spec.SecretKeySpec
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String APP_VERSION = "1.0.0"
+@Field static final String APP_VERSION = "1.0.1"
 @Field static final long SCENES_COOLDOWN_MS = 300000L
 @Field static final Map scenesPending = new ConcurrentHashMap()
 @Field static final String APP_NAME = "Roborock Integration"
@@ -308,7 +309,7 @@ private void scan() {
     state.msg = "Found ${devs.size()} vacuum${devs.size() == 1 ? '' : 's'}. Enter the IP addresses below, then tap <b>Done</b>." +
         (gone ? " ${gone.collect { esc(vacName(it)) }.join(', ')} ${gone.size() == 1 ? 'is' : 'are'} no longer in your Roborock account." : "")
     logN "Scan found ${devs.collect { it.name }.join(', ') ?: 'no vacuums'}"
-    getChildDevices().each { it.configChanged() }
+    getChildDevices().findAll { it.deviceNetworkId != CLOUD_DNI }.each { it.configChanged() }   // helper has no configChanged
 }
 
 // ---------- children ----------

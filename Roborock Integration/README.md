@@ -1,6 +1,6 @@
 # Roborock Integration for Hubitat
 
-> **Status: v1.0.0.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
+> **Status: v1.0.1.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
 
 ## What you get
 

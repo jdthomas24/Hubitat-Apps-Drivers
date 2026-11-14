@@ -1,10 +1,10 @@
 {
     "packageName": "Roborock Integration",
-    "releaseNotes": "v1.0.0: First release. Local control of Roborock vacuums: live status, Vacuum Control, room cleaning, fan and mop settings, Roborock scenes (cloud) with a self-updating list, automatic IP recovery, an optional dashboard tile and a Diagnostics report for support. Coming from the beta: Full logging now turns off after 30 minutes.",
+    "releaseNotes": "v1.0.1: Rescan no longer logs a configChanged error from the Cloud Helper, and vacuums pick up new rooms and scenes right after a Rescan. v1.0.0: First release. Local control of Roborock vacuums: live status, Vacuum Control, room cleaning, fan and mop settings, Roborock scenes (cloud) with a self-updating list, automatic IP recovery, an optional dashboard tile and a Diagnostics report for support. Coming from the beta: Full logging now turns off after 30 minutes.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Roborock%20Integration",
     "communityLink": "",
     "author": "jdthomas24",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "minimumHEVersion": "2.3.0",
     "dateReleased": "2026-11-13",
     "category": "Integrations",
