@@ -1,3 +1,21 @@
+**Release: Roborock Integration v1.0.2**
+Vacuum and dock errors now use Roborock's full, current list.
+
+**Problem:**
+- The error list came from an older driver. It stopped at code 24, several labels didn't match what Roborock means (for example code 8, "robot trapped", showed as "device stuck"), and about 20 newer codes weren't listed.
+
+**The Fix:**
+- **error** uses the full list from python-roborock (the library behind Home Assistant's Roborock integration), in Roborock's own wording: LiDAR blocked, robot trapped, VibraRise jammed, robot on carpet, water tank and wash roller errors, and more.
+- **dockError** wording corrected (for example code 42 is "maintenance brush jammed").
+- A code that still isn't listed shows as "error" plus its number, and the log asks you to post it in the forum thread.
+- New **Errors and alerts** tip: how to alert on any error, and why a trapped robot can report "filter blocked or wet".
+- Supported models wording: older Q7 models like the Q7 Max work; only the newer B01 Q7 / Q10 models aren't supported.
+
+**Action needed:**
+Update through HPM. If a rule checks for one exact error text, check it against the new wording. Rules that look for "no error" keep working.
+
+---
+
 **Release: Roborock Integration v1.0.1**
 Rescan no longer throws an error, and your vacuums pick up new rooms and scenes right away.
 

@@ -1,6 +1,6 @@
 # Roborock Integration for Hubitat
 
-> **Status: v1.0.1.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
+> **Status: v1.0.2.** Local control of Roborock vacuums. After a one-time sign-in, Hubitat talks straight to the vacuum on your network.
 
 ## What you get
 
@@ -23,7 +23,7 @@ Attribute names match bloodtick's Roborock driver, so dashboards carry over. Com
 
 Other models that use L01 (newer: Qrevo, Saros, S8 MaxV) or 1.0 (older: S5 to S8, earlier Qrevo and Q Max) should work too. If yours isn't listed, post its **Diagnostics** report in the forum thread so it can be added.
 
-**Not supported:** Dyad, Zeo and the Q7 / Q10 family (A01 / B01 protocols). China-market units used outside China may refuse local status (error -10002).
+**Not supported:** Dyad, Zeo and the newer Q7 / Q10 models that use the B01 protocol (older models like the Q7 Max work). China-market units used outside China may refuse local status (error -10002).
 
 ## Install
 
@@ -62,6 +62,8 @@ The vacuum doesn't send updates on its own, so the driver checks it:
 Clean area shows as **cleanArea (sq ft)** or **cleanArea (sq m)**. The **Area unit** preference on the vacuum device follows the hub by default: square meters when the hub uses Celsius, square feet when it uses Fahrenheit. Pick one there to override it.
 
 A job started from the Roborock app or a schedule shows up within the docked poll time. A small keepalive every 30 seconds keeps the connection open.
+
+**error** and **dockError** use Roborock's own wording (code list from python-roborock, the library behind Home Assistant's integration). For alerts, trigger a rule on **error** changing to anything but *no error*, rather than on one message. Unknown codes show as *error* plus the number.
 
 **switch** is on while the vacuum is working (cleaning, returning, washing or emptying at the dock) and off when it's docked, paused or idle. **Refresh** checks right away and logs one line, for example "Refreshed, no changes".
 

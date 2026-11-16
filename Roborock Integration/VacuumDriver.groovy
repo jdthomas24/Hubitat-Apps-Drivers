@@ -47,7 +47,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "1.0.1"
+@Field static final String VERSION = "1.0.2"
 @Field static final int GRACE_SEC = 90
 @Field static final int PORT = 58867
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'
@@ -61,14 +61,23 @@ import javax.crypto.spec.SecretKeySpec
 @Field static Map refreshed = [:]   // manual Refresh: values changed so far
 @Field static Map tileAt = [:]      // last tile build time
 
+// Vacuum and dock error codes from python-roborock (Home Assistant), worded as in Roborock's manuals (1.0.2).
+// Unknown codes show as "error <n>".
 @Field static final Map errorCodes = [
-    0: "No error", 1: "Laser sensor fault", 2: "Collision sensor fault", 3: "Wheel floating",
-    4: "Cliff sensor fault", 5: "Main brush blocked", 6: "Side brush blocked", 7: "Wheel blocked",
-    8: "Device stuck", 9: "Dust bin missing", 10: "Filter blocked", 11: "Magnetic field detected",
-    12: "Low battery", 13: "Charging problem", 14: "Battery failure", 15: "Wall sensor fault",
-    16: "Uneven surface", 17: "Side brush failure", 18: "Suction fan failure",
-    19: "Unpowered charging station", 20: "Unknown Error", 21: "Laser pressure sensor problem",
-    22: "Charge sensor problem", 23: "Dock problem", 24: "No-go zone or invisible wall detected",
+    0: "No error", 1: "LiDAR turret or laser blocked", 2: "Bumper stuck", 3: "Wheels suspended",
+    4: "Cliff sensor error", 5: "Main brush jammed", 6: "Side brush jammed", 7: "Wheels jammed",
+    8: "Robot trapped", 9: "No dustbin", 10: "Filter blocked or wet", 11: "Strong magnetic field detected",
+    12: "Low battery", 13: "Charging error", 14: "Battery error", 15: "Wall sensor dirty",
+    16: "Robot tilted", 17: "Side brush error", 18: "Fan error", 19: "Dock not connected to power",
+    20: "Optical flow sensor dirty", 21: "LiDAR top pressed", 22: "Dock locator error", 23: "Could not return to dock",
+    24: "No-go zone or invisible wall detected", 25: "Camera error", 27: "VibraRise system jammed",
+    28: "Robot on carpet", 29: "Filter blocked", 30: "Invisible wall detected", 31: "Cannot cross carpet",
+    32: "Internal error", 34: "Clean the auto-empty dock", 35: "Auto-empty dock voltage error",
+    36: "Wash roller may be jammed", 37: "Wash roller not lowered properly", 38: "Check the clean water tank",
+    39: "Check the dirty water tank", 40: "Reinstall the water filter", 41: "Clean water tank empty",
+    42: "Check that the water filter is correctly installed", 43: "Positioning button error",
+    44: "Clean the dock water filter", 45: "Wash roller may be jammed", 48: "Clean water refill error",
+    49: "Dirty water drain error", 54: "Water carriage dropped", 55: "Check the cleaning tray", 56: "Audio error",
     254: "Bin full", 255: "Internal error", 256: "Wifi Offline", 257: "Authorization error"]
 @Field static final Map stateCodes = [
     0: "Unknown", 1: "Initiating", 2: "Sleeping", 3: "Idle", 4: "Remote Control",
@@ -84,8 +93,8 @@ import javax.crypto.spec.SecretKeySpec
 @Field static final List waterLevelNames = [[3, "Slight"], [7, "Low"], [12, "Gentle"], [17, "Medium"], [22, "Moderate"], [27, "High"], [30, "Extreme"]]
 @Field static final Map dockErrorCodes = [
     0: "No error", 34: "Duct Blockage", 38: "Water Empty", 39: "Waste Water Tank Full",
-    40: "Water Filter Not Installed", 42: "Check the Water Filter Has Been Correctly Installed",
-    44: "Dirty Tank Latch Open", 46: "No Dust Bin", 53: "Cleaning Tank Full Blocked"]
+    40: "Water Filter Not Installed", 42: "Maintenance Brush Jammed",
+    44: "Dirty Tank Latch Open", 46: "No Dust Bin", 53: "Cleaning Tank Full or Blocked"]
 
 metadata {
     definition(name: "Roborock Vacuum", namespace: "jdthomas24", author: "jdthomas24", importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/Roborock%20Integration/VacuumDriver.groovy")
@@ -520,11 +529,11 @@ private void processStatus(Map r) {
     if (r.battery != null) sendIf("battery", r.battery as int, null, "%")
     if (r.error_code != null) {
         int e = r.error_code as int
-        if (sendIf("error", (errorCodes[e] ?: e.toString()).toLowerCase()) && e != 0) logW "Error: ${errorCodes[e] ?: e}"
+        if (sendIf("error", (errorCodes[e] ?: "error ${e}").toLowerCase()) && e != 0) logW "Error ${e}: ${errorCodes[e] ?: 'not in the list yet, please post this code in the forum thread'}"
     }
     if (r.dock_error_status != null) {
         int d = r.dock_error_status as int
-        if (sendIf("dockError", (dockErrorCodes[d] ?: d.toString()).toLowerCase()) && d != 0) logW "Dock error: ${dockErrorCodes[d] ?: d}"
+        if (sendIf("dockError", (dockErrorCodes[d] ?: "error ${d}").toLowerCase()) && d != 0) logW "Dock error ${d}: ${dockErrorCodes[d] ?: 'not in the list yet, please post this code in the forum thread'}"
     }
     codeAttr("fanPower", fanPowerCodes, r.fan_power)
     codeAttr("mopMode", mopModeCodes, r.mop_mode)

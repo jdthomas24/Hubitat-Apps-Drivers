@@ -15,6 +15,7 @@
       after a failed scene, and with Rescan. Scene list request only, one vacuum at a time.
      -1.0.1: Rescan no longer errors on the Cloud Helper; vacuums get the new rooms/scenes right away.
      -1.0.0: first release. Full logging back to 30 minutes, Diagnostics kept for support, Confirmed models in Tips.
+     -1.0.2: full error code list from python-roborock (Home Assistant), Errors and alerts tip, Q7 Max wording.
 */
 
 import groovy.transform.Field
@@ -24,7 +25,7 @@ import javax.crypto.spec.SecretKeySpec
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String APP_VERSION = "1.0.1"
+@Field static final String APP_VERSION = "1.0.2"
 @Field static final long SCENES_COOLDOWN_MS = 300000L
 @Field static final Map scenesPending = new ConcurrentHashMap()
 @Field static final String APP_NAME = "Roborock Integration"
@@ -604,7 +605,12 @@ private List tipsTopics() {
                 [["Qrevo Curv X", "L01"], ["Saros 10R", "L01"], ["S8 MaxV Ultra", "L01"], ["Qrevo MaxV", "1.0"], ["Q5 Max+", "1.0"]]
                     .collect { "<tr><td style='padding:3px 14px 3px 0'>${it[0]}</td><td style='padding:3px 0'>${it[1]}</td></tr>" }.join("") + "</table>" +
                 "<p>Other models that use L01 or 1.0 should work too. Your vacuum's card in the app shows which one it uses. If yours isn't listed, tap <b>Diagnostics</b> on its device and post the report in the forum thread so it can be added.</p>" +
-                "<p><b>Not supported:</b> Dyad, Zeo and the Q7 / Q10 family (they use other protocols). Units made for the China market may refuse local status outside China.</p>"],
+                "<p><b>Not supported:</b> Dyad, Zeo and the newer Q7 / Q10 models that use Roborock's B01 protocol (older models like the Q7 Max work). Units made for the China market may refuse local status outside China.</p>"],
+        [id: "errors", label: "Errors and alerts", title: "Using errors in rules", group: "Using it", icon: "pi-exclamation-triangle",
+            body: "<p><b>error</b> shows what the vacuum reports, in Roborock's own words (for example <i>robot trapped</i> or <i>main brush jammed</i>). <b>dockError</b> does the same for the dock. Both read <i>no error</i> when all is well.</p>" +
+                "<p><b>For alerts, trigger on the change, not on one message:</b> a rule that fires when <b>error</b> changes and isn't <i>no error</i>, then sends the error text in the notification. That catches every problem, including ones you didn't plan for.</p>" +
+                "<p>The vacuum reports what its sensors see, not always the cause. A trapped robot with something against its intake can report <i>filter blocked or wet</i> even when the filter is fine.</p>" +
+                "<p>A code the integration doesn't know yet shows as <i>error</i> plus its number (for example <i>error 47</i>), and the log asks you to post it in the forum thread so it can be added.</p>"],
         [id: "setup", label: "Setup", title: "Setting up a vacuum", group: "Getting started", icon: "pi-cog",
             body: "<p>Sign in with your Roborock email and the code they send you. Your vacuums appear on the main page.</p>" +
                 "<p>Enter each vacuum's <b>IP address</b>. Roborock doesn't share it, so find it in your router or the Roborock app (Device info). Once connected, the vacuum's card shows its <b>MAC</b> address for a DHCP reservation in your router. If the IP changes anyway, the app finds the new one through Roborock's cloud while you're signed in.</p>" +
