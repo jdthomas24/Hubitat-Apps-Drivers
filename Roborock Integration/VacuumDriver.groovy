@@ -47,7 +47,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "1.0.2"
+@Field static final String VERSION = "1.0.3"
 @Field static final int GRACE_SEC = 90
 @Field static final int PORT = 58867
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'
@@ -62,7 +62,7 @@ import javax.crypto.spec.SecretKeySpec
 @Field static Map tileAt = [:]      // last tile build time
 
 // Vacuum and dock error codes from python-roborock (Home Assistant), worded as in Roborock's manuals (1.0.2).
-// Unknown codes show as "error <n>".
+// Unknown codes show as "error <n>". error is a string attribute (1.0.3): as an enum the list passed the hub's 1,024-character limit.
 @Field static final Map errorCodes = [
     0: "No error", 1: "LiDAR turret or laser blocked", 2: "Bumper stuck", 3: "Wheels suspended",
     4: "Cliff sensor error", 5: "Main brush jammed", 6: "Side brush jammed", 7: "Wheels jammed",
@@ -118,7 +118,7 @@ metadata {
         attribute "dockError", "enum", dockErrorCodes.values().collect{ it.toLowerCase() }
         attribute "name", "string"
         attribute "state", "enum", stateCodes.values().collect{ it.toLowerCase() }
-        attribute "error", "enum", errorCodes.values().collect{ it.toLowerCase() }
+        attribute "error", "string"   // string: the full list is over the hub's 1,024-character enum limit
         attribute "fanPower", "enum", fanPowerCodes.values().collect{ it.toLowerCase() }
         attribute "cleanTime (min)", "number"
         attribute "cleanArea (sq ft)", "number"

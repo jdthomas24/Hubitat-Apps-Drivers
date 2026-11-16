@@ -1,3 +1,18 @@
+**Release: Roborock Integration v1.0.3**
+Fixes the 1.0.2 update failing to install.
+
+**Problem:**
+- Updating to 1.0.2 failed in HPM with "Failed to upgrade driver". The new, complete error list was longer than the hub allows for an attribute's list of fixed values (1,024 characters), so the hub wouldn't save the vacuum driver.
+
+**The Fix:**
+- **error** is now a text attribute instead of a fixed list. It shows the same messages and updates the same way, and new codes can be added without hitting the limit.
+- Everything from 1.0.2 is included: the full Roborock error list, the Errors and alerts tip, and the Q7 Max wording.
+
+**Action needed:**
+Update through HPM. If 1.0.2 failed for you, this one installs over it; your vacuums kept running on the previous version in the meantime. If a rule picked an error from a dropdown, open it once and check the value is still set.
+
+---
+
 **Release: Roborock Integration v1.0.2**
 Vacuum and dock errors now use Roborock's full, current list.
 

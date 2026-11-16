@@ -15,6 +15,7 @@
       after a failed scene, and with Rescan. Scene list request only, one vacuum at a time.
      -1.0.1: Rescan no longer errors on the Cloud Helper; vacuums get the new rooms/scenes right away.
      -1.0.0: first release. Full logging back to 30 minutes, Diagnostics kept for support, Confirmed models in Tips.
+     -1.0.3: error attribute is a string (the 1.0.2 enum list was over the hub's limit and wouldn't save).
      -1.0.2: full error code list from python-roborock (Home Assistant), Errors and alerts tip, Q7 Max wording.
 */
 
@@ -25,7 +26,7 @@ import javax.crypto.spec.SecretKeySpec
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String APP_VERSION = "1.0.2"
+@Field static final String APP_VERSION = "1.0.3"
 @Field static final long SCENES_COOLDOWN_MS = 300000L
 @Field static final Map scenesPending = new ConcurrentHashMap()
 @Field static final String APP_NAME = "Roborock Integration"
