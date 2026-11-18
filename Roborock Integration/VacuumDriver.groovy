@@ -42,6 +42,7 @@
      -1.0.4: Dock Control (empty bin, wash mop, stop either). Room names fall back to the last known name, never
       "Room N" for a room that had one (signed out, or a cloud read that missed it). Rooms go to the app for its
       vacuum card. unknown_method replies log a plain warning.
+     -1.0.5: version bump only (app card layout).
 */
 
 import groovy.transform.Field
@@ -50,7 +51,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "1.0.4"
+@Field static final String VERSION = "1.0.5"
 @Field static final int GRACE_SEC = 90
 @Field static final int PORT = 58867
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'

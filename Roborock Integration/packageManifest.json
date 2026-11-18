@@ -1,10 +1,10 @@
 {
     "packageName": "Roborock Integration",
-    "releaseNotes": "v1.0.4: Each vacuum card in the app lists its rooms and scenes with IDs. Signing out keeps room names (last known) and the banner reads Signed out. Room names refresh daily. New Dock Control (empty bin, wash mop). More Execute commands in Tips. v1.0.3: Fixes the 1.0.2 update failing in HPM (the new error list was too long for the hub as a list of fixed values; error is now a text attribute). v1.0.2: Full Roborock error list (from Home Assistant's library) in Roborock's own wording; unknown codes show their number. New Errors and alerts tip. v1.0.1: Rescan no longer logs a configChanged error from the Cloud Helper, and vacuums pick up new rooms and scenes right after a Rescan. v1.0.0: First release. Local control of Roborock vacuums: live status, Vacuum Control, room cleaning, fan and mop settings, Roborock scenes (cloud) with a self-updating list, automatic IP recovery, an optional dashboard tile and a Diagnostics report for support. Coming from the beta: Full logging now turns off after 30 minutes.",
+    "releaseNotes": "v1.0.5: Each vacuum card in the app lists its rooms and scenes with IDs. Signing out keeps room names (last known) and the banner reads Signed out. Room names refresh daily. New Dock Control (empty bin, wash mop). More Execute commands in Tips. v1.0.3: Fixes the 1.0.2 update failing in HPM (the new error list was too long for the hub as a list of fixed values; error is now a text attribute). v1.0.2: Full Roborock error list (from Home Assistant's library) in Roborock's own wording; unknown codes show their number. New Errors and alerts tip. v1.0.1: Rescan no longer logs a configChanged error from the Cloud Helper, and vacuums pick up new rooms and scenes right after a Rescan. v1.0.0: First release. Local control of Roborock vacuums: live status, Vacuum Control, room cleaning, fan and mop settings, Roborock scenes (cloud) with a self-updating list, automatic IP recovery, an optional dashboard tile and a Diagnostics report for support. Coming from the beta: Full logging now turns off after 30 minutes.",
     "documentationLink": "https://github.com/jdthomas24/Hubitat-Apps-Drivers/tree/main/Roborock%20Integration",
     "communityLink": "https://community.hubitat.com/t/167268",
     "author": "jdthomas24",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "minimumHEVersion": "2.3.0",
     "dateReleased": "2026-11-18",
     "category": "Integrations",

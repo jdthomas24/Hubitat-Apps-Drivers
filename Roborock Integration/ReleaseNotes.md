@@ -1,4 +1,4 @@
-**Release: Roborock Integration v1.0.4**
+**Release: Roborock Integration v1.0.5**
 Rooms and scenes now show on each vacuum's card, room names survive signing out, and the dock can empty the bin or wash the mop from Hubitat.
 
 **Problem:**
@@ -8,7 +8,7 @@ Rooms and scenes now show on each vacuum's card, room names survive signing out,
 - There was no command to empty the bin or wash the mop, and the Execute tip only listed a few commands. Guessing a command name got a bare "unknown_method" in the logs.
 
 **The Fix:**
-- **Vacuum cards** on the app's main page list each vacuum's rooms and scenes with their IDs, and a green dot marks the room it's cleaning now.
+- **Vacuum cards** on the app's main page: each vacuum gets its own card listing its rooms and scenes with their IDs, and a green dot marks the room it's cleaning now.
 - **Signing out keeps room and scene names.** The banner reads **Signed out**, rooms show as last known (with the date), and scenes are greyed out until you sign in. Rooms still clean by ID.
 - **Room names refresh once a day**, along with the scenes (one extra read from Roborock per day).
 - **Dock Control:** Empty Bin, Wash Mop, Stop Emptying or Stop Washing, while docked.

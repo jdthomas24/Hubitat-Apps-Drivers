@@ -20,6 +20,7 @@
      -1.0.4: each vacuum card lists its rooms and scenes with IDs. Sign out keeps room and scene names (shown as
       last known, scenes greyed) and the banner reads Signed out. Room names refresh daily with the scenes (one
       home data read). Dock Control on the vacuum; Execute tip lists more commands.
+     -1.0.5: vacuum card is a bordered card (like Sofabaton's) with smaller room and scene pills.
 */
 
 import groovy.transform.Field
@@ -29,7 +30,7 @@ import javax.crypto.spec.SecretKeySpec
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String APP_VERSION = "1.0.4"
+@Field static final String APP_VERSION = "1.0.5"
 @Field static final long SCENES_COOLDOWN_MS = 300000L
 @Field static final Map scenesPending = new ConcurrentHashMap()
 @Field static final String APP_NAME = "Roborock Integration"
@@ -136,9 +137,11 @@ private String vacuumCardHtml(Map v) {
     String mac = state.macs?.get(v.duid) ? " &middot; MAC ${esc(state.macs[v.duid])}" : ""
     String link = child ? " &middot; <a href='/device/edit/${child.id}' target='_blank' class='hub-text-link no-underline'>device page " +
         "<i class='fa-regular fa-external-link' style='font-size:0.8em'></i></a>" : ""
-    "<div class='flex align-items-center gap-2 mt-2'><span class='font-semibold'>${esc(v.name)}</span>${tag}</div>" +
-        "<div class='text-color-secondary' style='font-size:14px;'>${esc(v.model ?: '')} &middot; local protocol ${esc(proto)}${mac}${link}</div>" +
-        (child ? roomsScenesHtml(v.duid as String, child) : "")
+    // Bordered card, same as Sofabaton's hub cards.
+    "<div style='border:1px solid var(--surface-border, rgba(0,0,0,.12));border-radius:10px;padding:10px 14px;margin:6px 0 0;background:var(--surface-card, transparent)'>" +
+        "<div class='flex align-items-center gap-2'><span class='font-semibold'>${esc(v.name)}</span>${tag}</div>" +
+        "<div class='text-color-secondary' style='font-size:13px;'>${esc(v.model ?: '')} &middot; local protocol ${esc(proto)}${mac}${link}</div>" +
+        (child ? roomsScenesHtml(v.duid as String, child) : "") + "</div>"
 }
 
 // Rooms (local, by ID) and scenes (cloud) as pills, like Sofabaton's activities. Signed out: last known, scenes greyed.
@@ -148,17 +151,17 @@ private String roomsScenesHtml(String duid, child) {
     Map rooms = (state.vacRooms?.get(duid) ?: [:]) as Map
     Map scenes = (state.scenes?.get(duid) ?: [:]) as Map
     String here = child.currentValue("switch") == "on" ? child.currentValue("currentRoom") : null
-    String lbl = "font-size:12px;font-weight:700;margin:10px 0 6px"
+    String lbl = "font-size:12px;font-weight:700;margin:10px 0 5px"
     String note = on ? "for Vacuum Rooms${at ? ' &middot; updated ' + at : ''}" : "last known${at ? ' &middot; from ' + at : ''}"
     StringBuilder h = new StringBuilder("<div style='${lbl}'>Rooms <span class='text-color-secondary' style='font-weight:400'>${note}</span></div>")
     if (rooms) {
-        h << "<div style='display:flex;flex-wrap:wrap;gap:8px'>"
+        h << "<div style='display:flex;flex-wrap:wrap;gap:5px'>"
         rooms.sort { a, b -> (a.key as int) <=> (b.key as int) }.each { k, n -> h << pillHtml(n as String, k as String, n == here, false) }
         h << "</div>"
     } else h << "<div class='text-color-secondary' style='font-size:13px'>Waiting for the vacuum's room list. Reload this page once it's connected.</div>"
     if (scenes) {
         h << "<div style='${lbl}'>Scenes <span class='text-color-secondary' style='font-weight:400'>${on ? 'for Vacuum Scene (cloud)' : 'need sign-in'}</span></div>"
-        h << "<div style='display:flex;flex-wrap:wrap;gap:8px${on ? '' : ';opacity:.5'}'>"
+        h << "<div style='display:flex;flex-wrap:wrap;gap:5px${on ? '' : ';opacity:.5'}'>"
         scenes.each { k, n -> h << pillHtml(n as String, k as String, false, true) }
         h << "</div>"
     }
@@ -167,9 +170,9 @@ private String roomsScenesHtml(String duid, child) {
 }
 
 private String pillHtml(String name, String id, boolean here, boolean scene) {
-    String dot = here ? "<span style='display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--hubitat-success-color, #2e9e5b)'></span>" : ""
-    "<span title='${scene ? 'Scene' : 'Room'} ID ${esc(id)}' style='display:inline-flex;align-items:center;border:1px solid var(--surface-border, rgba(0,0,0,.15));border-radius:16px;padding:3px 10px;font-size:13px'>" +
-        "${dot}${esc(name)}<span style='margin-left:6px;background:#455a64;color:#fff;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:700'>${esc(id)}</span></span>"
+    String dot = here ? "<span style='display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;background:var(--hubitat-success-color, #2e9e5b)'></span>" : ""
+    "<span title='${scene ? 'Scene' : 'Room'} ID ${esc(id)}' style='display:inline-flex;align-items:center;border:1px solid var(--surface-border, rgba(0,0,0,.15));border-radius:12px;padding:1px 4px 1px 8px;font-size:12px;line-height:18px;white-space:nowrap'>" +
+        "${dot}${esc(name)}<span class='text-color-secondary' style='margin-left:5px;border-radius:8px;padding:0 5px;font-size:11px;background:var(--surface-ground, rgba(0,0,0,.06))'>${esc(id)}</span></span>"
 }
 
 private String currentLogLevel() { settings.logLevel ?: "Errors Only" }
