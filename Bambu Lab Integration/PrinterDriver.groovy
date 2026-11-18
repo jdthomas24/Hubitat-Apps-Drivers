@@ -40,8 +40,8 @@
      -Children (app's Equipment page): one AMS device per unit and the chamber light. Exclusions as IntelliCenter.
      -AMS (0.2.8): ids 0-3 are 4-tray units, 128+ are single-tray AMS HT ("AMS HT 1"). A tray is empty when it has no
       type or its tray_exist_bits bit is clear (confirmed on H2D 0.2.12: unit*4 + tray, AMS HT 16 + id-128). The bits
-      and each tray's raw fields (on change) are logged at Full. remain 0 or -1 means no estimate
-      (0.2.9): no %, never empty or low. emptySlots and lowSlots (remain 1 to the Low filament pref) per unit.
+      and each tray's raw fields (on change) are logged at Full. remain -1 means no estimate; 0 means no estimate
+      unless the spool's Bambu tag was read (tag_uid set), then it's a nearly empty spool: 0%, counts as low (0.2.13). emptySlots and lowSlots (remain 1 to the Low filament pref) per unit.
      -Reconnect backoff 5 s to 5 min; still down after 4 tries warns once.
 */
 
@@ -114,7 +114,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.12"
+@Field static final String VERSION     = "0.2.13"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -963,16 +963,18 @@ private void ams(Map r) {
             }
             String type = tr.tray_type?.toString() ?: null
             def rem = toInt(tr.remain)
+            boolean tagged = (tr.tag_uid ?: "").toString().replace("0", "") != ""
+            boolean pctOk = rem != null && (rem > 0 || (rem == 0 && tagged))
             boolean has = type != null
             Integer bit = ht ? 16 + uid - 128 : (uid < 4 ? uid * 4 + ti : null)
             if (has && bits != null && bit != null && bit < 32 && ((bits >> bit) & 1L) == 0L) has = false
             String desc = has ? "${type}${tr.tray_sub_brands ? ' (' + tr.tray_sub_brands + ')' : ''}" : "empty"
-            if (has && rem != null && rem > 0) desc += ", ${rem}%"
+            if (has && pctOk) desc += ", ${rem}%"
             String col = has && tr.tray_color ? "#${tr.tray_color.toString().take(6)}" : ""
             ev << [name: "tray${ti + 1}", value: desc]
             ev << [name: "tray${ti + 1}Color", value: col ?: "none"]
             if (!has) empty << (ti + 1)
-            else if (rem != null && rem > 0 && rem <= lowPct) low << (ti + 1)
+            else if (pctOk && rem <= lowPct) low << (ti + 1)
         }
         if (trays) {
             ev << [name: "emptySlots", value: empty ? empty.sort().join(", ") : "none"]
@@ -1180,7 +1182,7 @@ private childFor(String key) {
         child = addChildDevice(ns, drv, dni, [label: label, isComponent: false])
         state.known = ((state.known ?: []) as List) + key
         logN "created ${label}"
-        try { child.setLogLevel(state.logLevel ?: "Errors Only") } catch (e) { }
+        if (c?.k != "light") try { child.setLogLevel(state.logLevel ?: "Errors Only") } catch (e) { }
     } catch (e) {
         skip.add(key)
         String why = "${e}".contains("UnknownDeviceType") ? "the ${drv} driver isn't installed (update with HPM)" : e.message
@@ -1309,7 +1311,7 @@ private Long toLong(v) { BigDecimal n = num(v); n == null ? null : n.longValue()
 void setLogLevel(String level) {
     state.logLevel = LOG_LEVELS.contains(level) ? level : "Errors Only"
     mem().lvl = LOG_LEVELS.indexOf(state.logLevel)
-    getChildDevices().each { try { it.setLogLevel(state.logLevel) } catch (e) { } }
+    getChildDevices().findAll { it.deviceNetworkId.contains("-ams") }.each { try { it.setLogLevel(state.logLevel) } catch (e) { } }
 }
 
 void childLog(String level, String source, String msg) {

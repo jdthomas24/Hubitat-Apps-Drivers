@@ -1,3 +1,19 @@
+**Release: Bambu Lab Integration v0.2.13 (beta)**
+A nearly empty Bambu spool now shows as low, and changing the log level no longer logs errors on the chamber lights.
+
+**Problem:**
+- The AMS reports 0% both for a spool it has no estimate for and for a Bambu spool that's nearly out. Since 0.2.9, both showed no amount, so a nearly empty Bambu spool never appeared in lowSlots.
+- Changing the log level logged a "setLogLevel" error on each chamber light device, which uses Hubitat's built-in switch driver.
+
+**The Fix:**
+- 0% on a spool whose Bambu tag was read now shows 0% and counts as low. 0% on an untagged spool still means no estimate.
+- The log level is only passed to the AMS devices, not the chamber lights.
+
+**Action needed:**
+Update through HPM. No Done needed. The card catches up at the next check, or right away with Refresh.
+
+---
+
 **Release: Bambu Lab Integration v0.2.12 (beta)**
 Empty AMS slots are caught by the AMS's filament sensors again.
 

@@ -1,6 +1,6 @@
 # Bambu Lab Integration for Hubitat
 
-> **Status: v0.2.12 beta, tested on two H2Ds. X1, P1 and A1 should work but are untested.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
+> **Status: v0.2.13 beta, tested on two H2Ds. X1, P1 and A1 should work but are untested.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
 
 ## What you get
 
@@ -89,7 +89,7 @@ These are on each printer device's **Preferences** tab.
 - **ETA** is when the print should finish, to the nearest 5 minutes (with the weekday if it's not today), or -- when not printing.
 - **firmwareUpdate** is none, or available with the new version.
 - **externalSpool** and **externalSpool2** show the filament on the external holders once one is loaded.
-- **AMS devices:** **tray1** to **tray4** show the filament and amount left (`PLA (Basic), 85%`) or `empty`. An AMS HT has **tray1** only. **emptySlots** lists empty slots (`2, 4`) or `none`, which covers a pulled spool and a runout (it also uses the AMS's filament sensors). **lowSlots** lists slots at or below **Low filament warning at**. One rule per AMS covers every slot. The amount left needs a Bambu RFID tag on the spool and **Update Remaining Capacity** turned on in the AMS settings. When the AMS has no estimate (it reports 0), no amount is shown and the slot isn't counted as empty or low.
+- **AMS devices:** **tray1** to **tray4** show the filament and amount left (`PLA (Basic), 85%`) or `empty`. An AMS HT has **tray1** only. **emptySlots** lists empty slots (`2, 4`) or `none`, which covers a pulled spool and a runout (it also uses the AMS's filament sensors). **lowSlots** lists slots at or below **Low filament warning at**. One rule per AMS covers every slot. The amount left needs a Bambu RFID tag on the spool and **Update Remaining Capacity** turned on in the AMS settings. When the AMS has no estimate, no amount is shown and the slot isn't counted as empty or low. A Bambu spool that's nearly out shows 0% and counts as low.
 
 **Error text** comes from a small table in this folder's **HMS** directory, fetched from GitHub the first time a code shows up (nothing goes to Bambu); only the matching line is kept, in memory. After a reboot the text for errors still showing is fetched again. The English text and Wiki links come from the [ha-bambulab](https://github.com/greghesp/ha-bambulab) project (MIT license).
 
