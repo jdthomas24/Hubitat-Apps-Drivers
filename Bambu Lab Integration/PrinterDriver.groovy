@@ -39,7 +39,7 @@
       254/255 (or vt_tray), shown once loaded.
      -Children (app's Equipment page): one AMS device per unit and the chamber light. Exclusions as IntelliCenter.
      -AMS (0.2.8): ids 0-3 are 4-tray units, 128+ are single-tray AMS HT ("AMS HT 1"). A tray is empty when it has no
-      type or its tray_exist_bits bit (unit*4 + tray, 4-tray units only) is clear. remain 0 or -1 means no estimate
+      type. tray_exist_bits is only logged at Full (0.2.10): unit*4+tray didn't match an H2D, layout unconfirmed. remain 0 or -1 means no estimate
       (0.2.9): no %, never empty or low. emptySlots and lowSlots (remain 1 to the Low filament pref) per unit.
      -Reconnect backoff 5 s to 5 min; still down after 4 tries warns once.
 */
@@ -113,7 +113,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.9"
+@Field static final String VERSION     = "0.2.10"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -924,8 +924,8 @@ private void ams(Map r) {
         report("activeTray", label)
     }
     if (!(a.ams instanceof List)) return
-    Long bits = null
-    try { if (a.tray_exist_bits != null) bits = Long.parseLong(a.tray_exist_bits.toString(), 16) } catch (e) { }
+    String xb = a.tray_exist_bits?.toString()
+    if (xb != null && mem().xbits != xb) { mem().xbits = xb; logF "AMS tray_exist_bits ${xb}, tray_is_bbl_bits ${a.tray_is_bbl_bits}, tray_read_done_bits ${a.tray_read_done_bits}" }
     int lowPct = opt("lowFilament") as int
     a.ams.each { u ->
         if (!(u instanceof Map)) return
@@ -955,7 +955,6 @@ private void ams(Map r) {
             String type = tr.tray_type?.toString() ?: null
             def rem = toInt(tr.remain)
             boolean has = type != null
-            if (has && !ht && bits != null && uid < 4 && ((bits >> (uid * 4 + ti)) & 1L) == 0L) has = false
             String desc = has ? "${type}${tr.tray_sub_brands ? ' (' + tr.tray_sub_brands + ')' : ''}" : "empty"
             if (has && rem != null && rem > 0) desc += ", ${rem}%"
             String col = has && tr.tray_color ? "#${tr.tray_color.toString().take(6)}" : ""
