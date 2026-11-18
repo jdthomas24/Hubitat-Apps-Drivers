@@ -30,7 +30,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.2.13"
+@Field static final String APP_VERSION   = "0.2.14"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -239,7 +239,7 @@ private String printerCardHtml(int i, dev) {
                 def pm = t =~ /, (\d+)%$/
                 String pct = pm.find() ? pm.group(1) + "%" : ""
                 String dot = col && col != "none" ? "<span class='bb-dot' style='background:${esc(col)}'></span>" : "<span class='bb-dot' style='background:transparent'></span>"
-                "<span class='bb-slot' title='Slot ${n}: ${esc(t)}'>${dot}" +
+                "<span class='bb-slot${pct ? ' has-pct' : ''}' title='Slot ${n}: ${esc(t)}'>${dot}" +
                     (pct ? "<span class='bb-pct${lows.contains(n.toString()) ? ' hub-text-warning' : ''}'>${pct}</span>" : "") + "</span>"
             }.join("")
             c << "<a href='/device/edit/${k.id}' target='_blank' class='bb-pill'>${esc(shortName(k, dev))}${dots}" +
@@ -511,6 +511,19 @@ private List tipsTopics() {
                 "The temperature only updates once the heater is at temperature or off, in 5° steps, so a warm-up doesn't send a burst of events.</p>" +
                 "<p>Dual-nozzle printers (H2D) have <b>rightNozzle</b> and <b>leftNozzle</b> attributes, and the tile shows <b>R</b> and <b>L</b>. Other printers have <b>nozzle</b>.</p>" +
                 "<p>Temperatures are in Celsius to match the printer. To follow the hub's units instead, open the printer device and change <b>Temperature units</b> under Preferences. The 5° step is there too.</p>"],
+        [id: "filament", label: "AMS and filament", title: "AMS slots and filament left", group: "How it works", icon: "pi-palette",
+            body: "<p>Each AMS slot on the printer card shows the filament color and, when the AMS knows it, how much is left. " +
+                "The amount comes from the AMS itself. Hubitat shows what the printer reports.</p>",
+            checklist: [
+                [title: "How the AMS knows", detail: "It reads the spool's Bambu RFID tag and measures how far the spool turns. That needs Remaining Filament Estimation (Update Remaining Capacity on some firmware) turned on in the AMS settings on the printer. A newly read spool starts at a full 1 kg and settles as it's used."],
+                [title: "No amount shown", detail: "The spool has no Bambu tag (most third-party spools), or the AMS hasn't estimated it yet. Bambu Handy may still show a dial for these, but it doesn't come from the AMS."],
+                [title: "0% in orange", detail: "A Bambu spool that's nearly out. The AMS reports 0% well before the spool is completely empty."],
+                [title: "Getting an estimate", detail: "On the printer screen, unload the slot, tap the spool and choose Re-read. The AMS can't re-read while that filament is loaded into the nozzle or during a print."],
+                [title: "Third-party spools", detail: "A tag taken from an empty Bambu spool works, and tells the printer that tag's filament type and color. Other RFID tags aren't read."],
+                [title: "Empty slots", detail: "A slot is empty when the AMS reports no filament or its filament sensor says nothing is loaded, so a runout counts even if the tag is still read."],
+                [title: "AMS HT", detail: "Holds one spool, so it shows one slot (AMS HT 1)."]
+            ],
+            warning: "Low filament warning at (printer device Preferences, 10% by default) sets when a slot shows in orange and appears in lowSlots."],
         [id: "rules", label: "Rules and dashboards", title: "Rules and dashboards", group: "Using it", icon: "pi-bolt",
             body: "<p>Some ideas:</p>",
             checklist: [
@@ -721,9 +734,10 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
   a.bb-link { color: var(--hubitat-link-color, #1565c0); text-decoration: none; }
   a.bb-link:hover { text-decoration: underline; }
   .bb-dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-left: 4px; border: 1px solid rgba(127,127,127,.5); }
-  .bb-slot { display: inline-flex; align-items: center; margin-left: 6px; }
+  .bb-slot { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; padding: 2px 3px; border-radius: 999px; background: rgba(0,0,0,.28); border: 1px solid rgba(127,127,127,.35); }
+  .bb-slot.has-pct { padding-right: 8px; }
   .bb-slot .bb-dot { margin-left: 0; }
-  .bb-pct { font-size: 0.75em; margin-left: 3px; opacity: 0.85; }
+  .bb-pct { font-size: 0.75em; opacity: 0.9; }
   .app-main-content :is([name*='refreshP_'],[name*='remove_'],[id*='refreshP_'],[id*='remove_']) {
     font-size: 13px !important; padding: 3px 12px !important; min-height: 0 !important; height: auto !important;
     line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid var(--hubitat-control-border, #d0d7de) !important;

@@ -1,3 +1,19 @@
+**Release: Bambu Lab Integration v0.2.14 (beta)**
+AMS slots read more clearly on the printer card, and the Tips page explains filament amounts.
+
+**Problem:**
+- On the printer card, each slot's amount sat loose next to the following slot's color, so it wasn't always clear which went together.
+- Why some spools show an amount and others don't (tags, estimation, re-reading) wasn't explained anywhere.
+
+**The Fix:**
+- Each slot's color and amount now sit together in a small chip.
+- New Tips topic, **AMS and filament**: how the AMS estimates, why there's no amount for some spools, what 0% means, how to get an estimate with Re-read, third-party spools, empty slots and the AMS HT.
+
+**Action needed:**
+Update through HPM. No Done needed.
+
+---
+
 **Release: Bambu Lab Integration v0.2.13 (beta)**
 A nearly empty Bambu spool now shows as low, and changing the log level no longer logs errors on the chamber lights.
 
