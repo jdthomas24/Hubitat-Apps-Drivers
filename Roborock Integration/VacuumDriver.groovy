@@ -39,6 +39,9 @@
       mid-word in the narrow device page column; whole items wrap instead (0.2.8). Life values spread edge to edge
       with a small gap so all three fit on a dashboard tile (0.2.9).
      -Log level comes from the app.
+     -1.0.4: Dock Control (empty bin, wash mop, stop either). Room names fall back to the last known name, never
+      "Room N" for a room that had one (signed out, or a cloud read that missed it). Rooms go to the app for its
+      vacuum card. unknown_method replies log a plain warning.
 */
 
 import groovy.transform.Field
@@ -47,7 +50,7 @@ import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
 
-@Field static final String VERSION = "1.0.3"
+@Field static final String VERSION = "1.0.4"
 @Field static final int GRACE_SEC = 90
 @Field static final int PORT = 58867
 @Field static final String SALT = 'TXdfu$jyZ#TZHsg4'
@@ -91,6 +94,8 @@ import javax.crypto.spec.SecretKeySpec
 @Field static final Map mopWaterModeCodes = [0: "Default", 200: "Off", 201: "Low", 202: "Medium", 203: "High", 204: "Auto", 207: "Custom", 209: "Smart"]
 // Saros slider names by level (Roborock app): 1-3 Slight, 4-7 Low, 8-12 Gentle, 13-17 Medium, 18-22 Moderate, 23-27 High, 28-30 Extreme
 @Field static final List waterLevelNames = [[3, "Slight"], [7, "Low"], [12, "Gentle"], [17, "Medium"], [22, "Moderate"], [27, "High"], [30, "Extreme"]]
+@Field static final Map DOCK_ACTIONS = ["Empty Bin": "app_start_collect_dust", "Wash Mop": "app_start_wash",
+                                        "Stop Emptying": "app_stop_collect_dust", "Stop Washing": "app_stop_wash"]
 @Field static final Map dockErrorCodes = [
     0: "No error", 34: "Duct Blockage", 38: "Water Empty", 39: "Waste Water Tank Full",
     40: "Water Filter Not Installed", 42: "Maintenance Brush Jammed",
@@ -110,9 +115,10 @@ metadata {
         command "vacuumRooms", [[name: "Room IDs*", type: "STRING", description: "Comma or space delimited Room IDs"],
                                 [name: "MopWater",  type: "ENUM",   description: "Mop water mode. Optional.", constraints: mopWaterModeCodes.values().collect{ it.toUpperCase() }]]
         command "vacuumScene",  [[name: "Scene ID*", type: "STRING", description: "Single Scene ID"]]
+        command "dockControl", [[name: "Action*", type: "ENUM", constraints: DOCK_ACTIONS.keySet() as List]]
         command "diagnostics"
-        command "execute", [[name: "command*", type: "STRING", description: "Advanced. e.g. find_me, set_custom_mode, set_mop_mode (see Tips & Troubleshooting)"],
-                            [name: "params", type: "JSON_OBJECT", description: "JSON list, e.g. [104]. Leave blank if none."]]
+        command "execute", [[name: "command*", type: "STRING", description: "Advanced. e.g. find_me, set_custom_mode, get_consumable (see Tips & Troubleshooting)"],
+                            [name: "params", type: "JSON_OBJECT", description: "JSON list or object, e.g. [104]. Leave blank if none."]]
 
         attribute "dustCollection", "enum", ["off","on"]
         attribute "dockError", "enum", dockErrorCodes.values().collect{ it.toLowerCase() }
@@ -227,6 +233,13 @@ def vacuumRooms(String rooms, String mopWater = null) {
 }
 
 def vacuumScene(String sceneId) { parent?.componentScene(device.deviceNetworkId, sceneId) }
+
+// Dock jobs only start while docked; the vacuum ignores or rejects them otherwise.
+def dockControl(String action) {
+    String m = DOCK_ACTIONS.find { it.key.equalsIgnoreCase(action ?: "") }?.value
+    if (!m) { logE "Unknown Dock Control action '${action}'. Use ${DOCK_ACTIONS.keySet().join(', ')}."; return }
+    vacCommand(m)
+}
 
 def execute(String cmd, params = null) {
     def p = params
@@ -513,6 +526,8 @@ private void handleRpc(Map r) {
         case null: logD "Reply to an unknown request: ${r}"; break
         default:
             if (res == ["ok"] || res == ["OK"] || res == 0) logN "${method} accepted"
+            else if (res == "unknown_method" || res == ["unknown_method"])
+                logW "${method}: the vacuum doesn't know this command. Check the spelling against Tips & Troubleshooting${method in DOCK_ACTIONS.values() ? ', or your model may not support it locally' : ''}."
             else logN "${method}: ${res}"
     }
 }
@@ -593,12 +608,19 @@ private void pct(String name, v, long full) {
     sendIf(name, left, null, "%")
 }
 
+// segMap is the vacuum's [segment, cloud room id] list. Names: the app's list, else the last known, else "Room N".
 private void processRooms(List mapping) {
-    Map names = (cfg().rooms ?: [:]) as Map
+    state.segMap = (mapping ?: []).collect { [it[0].toString(), it[1].toString()] }
+    applyRooms((cfg().rooms ?: [:]) as Map)
+}
+
+private void applyRooms(Map names) {
+    Map old = (state.segRooms ?: [:]) as Map
     Map segs = [:]
-    (mapping ?: []).each { m -> segs[m[0].toString()] = names[m[1].toString()] ?: "Room ${m[0]}" }
+    ((state.segMap ?: []) as List).each { m -> segs[m[0]] = names[m[1]] ?: old[m[0]] ?: "Room ${m[0]}" }
     state.segRooms = segs
     sendIf("roomsList", roomsText(segs))
+    parent?.componentRooms(device.deviceNetworkId, segs)
 }
 
 private String roomsText(Map segs) {
@@ -612,7 +634,8 @@ private void pushLists(Map c) {
     if (c.model) sendIf("name", c.model as String)
     Map sc = (c.scenes ?: [:]) as Map
     sendIf("scenesList", sc ? sc.collect { k, n -> "( ${n}: ${k} )" }.join(" ") : "none")
-    if (state.segRooms) sendIf("roomsList", roomsText(state.segRooms as Map))
+    if (state.segMap) applyRooms((c.rooms ?: [:]) as Map)
+    else if (state.segRooms) { sendIf("roomsList", roomsText(state.segRooms as Map)); parent?.componentRooms(device.deviceNetworkId, state.segRooms as Map) }
     if (c.tipsUrl) sendIf("help", "<a href='${c.tipsUrl}' target='_blank'>Tips &amp; Troubleshooting</a>", "${device.displayName} help link updated")
 }
 

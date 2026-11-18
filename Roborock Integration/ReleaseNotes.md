@@ -1,3 +1,25 @@
+**Release: Roborock Integration v1.0.4**
+Rooms and scenes now show on each vacuum's card, room names survive signing out, and the dock can empty the bin or wash the mop from Hubitat.
+
+**Problem:**
+- Signing out cleared the room names, so **roomsList** fell back to Room 1, Room 2 and so on.
+- The only place to see room and scene IDs was the device page, buried in **roomsList** and **scenesList**.
+- Renamed rooms only caught up after a manual Rescan.
+- There was no command to empty the bin or wash the mop, and the Execute tip only listed a few commands. Guessing a command name got a bare "unknown_method" in the logs.
+
+**The Fix:**
+- **Vacuum cards** on the app's main page list each vacuum's rooms and scenes with their IDs, and a green dot marks the room it's cleaning now.
+- **Signing out keeps room and scene names.** The banner reads **Signed out**, rooms show as last known (with the date), and scenes are greyed out until you sign in. Rooms still clean by ID.
+- **Room names refresh once a day**, along with the scenes (one extra read from Roborock per day).
+- **Dock Control:** Empty Bin, Wash Mop, Stop Emptying or Stop Washing, while docked.
+- **Execute** tip and README list more commands: dock jobs, mop dryer time, child lock, voice volume, every fan and mop value, and read-only commands.
+- A command the vacuum doesn't know now logs a plain warning instead of "unknown_method".
+
+**Action needed:**
+Update through HPM. If you're signed out and your rooms already show as Room 1, Room 2, sign in once to bring the names back; after that they stay when you sign out.
+
+---
+
 **Release: Roborock Integration v1.0.3**
 Fixes the 1.0.2 update failing to install.
 

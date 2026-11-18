@@ -17,6 +17,9 @@
      -1.0.0: first release. Full logging back to 30 minutes, Diagnostics kept for support, Confirmed models in Tips.
      -1.0.3: error attribute is a string (the 1.0.2 enum list was over the hub's limit and wouldn't save).
      -1.0.2: full error code list from python-roborock (Home Assistant), Errors and alerts tip, Q7 Max wording.
+     -1.0.4: each vacuum card lists its rooms and scenes with IDs. Sign out keeps room and scene names (shown as
+      last known, scenes greyed) and the banner reads Signed out. Room names refresh daily with the scenes (one
+      home data read). Dock Control on the vacuum; Execute tip lists more commands.
 */
 
 import groovy.transform.Field
@@ -26,7 +29,7 @@ import javax.crypto.spec.SecretKeySpec
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String APP_VERSION = "1.0.3"
+@Field static final String APP_VERSION = "1.0.4"
 @Field static final long SCENES_COOLDOWN_MS = 300000L
 @Field static final Map scenesPending = new ConcurrentHashMap()
 @Field static final String APP_NAME = "Roborock Integration"
@@ -73,6 +76,7 @@ def mainPage() {
         section(sectionClass: "app-ui-links app-main-content") {
             paragraph rawHtml: true, columnHeader("Roborock account")
             if (!state.auth) {
+                if (vacs) paragraph "<span class='text-color-secondary' style='font-size:14px;'>Signed out. Local control keeps working, and room names stay as last known. Sign in again for scenes, Rescan and finding a changed IP.</span>"
                 input "email", "email", title: "Roborock account email", required: false, submitOnChange: true, width: 8
                 input "region", "enum", title: "Region", options: REGIONS, defaultValue: "https://usiot.roborock.com", width: 4
                 input "sendCode", "button", title: "Email me a sign-in code", width: 6
@@ -117,7 +121,9 @@ private Map bannerState(List vacs) {
     if (off) return [ok: false, title: off.size() == kids.size() ? "Vacuum offline" : "Some vacuums offline",
         summary: "Can't reach ${off.collect { esc(it.displayName) }.join(', ')}. Retrying on its own."]
     String proto = kids.collect { it.currentValue("protocol") }.findAll { it }.unique().join("/")
-    return [ok: true, title: "Integration ready", summary: "${countText(kids.size(), 'vacuum')} connected locally${proto ? ' &middot; ' + proto : ''}"]
+    String conn = "${countText(kids.size(), 'vacuum')} connected locally${proto ? ' &middot; ' + proto : ''}"
+    if (!state.auth) return [ok: false, title: "Signed out", summary: "${conn}. Local control keeps working; sign in for scenes, Rescan and IP recovery."]
+    return [ok: true, title: "Integration ready", summary: conn]
 }
 
 private String vacuumCardHtml(Map v) {
@@ -131,7 +137,39 @@ private String vacuumCardHtml(Map v) {
     String link = child ? " &middot; <a href='/device/edit/${child.id}' target='_blank' class='hub-text-link no-underline'>device page " +
         "<i class='fa-regular fa-external-link' style='font-size:0.8em'></i></a>" : ""
     "<div class='flex align-items-center gap-2 mt-2'><span class='font-semibold'>${esc(v.name)}</span>${tag}</div>" +
-        "<div class='text-color-secondary' style='font-size:14px;'>${esc(v.model ?: '')} &middot; local protocol ${esc(proto)}${mac}${link}</div>"
+        "<div class='text-color-secondary' style='font-size:14px;'>${esc(v.model ?: '')} &middot; local protocol ${esc(proto)}${mac}${link}</div>" +
+        (child ? roomsScenesHtml(v.duid as String, child) : "")
+}
+
+// Rooms (local, by ID) and scenes (cloud) as pills, like Sofabaton's activities. Signed out: last known, scenes greyed.
+private String roomsScenesHtml(String duid, child) {
+    boolean on = state.auth as boolean
+    String at = state.roomsAt ? new Date(state.roomsAt as long).format("MMM d, h:mm a", location.timeZone) : null
+    Map rooms = (state.vacRooms?.get(duid) ?: [:]) as Map
+    Map scenes = (state.scenes?.get(duid) ?: [:]) as Map
+    String here = child.currentValue("switch") == "on" ? child.currentValue("currentRoom") : null
+    String lbl = "font-size:12px;font-weight:700;margin:10px 0 6px"
+    String note = on ? "for Vacuum Rooms${at ? ' &middot; updated ' + at : ''}" : "last known${at ? ' &middot; from ' + at : ''}"
+    StringBuilder h = new StringBuilder("<div style='${lbl}'>Rooms <span class='text-color-secondary' style='font-weight:400'>${note}</span></div>")
+    if (rooms) {
+        h << "<div style='display:flex;flex-wrap:wrap;gap:8px'>"
+        rooms.sort { a, b -> (a.key as int) <=> (b.key as int) }.each { k, n -> h << pillHtml(n as String, k as String, n == here, false) }
+        h << "</div>"
+    } else h << "<div class='text-color-secondary' style='font-size:13px'>Waiting for the vacuum's room list. Reload this page once it's connected.</div>"
+    if (scenes) {
+        h << "<div style='${lbl}'>Scenes <span class='text-color-secondary' style='font-weight:400'>${on ? 'for Vacuum Scene (cloud)' : 'need sign-in'}</span></div>"
+        h << "<div style='display:flex;flex-wrap:wrap;gap:8px${on ? '' : ';opacity:.5'}'>"
+        scenes.each { k, n -> h << pillHtml(n as String, k as String, false, true) }
+        h << "</div>"
+    }
+    if (!on) h << "<div class='hub-text-warning' style='font-size:12px;margin-top:8px'>Rooms still clean by ID while signed out. Scenes run through Roborock's cloud, so they wait until you sign in.</div>"
+    return h.toString()
+}
+
+private String pillHtml(String name, String id, boolean here, boolean scene) {
+    String dot = here ? "<span style='display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--hubitat-success-color, #2e9e5b)'></span>" : ""
+    "<span title='${scene ? 'Scene' : 'Room'} ID ${esc(id)}' style='display:inline-flex;align-items:center;border:1px solid var(--surface-border, rgba(0,0,0,.15));border-radius:16px;padding:3px 10px;font-size:13px'>" +
+        "${dot}${esc(name)}<span style='margin-left:6px;background:#455a64;color:#fff;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:700'>${esc(id)}</span></span>"
 }
 
 private String currentLogLevel() { settings.logLevel ?: "Errors Only" }
@@ -159,9 +197,10 @@ def appButtonHandler(String btn) {
             case "verify": verifyCode(); break
             case "rescan": rescan(); break
             case "signOut":
-                ["auth", "authBad", "homeId", "rooms", "scenes", "base", "country", "countryCode", "lookupFor"].each { state.remove(it) }
+                // Room and scene names stay (not sensitive) so devices and cards keep them as last known.
+                ["auth", "authBad", "homeId", "base", "country", "countryCode", "lookupFor"].each { state.remove(it) }
                 syncCloudHelper()
-                state.msg = "Signed out. Vacuums keep running locally, but a changed IP won't be found automatically."
+                state.msg = "Signed out. Vacuums keep running locally and room names stay as last known. Scenes, Rescan and finding a changed IP need a sign-in."
                 break
         }
     } catch (e) {
@@ -301,6 +340,7 @@ private void scan() {
     devs.each { keys[it.duid] = it.localKey }
     state.keys = keys
     state.rooms = (home.rooms ?: []).collectEntries { [(it.id.toString()): it.name] }
+    state.roomsAt = now()
     Map scenes = [:]
     devs.each { d ->
         List res = hawkGet("/user/scene/device/${d.duid}")?.result as List
@@ -420,7 +460,43 @@ private void scheduleDailyScenes() {
     schedule("0 ${state.scenesAt[1]} ${state.scenesAt[0]} * * ?", "dailyScenes")
 }
 
-def dailyScenes() { scenesRefresh(((state.vacuums ?: []) as List).findAll { !it.gone }.collect { it.duid as String }, "daily", true) }
+def dailyScenes() {
+    roomsRefresh()
+    scenesRefresh(((state.vacuums ?: []) as List).findAll { !it.gone }.collect { it.duid as String }, "daily", true)
+}
+
+// Daily room names: one home data read (Roborock allows about 5 an hour). Vacuums, keys and IPs are left alone.
+private void roomsRefresh() {
+    if (!state.auth || !state.homeId) return
+    String path = "/v2/user/homes/${state.homeId}"
+    try {
+        asynchttpGet("roomsFetched", [uri: state.auth.rriot.r.a, path: path, contentType: "application/json", headers: ["Authorization": hawk(path)]])
+    } catch (e) { logN "Daily room names refresh failed: ${e.message}" }
+}
+
+def roomsFetched(resp, data) {
+    if (resp.status in [401, 403]) { markAuthBad("room names refresh"); return }
+    def body = null
+    try { body = resp.status == 200 ? resp.json : null } catch (ignored) { }
+    List rooms = body instanceof Map && body.result instanceof Map ? body.result.rooms as List : null
+    if (rooms == null) { logN "Daily room names refresh failed (${resp.status == 200 ? 'no list returned' : 'HTTP ' + resp.status}). Names stay as they were."; return }
+    Map fresh = rooms.collectEntries { [(it.id.toString()): it.name] }
+    state.roomsAt = now()
+    if (fresh == (state.rooms ?: [:])) { if (settings.logLevel == "Full") log.debug "Room names unchanged (daily)"; return }
+    state.rooms = fresh
+    logN "Room names updated (daily): ${fresh.values().join(', ') ?: 'none'}"
+    getChildDevices().findAll { it.deviceNetworkId != CLOUD_DNI }.each { it.configChanged() }
+}
+
+// From each vacuum: its rooms as segment ID -> name, for the vacuum card.
+void componentRooms(String dni, Map segs) {
+    String duid = duidFor(dni)
+    if (!duid) return
+    Map all = (state.vacRooms ?: [:]) as Map
+    if (all[duid] == segs) return
+    all[duid] = segs
+    state.vacRooms = all
+}
 
 // Vacuums that Initialize together (hub start) are batched into one queued run.
 void componentScenesRefresh(String dni) {
@@ -587,19 +663,19 @@ private List tipsTopics() {
                 "<p><b>Local</b> (keeps working with your internet down):</p>",
             checklist: [
                 [title: "Status", detail: "State, current room, clean area, time and percent, battery, errors, fan and mop modes, consumables."],
-                [title: "Commands from Hubitat", detail: "Vacuum Control (Start, Pause, Resume, Dock), Vacuum Rooms, and fan and mop settings through Execute."]
+                [title: "Commands from Hubitat", detail: "Vacuum Control (Start, Pause, Resume, Dock), Vacuum Rooms, Dock Control (empty bin, wash mop), and fan and mop settings through Execute."]
             ],
             append: "cloud"],
         [id: "cloud", label: "Cloud only", title: "What still needs Roborock's cloud", group: "How it works", icon: "pi-cloud",
             body: "<p>These go through Roborock's servers and stop working if your internet or Roborock's cloud is down:</p>",
             checklist: [
                 [title: "Sign-in and Rescan", detail: "Brings in your vacuums, their local keys, room names and scenes. Only needed at setup or after you rename rooms."],
-                [title: "Scenes list (automatic)", detail: "Your scenes are re-read from Roborock once a day (early morning), when you tap Initialize on a vacuum, and after a scene fails to run. Only the scene list is read, nothing else."],
+                [title: "Room names and scenes (automatic)", detail: "Room names and scenes are re-read from Roborock once a day (early morning). Scenes also refresh when you tap Initialize on a vacuum, and after a scene fails to run. Nothing else is read."],
                 [title: "IP recovery (automatic)", detail: "If a vacuum can't be reached for 90 seconds, the app asks Roborock's cloud for its current IP, checks the MAC matches, updates the IP and reconnects locally. At most once every 10 minutes per vacuum. Needs you to be signed in."],
                 [title: "Vacuum Scene", detail: "Roborock scenes live in your Roborock account, so running one goes through the cloud. It's the only device command that does."],
                 [title: "Jobs started from the Roborock app", detail: "The app sends its commands through Roborock's cloud. Hubitat still sees the job locally once it starts."]
             ],
-            warning: "<b>Signing out doesn't stop local control.</b><br>Vacuums keep running locally. You only need to sign in again to Rescan or run scenes. If the banner says <b>Sign in again</b>, Roborock stopped accepting the saved sign-in: sign out and back in."],
+            warning: "<b>Signing out doesn't stop local control.</b><br>Vacuums keep running locally, and room names stay as last known (the banner reads <b>Signed out</b>). You only need to sign in again to Rescan or run scenes. If the banner says <b>Sign in again</b>, Roborock stopped accepting the saved sign-in: sign out and back in."],
         [id: "models", label: "Confirmed models", title: "Confirmed models", group: "Getting started", icon: "pi-check-circle",
             body: "<p>Confirmed working locally:</p>" +
                 "<table style='border-collapse:collapse;margin:6px 0 10px'><tr><th style='text-align:left;padding:3px 14px 3px 0'>Model</th><th style='text-align:left;padding:3px 0'>Local protocol</th></tr>" +
@@ -623,7 +699,9 @@ private List tipsTopics() {
                 "<p><b>Refresh</b> checks the vacuum now and logs one line (Log level Normal): <i>Refreshed, no changes</i> or how many values changed.</p>" +
                 "<p>The vacuum closes its connection now and then. The driver reconnects within seconds and only shows offline if it stays down for 90 seconds.</p>"],
         [id: "rooms", label: "Rooms and scenes", title: "Rooms and scenes", group: "Using it", icon: "pi-th-large",
-            body: "<p><b>roomsList</b> on the device shows each room as <i>( Room name: ID )</i>. Use the IDs with <b>Vacuum Rooms</b>, for example <code>16, 17</code>.</p>" +
+            body: "<p>Each vacuum's card on the main page lists its rooms and scenes with their IDs. A green dot marks the room it's cleaning now.</p>" +
+                "<p><b>roomsList</b> on the device shows each room as <i>( Room name: ID )</i>. Use the IDs with <b>Vacuum Rooms</b>, for example <code>16, 17</code>.</p>" +
+                "<p><b>Room names</b> come from your Roborock account and refresh once a day. Signed out, they stay as last known, and rooms still clean by ID.</p>" +
                 "<p><b>scenesList</b> shows your Roborock scenes (the routines you build in the Roborock app) for <b>Vacuum Scene</b> (cloud).</p>" +
                 "<p><b>Added, renamed or deleted a scene?</b> The list catches up by itself:</p>" +
                 "<ul><li><b>Once a day</b>, early in the morning.</li>" +
@@ -631,7 +709,7 @@ private List tipsTopics() {
                 "<li><b>After a scene fails</b> to run (usually a deleted one), so it drops off the list.</li>" +
                 "<li><b>Rescan</b> on the main page also refreshes scenes, along with rooms.</li></ul>" +
                 "<p>This needs you to be signed in. If you're signed out, the list stays as it was.</p>" +
-                "<p>Renamed a room? Tap <b>Rescan vacuums and rooms</b> on the main page. Roborock limits how often this can run, so the button waits 5 minutes between scans.</p>" +
+                "<p>Renamed a room? It catches up overnight, or tap <b>Rescan vacuums and rooms</b> on the main page to update it now. Roborock limits how often this can run, so the button waits 5 minutes between scans.</p>" +
                 "<p><b>Multi-level homes:</b> room IDs only cover the map the vacuum has loaded. Switch maps in the Roborock app, then Rescan, to see the other floor's rooms.</p>" +
                 "<p><b>mopMode</b> and <b>mopWaterMode</b> show the vacuum's saved settings. A one-time choice in the Roborock app (like a Deep+ route for one run) isn't saved, so it won't show here. " +
                 "Vacuums with a water flow slider (like the Saros) also show the slider number in <b>mopWaterLevel</b>.</p>"],
@@ -646,16 +724,21 @@ private List tipsTopics() {
             ],
             warning: "The card updates at most once a minute, so a change can take up to a minute to show. Turning Dashboard tile off removes the attribute."],
         [id: "execute", label: "Execute (advanced)", title: "Sending a raw command with Execute", group: "Using it", icon: "pi-code",
-            body: "<p><b>Execute</b> sends a Roborock command straight to the vacuum. Type the command, and any parameters as a JSON list (leave blank if none). " +
+            body: "<p><b>Execute</b> sends a Roborock command straight to the vacuum. Type the command, and any parameters as JSON (a list like [104] or an object like {\"lock_status\":0}; leave blank if none). " +
                 "It also works from a Rule Machine custom action, for example to set fan power before a room clean.</p>",
             checklist: [
                 [title: "find_me", detail: "No parameters. The vacuum announces itself."],
-                [title: "set_custom_mode", detail: "Fan power: [101] Quiet, [102] Balanced, [103] Turbo, [104] Max, [108] Max+."],
-                [title: "set_mop_mode", detail: "Mop route: [300] Standard, [301] Deep, [303] Deep+, [304] Fast."],
-                [title: "set_water_box_custom_mode", detail: "Water flow on older models: [200] Off, [201] Low, [202] Medium, [203] High. Not tested on slider models like the Saros yet."],
-                [title: "get_status", detail: "No parameters. With Log level on Full, the vacuum's raw reply shows in the logs."]
+                [title: "set_custom_mode", detail: "Fan power: [101] Quiet, [102] Balanced, [103] Turbo, [104] Max, [105] Off (mop only), [106] Custom, [108] Max+, [110] Smart. Not every model has every level."],
+                [title: "set_mop_mode", detail: "Mop route: [300] Standard, [301] Deep, [302] Custom, [303] Deep+, [304] Fast, [306] Smart."],
+                [title: "set_water_box_custom_mode", detail: "Water flow on older models: [200] Off, [201] Low, [202] Medium, [203] High. Slider models like the Saros use other values, so read yours first with get_water_box_custom_mode."],
+                [title: "app_start_collect_dust / app_stop_collect_dust", detail: "No parameters. Empty the dust bin while docked, or stop. Same as Dock Control."],
+                [title: "app_start_wash / app_stop_wash", detail: "No parameters. Wash the mop while docked, or stop. Same as Dock Control."],
+                [title: "app_set_dryer_setting", detail: "Mop dryer time in seconds, for example {\"status\":1,\"on\":{\"dry_time\":10800}} for 3 hours. Read the current setting with app_get_dryer_setting."],
+                [title: "set_child_lock_status", detail: "{\"lock_status\":1} locks the buttons on the vacuum, {\"lock_status\":0} unlocks."],
+                [title: "change_sound_volume", detail: "Voice volume 0 to 100, for example [60]. test_sound_volume plays a sample."],
+                [title: "Read-only (no parameters)", detail: "get_clean_summary, get_custom_mode, get_mop_mode, get_water_box_custom_mode, get_child_lock_status, get_sound_volume, get_dnd_timer, get_multi_maps_list. With Log level on Normal, the reply shows in the logs. get_status, get_consumable and get_room_mapping update the device instead; Diagnostics shows them raw."]
             ],
-            warning: "Nothing is checked before sending. A wrong command or parameter is rejected by the vacuum and the reason shows in the logs."],
+            warning: "Nothing is checked before sending. A wrong command or parameter is rejected by the vacuum and the reason shows in the logs. Read a setting with its get_ command before changing it. Commands come from python-roborock (Home Assistant); not every model supports every one."],
         [id: "moving", label: "Moving from bloodtick", title: "Moving from bloodtick's driver", group: "Using it", icon: "pi-arrow-right-arrow-left",
             body: "<p>Attributes match bloodtick's driver, apart from <b>roomsList</b> and <b>scenesList</b>. Commands take the same values but have new names, so rules need re-pointing. Hubitat's <b>Swap Device</b> doesn't list app devices, so move them by hand:</p>",
             checklist: [
