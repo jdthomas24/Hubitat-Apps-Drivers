@@ -1,3 +1,18 @@
+**Release: Bambu Lab Integration v0.2.12 (beta)**
+Empty AMS slots are caught by the AMS's filament sensors again.
+
+**Problem:**
+- 0.2.10 stopped using the AMS's filament sensors for emptySlots until their layout was confirmed. Without them, a spool that runs out while its tag is still read keeps showing as loaded.
+
+**The Fix:**
+- The sensors are back, with the layout confirmed from Full logs on two H2Ds: one per slot on a 4-slot AMS, and one per AMS HT.
+- A slot is empty when the AMS reports no filament type, or its sensor says nothing is loaded.
+
+**Action needed:**
+Update through HPM. No Done needed.
+
+---
+
 **Release: Bambu Lab Integration v0.2.11 (beta)**
 Full logging now shows each AMS slot's details in full.
 
