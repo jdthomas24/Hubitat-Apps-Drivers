@@ -1,3 +1,18 @@
+**Release: Bambu Lab Integration v0.2.10 (beta)**
+Loaded AMS slots no longer show as empty.
+
+**Problem:**
+- On some printers, loaded AMS slots showed as empty, with no color and no amount, and were listed in emptySlots. The AMS's filament sensor field was read with the wrong layout.
+
+**The Fix:**
+- A slot is empty when the AMS reports no filament in it. The sensor field is no longer used for that.
+- At Full logging, the printer logs the sensor field when it changes, to work out its layout for a later release.
+
+**Action needed:**
+Update through HPM. No Done needed. Slots catch up at the next check, or right away with Refresh.
+
+---
+
 **Release: Bambu Lab Integration v0.2.9 (beta)**
 A loaded spool the AMS reports at 0% no longer counts as empty.
 
