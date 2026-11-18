@@ -30,7 +30,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.2.7"
+@Field static final String APP_VERSION   = "0.2.8"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -232,10 +232,15 @@ private String printerCardHtml(int i, dev) {
     try { kids = dev.getChildDevices() ?: [] } catch (e) { }
     kids.sort { it.displayName }.each { k ->
         if (k.deviceNetworkId.contains("-ams")) {
-            String dots = (1..4).collect { n ->
+            List lows = (k.currentValue("lowSlots") ?: "").toString().tokenize(", ")
+            String dots = (1..4).findAll { n -> k.currentValue("tray${n}") != null }.collect { n ->
+                String t = k.currentValue("tray${n}").toString()
                 String col = k.currentValue("tray${n}Color")
-                col && col != "none" ? "<span class='bb-dot' style='background:${esc(col)}' title='${esc(k.currentValue("tray${n}") ?: '')}'></span>" :
-                    "<span class='bb-dot' style='background:transparent' title='empty'></span>"
+                def pm = t =~ /, (\d+)%$/
+                String pct = pm.find() ? pm.group(1) + "%" : ""
+                String dot = col && col != "none" ? "<span class='bb-dot' style='background:${esc(col)}'></span>" : "<span class='bb-dot' style='background:transparent'></span>"
+                "<span class='bb-slot' title='Slot ${n}: ${esc(t)}'>${dot}" +
+                    (pct ? "<span class='bb-pct${lows.contains(n.toString()) ? ' hub-text-warning' : ''}'>${pct}</span>" : "") + "</span>"
             }.join("")
             c << "<a href='/device/edit/${k.id}' target='_blank' class='bb-pill'>${esc(shortName(k, dev))}${dots}" +
                 "<i class='fa-regular fa-external-link hub-text-link' style='margin-left:8px;font-size:0.75em'></i></a>"
@@ -513,6 +518,8 @@ private List tipsTopics() {
                 [title: "Print failed or error", detail: "printState becomes Failed, or errorCount above 0. errorText says what's wrong in plain English, and the card links each code to the Bambu Lab Wiki."],
                 [title: "Door opened", detail: "door becomes open (H2D and printers with a door sensor). In Rule Machine it's under Custom Attribute. The printer's own \"front door is open\" notice isn't counted as an error, so errorCount rules don't fire when you check a print."],
                 [title: "What printed last", detail: "lastPrint keeps the last finished or failed file. currentPrint is the job printing now, or Not printing."],
+                [title: "AMS slot empty", detail: "On the AMS device, emptySlots changes from none: a spool was pulled or ran out. It lists the slots, like 2, 4."],
+                [title: "Filament low", detail: "lowSlots changes from none: a slot is at or below Low filament warning (printer device Preferences, 10% by default). Needs a Bambu RFID tag on the spool."],
                 [title: "Firmware update", detail: "firmwareUpdate becomes available. Update from the printer or the Bambu apps."],
                 [title: "Ready to print", detail: "bedStatus becomes At temp."],
                 [title: "Dashboard", detail: "Add the printer as an Attribute tile and pick tile: state, file, progress bar, layers, time left and temperatures."]
@@ -714,6 +721,9 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
   a.bb-link { color: var(--hubitat-link-color, #1565c0); text-decoration: none; }
   a.bb-link:hover { text-decoration: underline; }
   .bb-dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-left: 4px; border: 1px solid rgba(127,127,127,.5); }
+  .bb-slot { display: inline-flex; align-items: center; margin-left: 6px; }
+  .bb-slot .bb-dot { margin-left: 0; }
+  .bb-pct { font-size: 0.75em; margin-left: 3px; opacity: 0.85; }
   .app-main-content :is([name*='refreshP_'],[name*='remove_'],[id*='refreshP_'],[id*='remove_']) {
     font-size: 13px !important; padding: 3px 12px !important; min-height: 0 !important; height: auto !important;
     line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid var(--hubitat-control-border, #d0d7de) !important;

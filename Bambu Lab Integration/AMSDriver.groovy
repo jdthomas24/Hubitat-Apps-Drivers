@@ -6,7 +6,8 @@
      -One device per AMS unit, created by the Printer device. Values come from the Printer through parse().
      -humidity is the AMS reading in percent (newer firmware); dryness is Bambu's 1 to 5 humidity index as
       reported. Which end is dry is unconfirmed until a real log.
-     -tray1..tray4: filament type and amount left; trayNColor: the filament color as #RRGGBB.
+     -tray1..tray4: filament type and amount left; trayNColor: the filament color as #RRGGBB. AMS HT has tray1 only.
+     -emptySlots / lowSlots (0.2.8): slot numbers ("2, 4") or "none". Low is at or below the printer's Low filament pref.
      -Events carry an optional delta: smaller changes are skipped (temperature step from the app).
 */
 
@@ -26,6 +27,8 @@ metadata {
         attribute "tray2Color", "string"
         attribute "tray3Color", "string"
         attribute "tray4Color", "string"
+        attribute "emptySlots", "string"
+        attribute "lowSlots",   "string"
     }
 
     preferences {
@@ -35,7 +38,7 @@ metadata {
 
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.7"
+@Field static final String VERSION     = "0.2.8"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -58,7 +61,7 @@ def parse(List<Map> events) {
         if (moved(device.currentValue(e.name as String), e.value, e.delta)) {
             Map out = [name: e.name, value: e.value]
             if (e.unit) out.unit = e.unit
-            if ((e.name as String).matches(/tray\d/) && lvl() >= 1) relay("info", "${e.name}: ${e.value}")
+            if ((e.name as String).matches(/tray\d|emptySlots|lowSlots/) && lvl() >= 1) relay("info", "${e.name}: ${e.value}")
             sendEvent(out)
         }
     }

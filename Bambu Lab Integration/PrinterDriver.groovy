@@ -38,6 +38,9 @@
      -door from print.stat bit 0x00800000; firmwareUpdate from upgrade_state; external spools from vir_slot
       254/255 (or vt_tray), shown once loaded.
      -Children (app's Equipment page): one AMS device per unit and the chamber light. Exclusions as IntelliCenter.
+     -AMS (0.2.8): ids 0-3 are 4-tray units, 128+ are single-tray AMS HT ("AMS HT 1"). A tray is empty when it has no
+      type, remain is 0, or its tray_exist_bits bit (unit*4 + tray, 4-tray units only) is clear. emptySlots and
+      lowSlots (remain at or below the Low filament pref) per unit.
      -Reconnect backoff 5 s to 5 min; still down after 4 tries warns once.
 */
 
@@ -100,6 +103,8 @@ metadata {
             defaultValue: "15", description: "A print that starts shows up within this time, or right away on Refresh"
         input name: "reportWifi", type: "bool", title: "Report Wi-Fi signal", defaultValue: true,
             description: "Changes of 10 dBm or more, at most every 15 minutes"
+        input name: "lowFilament", type: "enum", title: "Low filament warning at", options: ["5": "5%", "10": "10%", "15": "15%", "20": "20%", "25": "25%"],
+            defaultValue: "10", description: "AMS lowSlots lists slots at or below this (Bambu RFID tags only)"
         input name: "helpInfo", type: "hidden", title: fmtHelpInfo()
     }
 }
@@ -108,7 +113,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.7"
+@Field static final String VERSION     = "0.2.8"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -234,6 +239,7 @@ private opt(String k) {
     if (k == "idle") return ((settings?.idleEvery ?: "15") as String).toInteger() * 60
     if (k == "tempStep") return ((settings?.tempStep ?: "5") as String).toBigDecimal()
     if (k == "unit") return settings?.tempUnit ?: "C"
+    if (k == "lowFilament") return ((settings?.lowFilament ?: "10") as String).toInteger()
     Map m = mem()
     Map o = m.opts as Map
     if (o == null) { o = (state.opts ?: [:]) as Map; m.opts = o }
@@ -914,19 +920,26 @@ private void ams(Map r) {
     String now_ = a.tray_now?.toString()
     if (now_ != null) {
         Integer t = toInt(now_)
-        String label = t == null || t == 255 ? "none" : t == 254 ? "external spool" : "AMS ${(t / 4 as int) + 1} tray ${(t % 4) + 1}"
+        String label = t == null || t == 255 ? "none" : t == 254 ? "external spool" : isHt(t) ? amsName(t) : "AMS ${(t / 4 as int) + 1} tray ${(t % 4) + 1}"
         report("activeTray", label)
     }
     if (!(a.ams instanceof List)) return
+    Long bits = null
+    try { if (a.tray_exist_bits != null) bits = Long.parseLong(a.tray_exist_bits.toString(), 16) } catch (e) { }
+    int lowPct = opt("lowFilament") as int
     a.ams.each { u ->
         if (!(u instanceof Map)) return
         String id = u.id?.toString()
-        if (id == null) return
+        Integer uid = toInt(id)
+        if (id == null || uid == null) return
+        boolean ht = isHt(uid)
         String key = "ams${id}"
-        catalogPut(key, [k: "ams", n: "AMS ${(toInt(id) ?: 0) + 1}"])
+        catalogPut(key, [k: "ams", n: amsName(uid)])
         def child = childFor(key)
         if (!child) return
+        if (ht) renameHt(child, uid)
         List ev = []
+        List empty = [], low = []
         BigDecimal hum = num(u.humidity_raw)
         if (hum != null) ev << [name: "humidity", value: hum.setScale(0, java.math.RoundingMode.HALF_UP), unit: "%", delta: 5]
         if (u.humidity != null) ev << [name: "dryness", value: "${u.humidity}/5"]
@@ -934,19 +947,39 @@ private void ams(Map r) {
         if (t != null) {
             ev << [name: "temperature", value: toScale(t).setScale(1, java.math.RoundingMode.HALF_UP), unit: "°${unitScale()}", delta: (opt("tempStep") ?: 5)]
         }
-        (u.tray instanceof List ? u.tray : []).each { tr ->
+        List trays = u.tray instanceof List ? u.tray as List : []
+        trays.each { tr ->
+            if (!(tr instanceof Map)) return
             Integer ti = toInt(tr.id)
-            if (ti == null || ti > 3) return
-            String type = tr.tray_type?.toString()
-            String desc = type ? "${type}${tr.tray_sub_brands ? ' (' + tr.tray_sub_brands + ')' : ''}" : "empty"
+            if (ti == null || ti > (ht ? 0 : 3)) return
+            String type = tr.tray_type?.toString() ?: null
             def rem = toInt(tr.remain)
-            if (type && rem != null && rem >= 0) desc += ", ${rem}%"
-            String col = tr.tray_color ? "#${tr.tray_color.toString().take(6)}" : ""
+            boolean has = type != null && rem != 0
+            if (has && !ht && bits != null && uid < 4 && ((bits >> (uid * 4 + ti)) & 1L) == 0L) has = false
+            String desc = has ? "${type}${tr.tray_sub_brands ? ' (' + tr.tray_sub_brands + ')' : ''}" : "empty"
+            if (has && rem != null && rem >= 0) desc += ", ${rem}%"
+            String col = has && tr.tray_color ? "#${tr.tray_color.toString().take(6)}" : ""
             ev << [name: "tray${ti + 1}", value: desc]
             ev << [name: "tray${ti + 1}Color", value: col ?: "none"]
+            if (!has) empty << (ti + 1)
+            else if (rem != null && rem >= 0 && rem <= lowPct) low << (ti + 1)
+        }
+        if (trays) {
+            ev << [name: "emptySlots", value: empty ? empty.sort().join(", ") : "none"]
+            ev << [name: "lowSlots", value: low ? low.sort().join(", ") : "none"]
         }
         if (ev) child.parse(ev)
     }
+}
+
+private boolean isHt(Integer id) { id != null && id >= 128 && id < 254 }
+private String amsName(Integer id) { isHt(id) ? "AMS HT ${id - 127}" : "AMS ${(id ?: 0) + 1}" }
+
+// 0.2.7 named an AMS HT "AMS 129". Rename it once if the label is still that default.
+private void renameHt(child, Integer uid) {
+    String old = "${device.displayName} AMS ${uid + 1}"
+    String nu = "${device.displayName} ${amsName(uid)}"
+    try { if (child.label == old) { child.setLabel(nu); logN "renamed ${old} to ${nu}" } } catch (e) { }
 }
 
 // Every chamber_light* node (H2D has two). On when any of them is.

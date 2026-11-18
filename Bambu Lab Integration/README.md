@@ -1,6 +1,6 @@
 # Bambu Lab Integration for Hubitat
 
-> **Status: v0.2.7 beta, tested on two H2Ds. X1, P1 and A1 should work but are untested.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
+> **Status: v0.2.8 beta, tested on two H2Ds. X1, P1 and A1 should work but are untested.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
 
 ## What you get
 
@@ -8,7 +8,7 @@
 |---|---|
 | **Printer** (one per printer) | Print state and stage, progress, elapsed time, time left and ETA, layers, current and last print, heater status (Heating to target, At temp, Cooling, Off) and temperatures for the nozzle, bed and chamber (right and left nozzles on the H2D), speed, chamber light, door, active filament and external spools, errors in plain English with a Wiki link, firmware and firmware updates, dashboard tile |
 | **Chamber light** | A switch for the printer's chamber light (both modes; on the H2D it switches both chamber lights) |
-| **AMS** (one per unit) | Humidity, temperature, and filament type, color and amount for each tray |
+| **AMS** (one per unit) | Humidity, temperature, and filament type, color and amount for each tray (one tray on an AMS HT), plus empty and low slots |
 
 You choose which light and AMS devices Hubitat creates on the app's **Equipment** page.
 
@@ -33,7 +33,7 @@ You choose which light and AMS devices Hubitat creates on the app's **Equipment*
 3. Tap **Done**. Each printer connects and adds its light and AMS devices within a few seconds.
 4. Open the app again and tap **Equipment** to turn off anything you don't want in Hubitat.
 
-Once connected, each printer shows as a card with its status, mode and AMS units (tray colors). **Edit Printer** opens its settings on their own page (tap **Done** there to save and reconnect), **Refresh** asks for a status now, and **Remove Printer** (tap twice) deletes that printer and its devices. The app's **Tips & Troubleshooting** page covers choosing a mode, setup, rules and common problems.
+Once connected, each printer shows as a card with its status, mode and AMS units (each tray's color and amount left, with low ones highlighted). **Edit Printer** opens its settings on their own page (tap **Done** there to save and reconnect), **Refresh** asks for a status now, and **Remove Printer** (tap twice) deletes that printer and its devices. The app's **Tips & Troubleshooting** page covers choosing a mode, setup, rules and common problems.
 
 A DHCP reservation for the printer keeps its IP address from changing.
 
@@ -64,6 +64,7 @@ These are on each printer device's **Preferences** tab.
 | Check while printing every | 30 seconds | How often Hubitat asks a printing printer for its status. A finished print or an error shows up within this time. |
 | Check while idle every | 15 minutes | A health check while idle. A print that starts shows up within this time, or right away if you tap Refresh. |
 | Report Wi-Fi signal | On | wifiSignal on changes of 10 dBm or more, at most every 15 minutes. Turn off to stop Wi-Fi events. |
+| Low filament warning at | 10% | AMS lowSlots lists slots at or below this. Needs a Bambu RFID tag on the spool. |
 | At temperature, report changes of | 5° | While a heater warms up or cools down only its status changes. Once it's at temperature (or off), smaller changes are skipped. |
 | Temperature units | Celsius | Matches the printer screen, slicers and filament specs. Choose **Hub's setting** for °F. |
 
@@ -88,6 +89,7 @@ These are on each printer device's **Preferences** tab.
 - **ETA** is when the print should finish, to the nearest 5 minutes (with the weekday if it's not today), or -- when not printing.
 - **firmwareUpdate** is none, or available with the new version.
 - **externalSpool** and **externalSpool2** show the filament on the external holders once one is loaded.
+- **AMS devices:** **tray1** to **tray4** show the filament and amount left (`PLA (Basic), 85%`) or `empty`. An AMS HT has **tray1** only. **emptySlots** lists empty slots (`2, 4`) or `none`, which covers a pulled spool and a runout. **lowSlots** lists slots at or below **Low filament warning at**. One rule per AMS covers every slot. The amount left needs a Bambu RFID tag on the spool and **Update Remaining Capacity** turned on in the AMS settings.
 
 **Error text** comes from a small table in this folder's **HMS** directory, fetched from GitHub the first time a code shows up (nothing goes to Bambu); only the matching line is kept, in memory. After a reboot the text for errors still showing is fetched again. The English text and Wiki links come from the [ha-bambulab](https://github.com/greghesp/ha-bambulab) project (MIT license).
 
