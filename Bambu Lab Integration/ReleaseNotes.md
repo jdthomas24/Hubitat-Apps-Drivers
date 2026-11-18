@@ -1,3 +1,18 @@
+**Release: Bambu Lab Integration v0.2.9 (beta)**
+A loaded spool the AMS reports at 0% no longer counts as empty.
+
+**Problem:**
+- Some loaded spools report 0% when the AMS has no estimate for them yet. 0.2.8 treated 0% as a spool that ran out, so those slots would show as empty and trigger emptySlots rules.
+
+**The Fix:**
+- 0% now means no estimate: the slot shows no amount and isn't counted as empty or low.
+- Empty comes only from the filament being gone from the slot (no filament type, or the AMS's filament sensor says it's empty), which still catches a real runout.
+
+**Action needed:**
+Update through HPM. No Done needed. The printer card catches up at the next check, or right away with Refresh.
+
+---
+
 **Release: Bambu Lab Integration v0.2.8 (beta)**
 See how much filament is left in each AMS slot, and get told when a slot is empty or running low.
 

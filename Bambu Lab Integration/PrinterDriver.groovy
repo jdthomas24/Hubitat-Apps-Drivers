@@ -39,8 +39,8 @@
       254/255 (or vt_tray), shown once loaded.
      -Children (app's Equipment page): one AMS device per unit and the chamber light. Exclusions as IntelliCenter.
      -AMS (0.2.8): ids 0-3 are 4-tray units, 128+ are single-tray AMS HT ("AMS HT 1"). A tray is empty when it has no
-      type, remain is 0, or its tray_exist_bits bit (unit*4 + tray, 4-tray units only) is clear. emptySlots and
-      lowSlots (remain at or below the Low filament pref) per unit.
+      type or its tray_exist_bits bit (unit*4 + tray, 4-tray units only) is clear. remain 0 or -1 means no estimate
+      (0.2.9): no %, never empty or low. emptySlots and lowSlots (remain 1 to the Low filament pref) per unit.
      -Reconnect backoff 5 s to 5 min; still down after 4 tries warns once.
 */
 
@@ -113,7 +113,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.8"
+@Field static final String VERSION     = "0.2.9"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -954,15 +954,15 @@ private void ams(Map r) {
             if (ti == null || ti > (ht ? 0 : 3)) return
             String type = tr.tray_type?.toString() ?: null
             def rem = toInt(tr.remain)
-            boolean has = type != null && rem != 0
+            boolean has = type != null
             if (has && !ht && bits != null && uid < 4 && ((bits >> (uid * 4 + ti)) & 1L) == 0L) has = false
             String desc = has ? "${type}${tr.tray_sub_brands ? ' (' + tr.tray_sub_brands + ')' : ''}" : "empty"
-            if (has && rem != null && rem >= 0) desc += ", ${rem}%"
+            if (has && rem != null && rem > 0) desc += ", ${rem}%"
             String col = has && tr.tray_color ? "#${tr.tray_color.toString().take(6)}" : ""
             ev << [name: "tray${ti + 1}", value: desc]
             ev << [name: "tray${ti + 1}Color", value: col ?: "none"]
             if (!has) empty << (ti + 1)
-            else if (rem != null && rem >= 0 && rem <= lowPct) low << (ti + 1)
+            else if (rem != null && rem > 0 && rem <= lowPct) low << (ti + 1)
         }
         if (trays) {
             ev << [name: "emptySlots", value: empty ? empty.sort().join(", ") : "none"]
