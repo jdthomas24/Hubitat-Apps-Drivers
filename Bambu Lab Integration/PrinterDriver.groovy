@@ -39,7 +39,7 @@
       254/255 (or vt_tray), shown once loaded.
      -Children (app's Equipment page): one AMS device per unit and the chamber light. Exclusions as IntelliCenter.
      -AMS (0.2.8): ids 0-3 are 4-tray units, 128+ are single-tray AMS HT ("AMS HT 1"). A tray is empty when it has no
-      type. tray_exist_bits is only logged at Full (0.2.10): unit*4+tray didn't match an H2D, layout unconfirmed. remain 0 or -1 means no estimate
+      type. tray_exist_bits and each tray's raw fields (on change) are logged at Full (0.2.10/0.2.11): unit*4+tray didn't match an H2D, layout unconfirmed. remain 0 or -1 means no estimate
       (0.2.9): no %, never empty or low. emptySlots and lowSlots (remain 1 to the Low filament pref) per unit.
      -Reconnect backoff 5 s to 5 min; still down after 4 tries warns once.
 */
@@ -113,7 +113,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.10"
+@Field static final String VERSION     = "0.2.11"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -952,6 +952,12 @@ private void ams(Map r) {
             if (!(tr instanceof Map)) return
             Integer ti = toInt(tr.id)
             if (ti == null || ti > (ht ? 0 : 3)) return
+            if (lvl() >= 2) {
+                String raw = JsonOutput.toJson(tr)
+                Map seen = (mem().trayRaw ?: (mem().trayRaw = new java.util.concurrent.ConcurrentHashMap())) as Map
+                String tk = "${uid}-${ti}"
+                if (seen[tk] != raw) { seen[tk] = raw; logF "${amsName(uid)} slot ${ti + 1}: ${raw}" }
+            }
             String type = tr.tray_type?.toString() ?: null
             def rem = toInt(tr.remain)
             boolean has = type != null

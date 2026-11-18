@@ -1,3 +1,17 @@
+**Release: Bambu Lab Integration v0.2.11 (beta)**
+Full logging now shows each AMS slot's details in full.
+
+**Problem:**
+- Some loaded spools show no amount left in Hubitat while Bambu Handy shows one. Full logging cuts each printer report short, so the AMS details never made it into the log to find out why.
+
+**The Fix:**
+- At Full logging, each AMS slot logs its own line with everything the printer sends for it, whenever it changes (for example "AMS 1 slot 3: {...}").
+
+**Action needed:**
+Update through HPM. No Done needed. Logging stays as set; Full turns itself off after 30 minutes.
+
+---
+
 **Release: Bambu Lab Integration v0.2.10 (beta)**
 Loaded AMS slots no longer show as empty.
 
