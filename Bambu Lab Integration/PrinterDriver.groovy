@@ -12,6 +12,9 @@
      -Event steps (0.2.7, to keep device history small): progress 2% (0 and 100 exact), time left 10 min (5 in the
       last hour), elapsed 15 min, layers 5, ETA only when it moves 10+ min (or in the last 10), Wi-Fi 10 dBm and at most
       every 15 min (reportWifi pref, on by default). The tile shows "off" for an idle heater so cooling doesn't redraw it.
+     -Diagnostics (0.2.17): Refresh plus get_version, then one log block (DIAGNOSTICS to END, level diag, always shown)
+      with settings, connection, module firmware and the raw merged status for the main keys. Serials are masked,
+      the access code is never included.
      -P1/A1 (0.2.3): pushall at most every 5 min (more lags them; they send changes only, not full reports).
       Checks in between listen 5 s and merge what arrives, never a miss. X1/H2 by model; unknown counts as P1/A1.
       Refresh always sends pushall.
@@ -94,6 +97,7 @@ metadata {
 
         command "printerControl", [[name: "Action*", type: "ENUM", description: "Needs Monitor and control mode in the app",
                                     constraints: ["Pause", "Resume", "Stop", "Speed: Silent", "Speed: Standard", "Speed: Sport", "Speed: Ludicrous"]]]
+        command "diagnostics"
     }
 
     preferences {
@@ -108,6 +112,8 @@ metadata {
             description: "Changes of 10 dBm or more, at most every 15 minutes"
         input name: "lowFilament", type: "enum", title: "Low filament warning at", options: ["5": "5%", "10": "10%", "15": "15%", "20": "20%", "25": "25%"],
             defaultValue: "10", description: "AMS lowSlots lists slots at or below this (Bambu RFID tags only)"
+        input name: "diagNote", type: "paragraph", title: "<b>Diagnostics button</b>",
+            description: "<i>Only needed when asking for help. It writes one support report to Logs (DIAGNOSTICS to END) to copy into a forum post. It doesn't change anything on the printer and never includes the access code.</i>"
         input name: "helpInfo", type: "hidden", title: fmtHelpInfo()
     }
 }
@@ -116,7 +122,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.16"
+@Field static final String VERSION     = "0.2.17"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -215,6 +221,45 @@ def refresh() {
     unschedule("startSample")
     startSample()
 }
+
+// ============================================================
+// Diagnostics
+// ============================================================
+
+@Field static final List DIAG_KEYS = ["gcode_state", "stg_cur", "mc_print_stage", "print_type", "print_error", "hms", "mc_percent",
+    "mc_remaining_time", "layer_num", "total_layer_num", "spd_lvl", "ams", "vt_tray", "vir_slot", "device", "lights_report",
+    "nozzle_diameter", "nozzle_type", "home_flag", "sdcard", "upgrade_state", "wifi_signal"]
+
+def diagnostics() {
+    slog("info", "diagnostics requested, the report follows in about 10 seconds")
+    boolean up = false
+    try { up = interfaces.mqtt.isConnected() } catch (e) { }
+    if (up && state.serial) { try { publish([info: [sequence_id: seq(), command: "get_version"]]) } catch (e) { } }
+    refresh()
+    runIn(10, "diagReport")
+}
+
+def diagReport() {
+    Map m = mem()
+    Map r = (m.rep ?: [:]) as Map
+    def J = { v -> v == null ? "not reported" : JsonOutput.toJson(v) }
+    long rx = (m.lastRx ?: 0L) as long
+    String ago = rx ? "${((now() - rx) / 1000L) as long} s ago" : "never"
+    List mods = (m.modules ?: []) as List
+    StringBuilder o = new StringBuilder("DIAGNOSTICS (copy everything from here to END)")
+    o << "\nIntegration ${VERSION} | Mode: ${device.currentValue('mode') ?: '?'} | Check printing ${settings?.checkEvery ?: '30'} s, idle ${settings?.idleEvery ?: '15'} min | Sampling: ${limited() ? 'P1/A1 (pushall every 5 min)' : 'X1/H2'}"
+    o << "\nPrinter: ${device.currentValue('model') ?: '?'} | Firmware ${device.currentValue('firmware') ?: '?'} | Serial ${mask(serial())}"
+    o << "\nConnection: ${device.currentValue('connectionStatus') ?: '?'} | Last status ${ago} | Reconnect attempts ${m.attempt ?: 0}"
+    o << "\nState: ${device.currentValue('printState')} | Stage: ${device.currentValue('stage')} | Pause: ${device.currentValue('pauseType')} | Errors: ${device.currentValue('errorCodes') ?: 'none'}"
+    o << "\nModules: ${mods ? J(mods) : 'not reported yet, tap Diagnostics again'}"
+    DIAG_KEYS.each { k -> if (r.containsKey(k)) o << "\n${k}: ${J(r[k])}" }
+    List other = r.keySet().findAll { !(it in DIAG_KEYS) }.collect { it.toString() }.sort()
+    if (other) o << "\nOther keys: ${other.join(', ')}"
+    o << "\nEND"
+    slog("diag", o.toString())
+}
+
+private String mask(String s) { !s ? "?" : s.length() <= 7 ? "***" : s.take(4) + "..." + s.takeRight(3) }
 
 // For the app's status line.
 String getSerial() { serial() }
@@ -568,6 +613,8 @@ private void checkResult(Map r, String kind) {
 }
 
 private void readVersion(Map info) {
+    if (info.module instanceof List) mem().modules = (info.module as List).findAll { it instanceof Map }.collect { Map x ->
+        [name: x.name, product: x.product_name, sw: x.sw_ver, hw: x.hw_ver, sn: mask(x.sn?.toString())] }
     def mod = (info.module instanceof List) ? info.module.find { it.name == "ota" } : null
     if (mod?.sw_ver) report("firmware", mod.sw_ver.toString())
     String pn = mod?.product_name?.toString()

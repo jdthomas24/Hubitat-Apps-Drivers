@@ -1,6 +1,6 @@
 # Bambu Lab Integration for Hubitat
 
-> **Status: v0.2.16 beta, tested on two H2Ds. X1, P1 and A1 should work but are untested.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
+> **Status: v0.2.17 beta, tested on two H2Ds. X1, P1 and A1 should work but are untested.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
 
 ## What you get
 
@@ -94,6 +94,10 @@ These are on each printer device's **Preferences** tab.
 - **AMS devices:** **tray1** to **tray4** show the filament and amount left (`PLA (Basic), 85%`) or `empty`. An AMS HT has **tray1** only. **emptySlots** lists empty slots (`2, 4`) or `none`, which covers a pulled spool and a runout (it also uses the AMS's filament sensors). **lowSlots** lists slots at or below **Low filament warning at**. One rule per AMS covers every slot. The amount left needs a Bambu RFID tag on the spool and **Update Remaining Capacity** turned on in the AMS settings. When the AMS has no estimate, no amount is shown and the slot isn't counted as empty or low. A Bambu spool that's nearly out shows 0% and counts as low. Third-party spools show their color only, unless they carry a tag from an empty Bambu spool. To get an estimate for a Bambu spool, unload the slot and tap Re-read on the printer screen. The app's Tips page has more under **AMS and filament**.
 
 **Error text** comes from a small table in this folder's **HMS** directory, fetched from GitHub the first time a code shows up (nothing goes to Bambu); only the matching line is kept, in memory. After a reboot the text for errors still showing is fetched again. The English text and Wiki links come from the [ha-bambulab](https://github.com/greghesp/ha-bambulab) project (MIT license).
+
+## Diagnostics
+
+When asking for help, tap **Diagnostics** on the printer device. About 10 seconds later one block appears in the logs from **DIAGNOSTICS** to **END**, whatever the log level. Copy all of it into your forum post. It has the integration version and settings, the printer's model and firmware (with each AMS and module), the connection, and the printer's raw status (print state, errors, every AMS slot, external spools, nozzles, lights and door). It never includes your LAN access code, serials are shortened, and it doesn't change anything on the printer.
 
 ## Logging
 

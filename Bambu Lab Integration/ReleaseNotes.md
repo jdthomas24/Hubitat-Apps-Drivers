@@ -1,3 +1,20 @@
+**Release: Bambu Lab Integration v0.2.17 (beta)**
+New Diagnostics button for support requests.
+
+**Problem:**
+- Helping with a printer meant setting Full logging, waiting, and copying log lines, and Full logging cuts each printer report short. Details like the AMS slots or another model's firmware were hard to get.
+
+**The Fix:**
+- New **Diagnostics** button on the printer device. About 10 seconds after tapping it, one block appears in the logs from DIAGNOSTICS to END, whatever the log level, ready to paste into a forum post.
+- It has the integration version and settings, the printer's model and firmware with each AMS and module, the connection, and the printer's raw status: print state, errors, every AMS slot, external spools, nozzles, lights and door.
+- It never includes the LAN access code, serials are shortened, and it doesn't change anything on the printer.
+- New Tips topic under Troubleshooting: Diagnostics. The Other models tip now points to it.
+
+**Action needed:**
+Update through HPM. No Done needed.
+
+---
+
 **Release: Bambu Lab Integration v0.2.16 (beta)**
 Rules can now tell a planned pause from a problem, and AMS devices get their new names.
 

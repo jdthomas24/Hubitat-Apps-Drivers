@@ -30,7 +30,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.2.16"
+@Field static final String APP_VERSION   = "0.2.17"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -553,8 +553,14 @@ private List tipsTopics() {
                 [title: "Command refused", detail: "In Monitor only that's on purpose. In Monitor and control, turn on Developer Mode on the printer. The light works either way."],
                 [title: "Light came back on", detail: "The printer turns its light on when a print finishes. That's the printer, not Hubitat."],
                 [title: "Error text", detail: "Looked up from this integration's GitHub folder the first time a code appears (not from Bambu). Plain-English text comes from the ha-bambulab project (MIT license)."],
-                [title: "Other models", detail: "Tested on the H2D. X1, P1 and A1 should work but haven't been tested yet. If something looks off, set Log level to Full, let it run through a check or a print, and post the logs in the community thread."]
-            ]]
+                [title: "Other models", detail: "Tested on the H2D. X1, P1 and A1 should work but haven't been tested yet. If something looks off, tap Diagnostics on the printer device and post the report in the community thread."]
+            ]],
+        [id: "diag", label: "Diagnostics", title: "Sending a diagnostics report", group: "Troubleshooting", icon: "pi-file",
+            body: "<p>Tap <b>Diagnostics</b> on the printer device. About 10 seconds later one block appears in the logs from <b>DIAGNOSTICS</b> to <b>END</b>, " +
+                "whatever the log level. Copy all of it into your forum post.</p>" +
+                "<p>It has the integration version and settings, the printer's model and firmware (with each AMS and module), the connection, " +
+                "and the printer's raw status: print state, errors, every AMS slot, external spools, nozzles, lights and door. " +
+                "It never includes your LAN access code, and serials are shortened. It doesn't change anything on the printer.</p>"]
     ]
 }
 
@@ -691,6 +697,7 @@ void childLog(String level, String source, String msg) {
         case "error": log.error line; break
         case "warn": log.warn line; break
         case "info": log.info line; break
+        case "diag": log.info line; break   // Diagnostics button: always shown
         default: log.debug line
     }
 }
