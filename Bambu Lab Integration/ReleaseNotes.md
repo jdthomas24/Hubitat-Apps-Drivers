@@ -1,3 +1,22 @@
+**Release: Bambu Lab Integration v0.2.22 (beta)**
+Cleaner main page, and a Save printer button for new printers.
+
+**Problem:**
+- A new printer's fields sat in the middle of the printer list with no button to save it. It only connected after tapping Done at the bottom of the page.
+- Add printer opened another blank printer each time it was tapped, even with one already half filled in.
+- The Access codes choice sat under the printers instead of with the other settings.
+
+**The Fix:**
+- A new printer opens in its own **New printer** box under your printers, with **Save printer** and **Cancel**. Save printer creates and connects that printer right away, without restarting the others.
+- Tapping **Add** on a found printer closes the search results and goes straight to its New printer box.
+- **Add printer** is now **Add by hand**, and it's hidden while a New printer box is open.
+- **Access codes** and **Bambu account** moved to Quick Settings with the Find printers settings.
+
+**Action needed:**
+Update through HPM. No Done needed. GitHub can take several minutes to serve new files, so check that all three files show 0.2.22 after updating.
+
+---
+
 **Release: Bambu Lab Integration v0.2.21 (beta)**
 Optional Sign in with Bambu fills in access codes for you.
 

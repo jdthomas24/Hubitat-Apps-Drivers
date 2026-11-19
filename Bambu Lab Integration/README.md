@@ -1,6 +1,6 @@
 # Bambu Lab Integration for Hubitat
 
-> **Status: v0.2.21 beta, tested on two H2Ds. X1, P1 and A1 should work but are untested.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
+> **Status: v0.2.22 beta, tested on two H2Ds. X1, P1 and A1 should work but are untested.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
 
 ## What you get
 
@@ -29,10 +29,10 @@ You choose which light and AMS devices Hubitat creates on the app's **Equipment*
 ## Set up
 
 1. Open **Integrations** in the left menu and add **Bambu Lab Integration**.
-2. Tap **Find printers**, then **Add** next to your printer. Its name, IP address and serial fill in. Enter the LAN access code and pick a **Mode**. The access code is on the printer under **Settings, Network** (**WLAN** on some models). Just read it: Monitor only doesn't need LAN Only or Developer Mode, and the Bambu Handy app keeps working. If the search doesn't find the printer, tap **Add printer** and enter the IP by hand; leave the serial blank and the integration reads it from the printer.
-3. Tap **Done**. Each printer connects and adds its light and AMS devices within a few seconds.
+2. Tap **Find printers**, then **Add** next to your printer. A **New printer** box opens with its name, IP address and serial filled in. Enter the LAN access code, pick a **Mode** and tap **Save printer**. The access code is on the printer under **Settings, Network** (**WLAN** on some models). Just read it: Monitor only doesn't need LAN Only or Developer Mode, and the Bambu Handy app keeps working. If the search doesn't find the printer, tap **Add by hand** and enter the IP; leave the serial blank and the integration reads it from the printer.
+3. The printer connects and adds its light and AMS devices within a few seconds. **Cancel** drops a new printer you don't want.
 
-**Optional: Sign in with Bambu.** Set **Access codes** to **Sign in with Bambu**, open **Bambu account** and sign in (Bambu emails a code the first time). Find printers then fills in the access codes too, and if a printer's code changes, the app gets the new one on its own. Your password isn't saved, and monitoring stays on your network: the account is only used to read access codes. Signed up with Google or Apple? Set a Bambu password first in Bambu Handy (person icon, Account Security, Change Password).
+**Optional: Sign in with Bambu.** In Quick Settings, set **Access codes** to **Sign in with Bambu**, open **Bambu account** and sign in (Bambu emails a code the first time). Find printers then fills in the access codes too, and if a printer's code changes, the app gets the new one on its own. Your password isn't saved, and monitoring stays on your network: the account is only used to read access codes. Signed up with Google or Apple? Set a Bambu password first in Bambu Handy (person icon, Account Security, Change Password).
 4. Open the app again and tap **Equipment** to turn off anything you don't want in Hubitat.
 
 Once connected, each printer shows as a card with its status, mode and AMS units (each tray's color and amount left, with low ones highlighted). **Edit Printer** opens its settings on their own page (tap **Done** there to save and reconnect), **Refresh** asks for a status now, and **Remove Printer** (tap twice) deletes that printer and its devices. The app's **Tips & Troubleshooting** page covers choosing a mode, setup, rules and common problems.

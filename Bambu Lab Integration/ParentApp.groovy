@@ -17,6 +17,8 @@
       broadcast) and 1900, plus the hub's SSDP discovery. Replies carry the IP (Location) and serial (USN).
       Any search moves a printer whose serial answers from a new IP. Printers ask for a search when lost
       (findLostPrinter); timing lives in the Printer driver, the limits in recoveryOpts().
+     -Main page (0.2.22): printer cards, then any New printer box (Save printer creates and connects only that one,
+      Cancel drops it; Add by hand hides while one is open), Find printers results, Equipment. Settings sit in Quick Settings.
      -Access codes (0.2.21): Enter by hand (default) or Sign in with Bambu. Sign-in on its own page (a password field
       on the main page makes browsers autofill the printer fields). Password never saved; token, email and the
       account's printers (serial, name, model, code) in state. Login posts with Bambu Studio headers, the printer
@@ -40,7 +42,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.2.21"
+@Field static final String APP_VERSION   = "0.2.22"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -109,16 +111,13 @@ def mainPage() {
         section(sectionClass: "app-ui-links app-main-content") {
             paragraph rawHtml: true, columnHeader("Printers")
             List sl = slots()
-            if (!sl) paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;'>No printers yet. Tap <b>Add printer</b>.</div>"
-            sl.eachWithIndex { int i, int n -> printerCard(i, n + 1) }
+            List pending = sl.findAll { int i -> !getChildDevice(printerDni(i)) }
+            if (!sl) paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;'>No printers yet. Tap <b>Find printers</b> to search your network.</div>"
+            (sl - pending).each { int i -> printerCard(i) }
+            pending.each { int i -> newPrinterCard(i) }
             input "findPrinters", "button", title: "Find printers", width: 4, inputClass: "app-ui-button"
-            input "addPrinter", "button", title: "Add printer", width: 4, inputClass: "app-ui-button"
+            if (!pending) input "addPrinter", "button", title: "Add by hand", width: 4, inputClass: "app-ui-button"
             findResults()
-            if (!printerDevices() || printerDevices().any { d -> String sn = null; try { sn = d.getSerial() } catch (e) { }; !sn }) {
-                paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;'>The access code is on the printer under <b>Settings, Network</b> " +
-                    "(<b>WLAN</b> on some models), with the IP address if you add a printer by hand. Monitor only doesn't need LAN Only or Developer Mode.</div>"
-            }
-            accessCodesBlock()
             if (printerDevices()) {
                 Map eq = equipmentCounts()
                 href name: "toEquipment", title: "<i class='fa-solid fa-cube mr-2' aria-hidden='true'></i>Equipment",
@@ -133,6 +132,7 @@ def mainPage() {
                 defaultValue: "Errors Only", submitOnChange: true, width: 12,
                 style: "margin-left: 0.5em; margin-right: 0.5em; margin-top: 0; padding-right:0;"
             paragraph rawHtml: true, loggingDetailsPopupHtml()
+            accessCodesBlock()
             input "findSecs", "enum", title: "Find printers searches for", options: ["5": "5 seconds", "10": "10 seconds", "20": "20 seconds", "30": "30 seconds"],
                 defaultValue: "10", width: 12
             input "searchAfter", "enum", title: "Search for a lost printer after", options: ["2": "2 minutes", "5": "5 minutes", "10": "10 minutes", "15": "15 minutes"],
@@ -151,23 +151,31 @@ def mainPage() {
     }
 }
 
-private void printerCard(int i, int pos) {
+private void printerCard(int i) {
     def dev = getChildDevice(printerDni(i))
-    if (dev) {
-        paragraph rawHtml: true, printerCardHtml(i, dev)
-        href name: "editP_${i}", title: "Edit Printer", description: "", page: "printerPage", params: [slot: i], width: 3
-        input "refreshP_${i}", "button", title: "Refresh", width: 3, inputClass: "app-ui-button"
-        input "remove_${i}", "button", title: state.confirmRemove == i ? "Tap again to remove" : "Remove Printer", width: 3, inputClass: "app-ui-button"
-        if ((dev.currentValue("connectionStatus") ?: "").toString().startsWith("Offline")) {
-            input "searchP_${i}", "button", title: "Search now", width: 3, inputClass: "app-ui-button"
-        }
-        paragraph rawHtml: true, "<div class='bb-card-end'></div>"
-        return
-    }
-    // New printer: fields inline until Done creates its device.
-    paragraph rawHtml: true, "<div class='font-semibold mt-3'>${esc(settings["p${i}_name"]?.toString()?.trim() ?: "Printer ${pos}")}</div>"
-    printerFields(i)
+    paragraph rawHtml: true, printerCardHtml(i, dev)
+    href name: "editP_${i}", title: "Edit Printer", description: "", page: "printerPage", params: [slot: i], width: 3
+    input "refreshP_${i}", "button", title: "Refresh", width: 3, inputClass: "app-ui-button"
     input "remove_${i}", "button", title: state.confirmRemove == i ? "Tap again to remove" : "Remove Printer", width: 3, inputClass: "app-ui-button"
+    if ((dev.currentValue("connectionStatus") ?: "").toString().startsWith("Offline")) {
+        input "searchP_${i}", "button", title: "Search now", width: 3, inputClass: "app-ui-button"
+    }
+    paragraph rawHtml: true, "<div class='bb-card-end'></div>"
+}
+
+// A printer not saved yet: its fields, then Save printer (creates and connects it) or Cancel.
+private void newPrinterCard(int i) {
+    String nm = settings["p${i}_name"]?.toString()?.trim()
+    paragraph rawHtml: true, "<div class='bb-new-head'><span class='bb-chip'>New printer</span>" +
+        (nm ? " <span style='font-weight:600;margin-left:6px'>${esc(nm)}</span>" : "") + "</div>"
+    printerFields(i, true)
+    if (!settings["p${i}_code"]) {
+        paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;'>The access code is on the printer under <b>Settings, Network</b> " +
+            "(<b>WLAN</b> on some models)${cloudOn() ? '' : ', or set Access codes to Sign in with Bambu to fill it in'}.</div>"
+    }
+    if (state.saveError == i) paragraph rawHtml: true, warningMessageHtml("Enter the IP address and access code, then tap <b>Save printer</b>.")
+    input "saveP_${i}", "button", title: "Save printer", width: 4, inputClass: "app-ui-button app-ui-button-primary"
+    input "cancelP_${i}", "button", title: "Cancel", width: 3, inputClass: "app-ui-button"
     paragraph rawHtml: true, "<div class='bb-card-end'></div>"
 }
 
@@ -183,7 +191,7 @@ def printerPage(params = null) {
     dynamicPage(name: "printerPage", title: "Edit Printer", install: false, uninstall: false) {
         section(sectionClass: "app-ui-links app-main-content") {
             paragraph rawHtml: true, "<style>${appPageSpacingCss()}</style>"
-            if (!dev) { paragraph "That printer isn't set up. Go back and use Add printer."; return }
+            if (!dev) { paragraph "That printer isn't set up. Go back and use Find printers or Add by hand."; return }
             paragraph rawHtml: true, "<div class='font-semibold'>${esc(dev.displayName)} <span class='text-color-secondary' style='font-weight:400;font-size:14px;'>" +
                 "${esc(dev.currentValue('connectionStatus') ?: '')}</span></div>"
             printerFields(i)
@@ -192,12 +200,13 @@ def printerPage(params = null) {
     }
 }
 
-private void printerFields(int i) {
+// live: a new printer's fields save as you leave each box, so Save printer sees them.
+private void printerFields(int i, boolean live = false) {
     String s = settings["p${i}_serial"]?.toString()?.trim()?.toUpperCase()
-    input "p${i}_name", "text", title: "Name", required: false, width: 6
-    input "p${i}_ip", "text", title: "IP address", description: "e.g. 192.168.1.60", required: false, width: 6
-    input "p${i}_code", "text", title: "LAN access code", description: "8 characters, shown on the printer", required: false, width: 6
-    input "p${i}_serial", "text", title: "Serial number (optional)", description: "Found automatically", required: false, width: 6
+    input "p${i}_name", "text", title: "Name", required: false, width: 6, submitOnChange: live
+    input "p${i}_ip", "text", title: "IP address", description: "e.g. 192.168.1.60", required: false, width: 6, submitOnChange: live
+    input "p${i}_code", "text", title: "LAN access code", description: "8 characters, shown on the printer", required: false, width: 6, submitOnChange: live
+    input "p${i}_serial", "text", title: "Serial number (optional)", description: "Found automatically", required: false, width: 6, submitOnChange: live
     if (s && !validSerial(s)) {
         paragraph rawHtml: true, warningMessageHtml("That doesn't look like a serial number (letters and numbers only). " +
             "If your browser filled in your email here, clear it. The serial is found automatically, so you can leave it blank.")
@@ -216,7 +225,7 @@ private void printerFields(int i) {
             "The chamber light works from Hubitat; pause, stop and speed stay in the Bambu apps.</div>"
     }
     href name: "help_${i}", title: ctl ? "What changes with control" : "Monitor only or control?", description: "",
-        page: "tipsPage", params: [topic: ctl ? "control" : "modes"], width: 8, style: "margin:8px 0;"
+        page: "tipsPage", params: [topic: ctl ? "control" : "modes"], width: live ? 12 : 8, style: "margin:8px 0;"
 }
 
 // Summary card, Sofabaton style: name, serial and IP; status line; mode, AMS and light chips.
@@ -333,7 +342,16 @@ def appButtonHandler(String btn) {
         if (d) try { d.refresh() } catch (e) { }
         return
     }
-    if (btn == "addPrinter") { newSlot(); return }
+    if (btn == "addPrinter") { if (!slots().any { int i -> !getChildDevice(printerDni(i)) }) newSlot(); return }
+    def sv = btn =~ /^saveP_(\d+)$/
+    if (sv.find()) { savePrinter(sv.group(1).toInteger()); return }
+    def cx = btn =~ /^cancelP_(\d+)$/
+    if (cx.find()) {
+        int i = cx.group(1).toInteger()
+        if (!getChildDevice(printerDni(i))) { ["name", "ip", "code", "serial", "mode", "allowStop"].each { app.removeSetting("p${i}_${it}") }; state.slots = slots() - i }
+        state.remove("saveError")
+        return
+    }
     def mt = btn =~ /^remove_(\d+)$/
     if (!mt.find()) return
     int i = mt.group(1).toInteger()
@@ -553,6 +571,7 @@ private void addFound(String sn) {
     Map f = ((state.findResults?.found ?: [:]) as Map)[sn] as Map
     if (!f || slotForSerial(sn)) return
     int i = newSlot()
+    state.remove("showFind")   // straight to its New printer box
     app.updateSetting("p${i}_name", [value: f.name ?: "Bambu ${f.model ?: 'Printer'}", type: "text"])
     app.updateSetting("p${i}_ip", [value: f.ip, type: "text"])
     app.updateSetting("p${i}_serial", [value: sn, type: "text"])
@@ -573,7 +592,7 @@ private void findResults() {
     Map found = ((state.findResults?.found ?: [:]) as Map)
     if (!found) {
         paragraph rawHtml: true, warningMessageHtml("<b>No printers found.</b> Check that the printer is on and on the same network as your hub " +
-            "(guest and IoT networks often block discovery), then tap <b>Search again</b>. You can also tap <b>Add printer</b> and enter the IP by hand. " +
+            "(guest and IoT networks often block discovery), then tap <b>Search again</b>. You can also tap <b>Add by hand</b> and enter the IP. " +
             "It's on the printer screen under Settings, Network.")
     }
     found.sort { a, b -> (a.value.name ?: a.key) <=> (b.value.name ?: b.key) }.each { sn, f ->
@@ -582,7 +601,7 @@ private void findResults() {
         String tag = !slot ? "" : made ? "<span class='bb-chip' style='margin-left:6px'>Already added</span>" +
             (f.moved ? " <span class='hub-text-success' style='font-size:0.85em'>IP updated</span>" : "") :
             "<span class='hub-text-warning' style='font-size:0.85em;margin-left:6px'>Added below. " +
-            (settings["p${slot}_code"] || (cloudOn() && cloudCode(sn as String)) ? "Its access code is filled in from Bambu. Tap Done." : "Enter its access code and tap Done.") + "</span>"
+            (settings["p${slot}_code"] || (cloudOn() && cloudCode(sn as String)) ? "Its access code is filled in from Bambu. Tap Save printer." : "Enter its access code and tap Save printer.") + "</span>"
         String chip = f.model ? "<span style='background:#00ae42;color:#fff;border-radius:8px;padding:2px 9px;font-size:0.9em;font-weight:bold;margin-right:6px'>${esc(f.model)}</span>" : ""
         paragraph rawHtml: true, "<div style='padding:6px 0'>${chip}<span style='font-weight:600'>${esc(f.name ?: 'Bambu printer')}</span> " +
             "<span class='text-color-secondary' style='font-size:0.8em'>${esc(sn)} &middot; ${esc(f.ip)}</span>${tag}</div>", width: slot ? 12 : 9
@@ -610,18 +629,19 @@ private String cloudCode(String sn) { sn ? cloudPrinters()[sn]?.code?.toString()
 // Main page: the choice, and with Sign in with Bambu, the account line.
 private void accessCodesBlock() {
     if (!cloudOn() && state.cloudToken) cloudSignOut("turned off")
-    input "codeSource", "enum", title: "Access codes", options: CODE_SOURCES, defaultValue: "hand", submitOnChange: true, width: 12
+    input "codeSource", "enum", title: "Access codes", options: CODE_SOURCES, defaultValue: "hand", submitOnChange: true, width: 12,
+        style: "margin-left: 0.5em; margin-right: 0.5em; padding-right:0;"
     if (!cloudOn()) return
     String desc
     if (state.cloudToken) {
         int n = cloudPrinters().size()
-        desc = "Signed in as ${esc(state.cloudEmail)} &middot; ${countText(n, 'printer')} on the account. Find printers fills in their codes."
+        desc = "Signed in as ${esc(state.cloudEmail)} &middot; ${countText(n, 'printer')}"
     } else if (state.cloudExpired) {
         desc = "<span class='hub-text-warning'>The Bambu sign-in expired. Tap to sign in again.</span>"
     } else {
         desc = "Not signed in yet. Tap to sign in."
     }
-    href name: "toCloud", title: "<i class='fa-solid fa-cloud mr-2' aria-hidden='true'></i>Bambu account", description: desc, page: "cloudPage", width: 12, style: "margin:8px;"
+    href name: "toCloud", title: "<i class='fa-solid fa-cloud mr-2' aria-hidden='true'></i>Bambu account", description: desc, page: "cloudPage", width: 12, style: "margin:4px 8px 8px;"
 }
 
 def cloudPage() {
@@ -876,7 +896,7 @@ def equipmentPage() {
                 "Deleting a device from the Devices page turns it off here too.</div>"
         }
         List devs = printerDevices()
-        if (!devs) section { paragraph "No printers yet. Fill in a printer and tap Done first." }
+        if (!devs) section { paragraph "No printers yet. Add one on the main page first." }
         devs.sort { it.displayName }.each { dev ->
             Map eq = syncEquipment(dev)
             Map catalog = (eq.catalog ?: [:]) as Map
@@ -930,9 +950,9 @@ private Map equipmentCounts() {
 
 private Map bannerState() {
     Map cfg = configuredPrinters()
-    if (!cfg) return [ok: false, title: "Setup required", summary: "Enter a printer's IP address and LAN access code, then tap <b>Done</b>."]
+    if (!cfg) return [ok: false, title: "Setup required", summary: "Tap <b>Find printers</b> to search your network, or <b>Add by hand</b>."]
     List devs = printerDevices()
-    if (!devs) return [ok: false, title: "Not connected yet", summary: "Tap <b>Done</b> to connect."]
+    if (!devs) return [ok: false, title: "Not connected yet", summary: "Tap <b>Save printer</b> to connect."]
     List bad = devs.findAll { !(it.currentValue("connectionStatus") in ["Connected", "Waiting for printer"]) && !reconnecting(it) }
     String counts = countText(devs.size(), "printer")
     List busy = devs.findAll { reconnecting(it) }
@@ -976,25 +996,38 @@ def initialize() {
             catch (e) { logErr "could not remove ${label}: ${e.message}" }
         }
     }
-    cfg.each { dni, p ->
-        def dev = getChildDevice(dni as String)
-        if (!dev) {
-            try {
-                dev = addChildDevice("jdthomas24", "Bambu Lab Printer", dni as String, [label: p.name, isComponent: false])
-                logInfo "created ${dev.displayName}"
-            } catch (e) {
-                String why = "${e}".contains("UnknownDeviceType") ? "the Bambu Lab Printer driver isn't installed (update with HPM)" : e.message
-                logErr "could not create ${p.name}: ${why}"
-                return
-            }
-        }
-        dev.configure([slot: p.slot, serial: p.serial, name: p.name, ip: p.ip], [control: p.control, allowStop: p.control && p.allowStop])
-        dev.setLogLevel(currentLogLevel())
-    }
+    cfg.each { dni, p -> setUpPrinter(dni as String, p as Map) }
     state.pushedLogLevel = currentLogLevel()
     state.remove("migrated")
     ["printerCount", "updateInterval", "tempStep", "tempUnit"].each { app.removeSetting(it) }
     runIn(2, "startPrinters")
+}
+
+// Create the Printer if needed and hand it its settings. Returns the device, or null.
+private setUpPrinter(String dni, Map p) {
+    def dev = getChildDevice(dni)
+    if (!dev) {
+        try {
+            dev = addChildDevice("jdthomas24", "Bambu Lab Printer", dni, [label: p.name, isComponent: false])
+            logInfo "created ${dev.displayName}"
+        } catch (e) {
+            String why = "${e}".contains("UnknownDeviceType") ? "the Bambu Lab Printer driver isn't installed (update with HPM)" : e.message
+            logErr "could not create ${p.name}: ${why}"
+            return null
+        }
+    }
+    dev.configure([slot: p.slot, serial: p.serial, name: p.name, ip: p.ip], [control: p.control, allowStop: p.control && p.allowStop])
+    dev.setLogLevel(currentLogLevel())
+    return dev
+}
+
+// Save printer: create and connect just this one, without restarting the others.
+private void savePrinter(int i) {
+    Map p = configuredPrinters()[printerDni(i)] as Map
+    if (!p) { state.saveError = i; return }
+    state.remove("saveError")
+    def dev = setUpPrinter(printerDni(i), p)
+    if (dev) try { dev.initialize() } catch (e) { logErr "could not start ${dev.displayName}: ${e.message}" }
 }
 
 def startPrinters() {
@@ -1043,8 +1076,8 @@ private List tipsTopics() {
             warning: "If Developer Mode is off, the printer refuses Printer Control. After each command the log says whether it took, and monitoring and the light keep working."],
         [id: "setup", label: "Setup", title: "Adding a printer", group: "Getting started", icon: "pi-cog",
             body: "<p>Tap <b>Find printers</b>, then <b>Add</b> next to your printer. Its name, IP address and serial fill in. Enter the <b>LAN access code</b>: it's on the printer under <b>Settings, Network</b> (<b>WLAN</b> on some models). Just read it: you don't need to turn on LAN Only.</p>" +
-                "<p>Not found? Tap <b>Add printer</b> and enter the name, <b>IP address</b> and access code by hand. Leave the serial blank: the integration reads it from the printer.</p>" +
-                "<p>Tap <b>Done</b>. Each printer connects within a few seconds and adds its AMS units.</p>"],
+                "<p>Not found? Tap <b>Add by hand</b> and enter the name, <b>IP address</b> and access code. Leave the serial blank: the integration reads it from the printer.</p>" +
+                "<p>Tap <b>Save printer</b>. It connects within a few seconds and adds its AMS units.</p>"],
         [id: "find", label: "Finding printers", title: "Finding your printer", group: "Getting started", icon: "pi-search",
             body: "<p>Tap <b>Find printers</b> to search your network for about 10 seconds. Printers you've already added are marked <b>Already added</b>.</p>" +
                 "<p><b>None found?</b> Check that the printer is on and on the same network as your hub (guest and IoT networks often block discovery), then tap <b>Search again</b>. " +
@@ -1341,6 +1374,8 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
     line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid var(--hubitat-control-border, #d0d7de) !important;
     white-space: nowrap; }
   .bb-card-end { border-bottom: 1px solid var(--surface-border, rgba(0,0,0,.12)); margin: 4px 0 18px; }
+  .bb-new-head { display: flex; align-items: center; margin-top: 4px; }
+  .app-main-content :is([name*='saveP_'],[name*='cancelP_'],[id*='saveP_'],[id*='cancelP_']) { white-space: nowrap; }
   #formApp .form > div:has(> h3:empty):has(+ .app-main-overview) { display: none; }
   #formApp .form > .app-main-overview { margin-bottom: 0.429rem !important; }
   .app-main-overview > .mdl-grid { padding-top: 0.286rem !important; padding-bottom: 0.286rem !important; }
