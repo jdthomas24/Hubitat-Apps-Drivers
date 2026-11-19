@@ -122,7 +122,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.17"
+@Field static final String VERSION     = "0.2.18"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -259,7 +259,7 @@ def diagReport() {
     slog("diag", o.toString())
 }
 
-private String mask(String s) { !s ? "?" : s.length() <= 7 ? "***" : s.take(4) + "..." + s.takeRight(3) }
+private String mask(String s) { !s ? "?" : s.length() <= 7 ? "***" : s.substring(0, 4) + "..." + s.substring(s.length() - 3) }
 
 // For the app's status line.
 String getSerial() { serial() }

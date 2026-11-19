@@ -1,3 +1,17 @@
+**Release: Bambu Lab Integration v0.2.18 (beta)**
+Fixes Diagnostics and firmware info in 0.2.17.
+
+**Problem:**
+- In 0.2.17, shortening serials used a command Hubitat doesn't support. Diagnostics failed with an error, and so did reading the printer's firmware and module versions.
+
+**The Fix:**
+- Serials are shortened in a way Hubitat supports. Diagnostics and firmware info work again.
+
+**Action needed:**
+Update through HPM. No Done needed.
+
+---
+
 **Release: Bambu Lab Integration v0.2.17 (beta)**
 New Diagnostics button for support requests.
 
