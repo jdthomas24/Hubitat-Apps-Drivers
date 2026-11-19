@@ -1,3 +1,23 @@
+**Release: Bambu Lab Integration v0.2.15 (beta)**
+AMS names now match the printer screen, and each slot on the card shows its number.
+
+**Problem:**
+- Hubitat called the AMS units AMS 1 and AMS HT 1, while the printer screen and Bambu Studio call them AMS A and AMS HT A, with slots A1 to A4.
+- The printer card showed each slot's color and amount, but not which slot it was.
+- activeTray read "AMS 1 tray 2", which matched neither the card nor the printer.
+
+**The Fix:**
+- AMS units are named like the printer: AMS A, AMS B and so on, and AMS HT A for an AMS HT. AMS devices still on an earlier default name (like "H2D #1 AMS 1") are renamed once. Names you've set yourself are left alone.
+- Each slot on the card shows a circled slot number, so AMS A ③ is A3 on the printer. An AMS HT holds one spool, so it shows no number.
+- activeTray reads AMS A2, AMS HT A or external spool.
+- On narrow screens, slots wrap whole, so a number stays with its color and amount.
+- Tips, AMS and filament: how the names match the printer, and what to do if the letters don't.
+
+**Action needed:**
+Update through HPM. No Done needed. AMS devices are renamed at the next check, or right away with Refresh. A rule that compares activeTray to text like "AMS 1 tray 2" needs the new name (AMS A2). Rules on tray1 to tray4, emptySlots and lowSlots are unchanged.
+
+---
+
 **Release: Bambu Lab Integration v0.2.14 (beta)**
 AMS slots read more clearly on the printer card, and the Tips page explains filament amounts.
 

@@ -38,7 +38,8 @@
      -door from print.stat bit 0x00800000; firmwareUpdate from upgrade_state; external spools from vir_slot
       254/255 (or vt_tray), shown once loaded.
      -Children (app's Equipment page): one AMS device per unit and the chamber light. Exclusions as IntelliCenter.
-     -AMS (0.2.8): ids 0-3 are 4-tray units, 128+ are single-tray AMS HT ("AMS HT 1"). A tray is empty when it has no
+     -AMS (0.2.8): ids 0-3 are 4-tray units, 128+ are single-tray AMS HT. Named like Bambu (0.2.15): AMS A, B..,
+      AMS HT A, B..; activeTray AMS A2 / AMS HT A. Old default labels (AMS 1, AMS 129, AMS HT 1) are renamed once. A tray is empty when it has no
       type or its tray_exist_bits bit is clear (confirmed on H2D 0.2.12: unit*4 + tray, AMS HT 16 + id-128). The bits
       and each tray's raw fields (on change) are logged at Full. remain -1 means no estimate; 0 means no estimate
       unless the spool's Bambu tag was read (tag_uid set), then it's a nearly empty spool: 0%, counts as low (0.2.13). emptySlots and lowSlots (remain 1 to the Low filament pref) per unit.
@@ -114,7 +115,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.14"
+@Field static final String VERSION     = "0.2.15"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -921,7 +922,7 @@ private void ams(Map r) {
     String now_ = a.tray_now?.toString()
     if (now_ != null) {
         Integer t = toInt(now_)
-        String label = t == null || t == 255 ? "none" : t == 254 ? "external spool" : isHt(t) ? amsName(t) : "AMS ${(t / 4 as int) + 1} tray ${(t % 4) + 1}"
+        String label = t == null || t == 255 ? "none" : t == 254 ? "external spool" : isHt(t) ? amsName(t) : "${amsName(Math.floorDiv(t, 4))}${(t % 4) + 1}"
         report("activeTray", label)
     }
     if (!(a.ams instanceof List)) return
@@ -940,7 +941,7 @@ private void ams(Map r) {
         catalogPut(key, [k: "ams", n: amsName(uid)])
         def child = childFor(key)
         if (!child) return
-        if (ht) renameHt(child, uid)
+        renameAms(child, uid)
         List ev = []
         List empty = [], low = []
         BigDecimal hum = num(u.humidity_raw)
@@ -985,13 +986,16 @@ private void ams(Map r) {
 }
 
 private boolean isHt(Integer id) { id != null && id >= 128 && id < 254 }
-private String amsName(Integer id) { isHt(id) ? "AMS HT ${id - 127}" : "AMS ${(id ?: 0) + 1}" }
+private String amsName(Integer id) { isHt(id) ? "AMS HT ${letter(id - 128)}" : "AMS ${letter(id ?: 0)}" }
+private String letter(int n) { n >= 0 && n < 26 ? "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[n] : "${n + 1}" }
 
-// 0.2.7 named an AMS HT "AMS 129". Rename it once if the label is still that default.
-private void renameHt(child, Integer uid) {
-    String old = "${device.displayName} AMS ${uid + 1}"
-    String nu = "${device.displayName} ${amsName(uid)}"
-    try { if (child.label == old) { child.setLabel(nu); logN "renamed ${old} to ${nu}" } } catch (e) { }
+// Earlier default labels (AMS 1, AMS 129, AMS HT 1). Renamed once; a label the user set is left alone.
+private void renameAms(child, Integer uid) {
+    String p = device.displayName
+    List olds = ["${p} AMS ${uid + 1}"]
+    if (isHt(uid)) olds << "${p} AMS HT ${uid - 127}"
+    String nu = "${p} ${amsName(uid)}"
+    try { if (child.label != nu && olds.contains(child.label)) { logN "renamed ${child.label} to ${nu}"; child.setLabel(nu) } } catch (e) { }
 }
 
 // Every chamber_light* node (H2D has two). On when any of them is.

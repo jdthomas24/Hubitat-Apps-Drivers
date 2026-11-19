@@ -30,7 +30,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.2.14"
+@Field static final String APP_VERSION   = "0.2.15"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -233,13 +233,15 @@ private String printerCardHtml(int i, dev) {
     kids.sort { it.displayName }.each { k ->
         if (k.deviceNetworkId.contains("-ams")) {
             List lows = (k.currentValue("lowSlots") ?: "").toString().tokenize(", ")
+            def idm = k.deviceNetworkId =~ /-ams(\d+)$/
+            boolean ht = idm.find() && (idm.group(1) as int) >= 128
             String dots = (1..4).findAll { n -> k.currentValue("tray${n}") != null }.collect { n ->
                 String t = k.currentValue("tray${n}").toString()
                 String col = k.currentValue("tray${n}Color")
                 def pm = t =~ /, (\d+)%$/
                 String pct = pm.find() ? pm.group(1) + "%" : ""
                 String dot = col && col != "none" ? "<span class='bb-dot' style='background:${esc(col)}'></span>" : "<span class='bb-dot' style='background:transparent'></span>"
-                "<span class='bb-slot${pct ? ' has-pct' : ''}' title='Slot ${n}: ${esc(t)}'>${dot}" +
+                "<span class='bb-slot${pct ? ' has-pct' : ''}' title='${ht ? '' : 'Slot ' + n + ': '}${esc(t)}'>${ht ? '' : "<span class='bb-n'>${n}</span>"}${dot}" +
                     (pct ? "<span class='bb-pct${lows.contains(n.toString()) ? ' hub-text-warning' : ''}'>${pct}</span>" : "") + "</span>"
             }.join("")
             c << "<a href='/device/edit/${k.id}' target='_blank' class='bb-pill'>${esc(shortName(k, dev))}${dots}" +
@@ -264,7 +266,7 @@ private String bulbSvg(boolean on) {
         (on ? "" : "<line x1='4' y1='3' x2='20' y2='21' stroke='${stroke}' stroke-width='2' stroke-linecap='round'/>") + "</svg>"
 }
 
-// "H2D #1 AMS 1" on printer "H2D #1" shows as "AMS 1".
+// "H2D #1 AMS A" on printer "H2D #1" shows as "AMS A".
 private String shortName(k, dev) {
     String n = k.displayName ?: ""
     String p = dev.displayName ?: ""
@@ -521,7 +523,8 @@ private List tipsTopics() {
                 [title: "Getting an estimate", detail: "On the printer screen, unload the slot, tap the spool and choose Re-read. The AMS can't re-read while that filament is loaded into the nozzle or during a print."],
                 [title: "Third-party spools", detail: "A tag taken from an empty Bambu spool works, and tells the printer that tag's filament type and color. Other RFID tags aren't read."],
                 [title: "Empty slots", detail: "A slot is empty when the AMS reports no filament or its filament sensor says nothing is loaded, so a runout counts even if the tag is still read."],
-                [title: "AMS HT", detail: "Holds one spool, so it shows one slot (AMS HT 1)."]
+                [title: "Names match the printer", detail: "AMS units are AMS A, AMS B and so on, and the circled number is the slot, so AMS A ③ is A3 on the printer screen. An AMS HT holds one spool, so it's AMS HT A with no slot number. activeTray uses the same names (AMS A2, AMS HT A)."],
+                [title: "Letters out of order?", detail: "Bambu letters units by how they're connected, and the printer's Arrange option can change that. If Hubitat shows A where the screen shows B, post it in the community thread."]
             ],
             warning: "Low filament warning at (printer device Preferences, 10% by default) sets when a slot shows in orange and appears in lowSlots."],
         [id: "rules", label: "Rules and dashboards", title: "Rules and dashboards", group: "Using it", icon: "pi-bolt",
@@ -738,6 +741,10 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
   .bb-slot.has-pct { padding-right: 8px; }
   .bb-slot .bb-dot { margin-left: 0; }
   .bb-pct { font-size: 0.75em; opacity: 0.9; }
+  .bb-n { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%; flex: none;
+    border: 1px solid currentColor; font-size: 0.6em; font-weight: 600; line-height: 1; opacity: 0.65; }
+  .bb-slot { white-space: nowrap; flex: none; }
+  a.bb-pill { flex-wrap: wrap; row-gap: 6px; }
   .app-main-content :is([name*='refreshP_'],[name*='remove_'],[id*='refreshP_'],[id*='remove_']) {
     font-size: 13px !important; padding: 3px 12px !important; min-height: 0 !important; height: auto !important;
     line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid var(--hubitat-control-border, #d0d7de) !important;
