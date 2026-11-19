@@ -1,6 +1,6 @@
 # Bambu Lab Integration for Hubitat
 
-> **Status: v0.2.19 beta, tested on two H2Ds. X1, P1 and A1 should work but are untested.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
+> **Status: v0.2.20 beta, tested on two H2Ds. X1, P1 and A1 should work but are untested.** Local monitoring of Bambu Lab 3D printers, with optional control. No Bambu account needed: Hubitat talks to the printer on your network over MQTT, using the printer's LAN access code. In the default **Monitor only** mode your printer stays on Bambu Cloud and you keep using the Bambu apps as normal.
 
 ## What you get
 
@@ -15,7 +15,7 @@ You choose which light and AMS devices Hubitat creates on the app's **Equipment*
 ## Requirements
 
 - A Bambu Lab printer on the same network as the hub (X1, P1, A1 and H2 series)
-- The printer's IP address and LAN access code (the serial is found automatically)
+- The printer's LAN access code (Find printers fills in the IP and serial)
 - Hubitat 2.2.5 or later
 - Monitor only needs nothing else. Monitor and control needs Developer Mode (see **Modes**).
 
@@ -29,13 +29,13 @@ You choose which light and AMS devices Hubitat creates on the app's **Equipment*
 ## Set up
 
 1. Open **Integrations** in the left menu and add **Bambu Lab Integration**.
-2. Tap **Add printer**. Enter a name, the IP address and the LAN access code, and pick a **Mode**. On the printer, **Settings, Network** (**WLAN** on some models) shows the IP and access code. Just read them: Monitor only doesn't need LAN Only or Developer Mode, and the Bambu Handy app keeps working. Leave the serial blank; the integration reads it from the printer.
+2. Tap **Find printers**, then **Add** next to your printer. Its name, IP address and serial fill in. Enter the LAN access code and pick a **Mode**. The access code is on the printer under **Settings, Network** (**WLAN** on some models). Just read it: Monitor only doesn't need LAN Only or Developer Mode, and the Bambu Handy app keeps working. If the search doesn't find the printer, tap **Add printer** and enter the IP by hand; leave the serial blank and the integration reads it from the printer.
 3. Tap **Done**. Each printer connects and adds its light and AMS devices within a few seconds.
 4. Open the app again and tap **Equipment** to turn off anything you don't want in Hubitat.
 
 Once connected, each printer shows as a card with its status, mode and AMS units (each tray's color and amount left, with low ones highlighted). **Edit Printer** opens its settings on their own page (tap **Done** there to save and reconnect), **Refresh** asks for a status now, and **Remove Printer** (tap twice) deletes that printer and its devices. The app's **Tips & Troubleshooting** page covers choosing a mode, setup, rules and common problems.
 
-A DHCP reservation for the printer keeps its IP address from changing.
+**If the printer's IP changes** (after a power outage or router restart), nothing needs doing. When a printer stays unreachable for a few minutes (5 by default, **Search for a lost printer after**), the integration looks for it on the network by its serial number, updates the IP and reconnects. Its status reads **Reconnecting**, then **Searching**, then **Offline** if it can't be found (still checked in the background). After 24 hours (**Stop searching after**) it stops searching, shows **Offline, search stopped** and tries the last address every hour; **Search now** on the printer's card looks again. A hub reboot or firmware update doesn't count as offline time. A DHCP reservation for the printer keeps its IP address from changing in the first place.
 
 ## Modes
 
@@ -111,7 +111,9 @@ One **Log level** in the app covers the app, every printer and every light and A
 
 **Access code rejected.** The code changes if you reset the printer's network settings. Check it on the printer, update it in the app and tap **Done**.
 
-**Printer offline.** The printer reconnects on its own, waiting a little longer each try (up to 5 minutes). Check it is on and on the same network, and that nothing blocks port 8883.
+**Printer offline.** The printer reconnects on its own, waiting a little longer each try (up to 5 minutes), and searches the network for it if its IP changed. Check it is on and on the same network, and that nothing blocks port 8883. **Search now** on its card looks again right away.
+
+**Find printers finds nothing.** The hub and printer must be on the same network; guest and IoT networks often block discovery. Add the printer by hand with its IP instead.
 
 **Waiting for printer.** Connected, but the printer hasn't sent a status yet, so its serial isn't known. Some printers stay quiet while idle. Enter the serial in the app (printer **Settings, Device**), or start anything on the printer.
 

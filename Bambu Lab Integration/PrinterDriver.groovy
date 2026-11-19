@@ -47,6 +47,10 @@
       and each tray's raw fields (on change) are logged at Full. remain -1 means no estimate; 0 means no estimate
       unless the spool's Bambu tag was read (tag_uid set), then it's a nearly empty spool: 0%, counts as low (0.2.13). emptySlots and lowSlots (remain 1 to the Low filament pref) per unit.
      -Reconnect backoff 5 s to 5 min; still down after 4 tries warns once.
+     -Recovery (0.2.20): connectionStatus Reconnecting, then Searching after the app's "search after" time (the app
+      looks for this serial on the network and moves the IP if it changed), Offline after 3 searches (searches keep
+      going 15, 30, then 60 min apart), Offline, search stopped after the app's limit (last IP tried hourly).
+      Search now, Done and a hub reboot start over. In the first 5 min of hub uptime failures don't start the clock.
 */
 
 metadata {
@@ -122,12 +126,15 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.19"
+@Field static final String VERSION     = "0.2.20"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
 @Field static final List BACKOFF       = [5, 15, 30, 60, 120, 300]
 @Field static final int SAMPLE_WAIT    = 20
+@Field static final int BOOT_GRACE     = 300                  // s of hub uptime when failures don't count yet
+@Field static final List SEARCH_GAPS   = [5, 5, 15, 30, 60]   // min between searches for a lost printer
+@Field static final int SEARCHES_TO_OFFLINE = 3
 @Field static final long PUSHALL_MIN_MS = 300000L   // P1/A1
 @Field static final int QUICK_WAIT     = 5
 @Field static final BigDecimal AT_TEMP_C = 5      // within this of the target = At temp
@@ -207,9 +214,24 @@ def initialize() {
         logE "not set up. Open the Bambu Lab Integration app and tap Done."
         return
     }
+    resetSearch()   // Done, a driver save or a reboot starts the search over
+    Long up = hubUptime()
+    boolean boot = up != null && up < BOOT_GRACE
+    if (boot) {
+        // Hub just started: time offline counts from now, not from before the reboot.
+        m.graceUntil = now() + (BOOT_GRACE - up) * 1000L
+        state.remove("downSince")
+        state.remove("downWarned")
+    }
     schedule("20 0/5 * * * ?", "watchdog")
-    runIn(1, "connect")
+    runIn(boot ? 15 : 1, "connect")
 }
+
+private Long hubUptime() {
+    try { return location.hub.uptime as Long } catch (e) { return null }
+}
+
+private boolean inGrace() { now() < ((mem().graceUntil ?: 0L) as long) }
 
 def refresh() {
     boolean up = false
@@ -250,6 +272,8 @@ def diagReport() {
     o << "\nIntegration ${VERSION} | Mode: ${device.currentValue('mode') ?: '?'} | Check printing ${settings?.checkEvery ?: '30'} s, idle ${settings?.idleEvery ?: '15'} min | Sampling: ${limited() ? 'P1/A1 (pushall every 5 min)' : 'X1/H2'}"
     o << "\nPrinter: ${device.currentValue('model') ?: '?'} | Firmware ${device.currentValue('firmware') ?: '?'} | Serial ${mask(serial())}"
     o << "\nConnection: ${device.currentValue('connectionStatus') ?: '?'} | Last status ${ago} | Reconnect attempts ${m.attempt ?: 0}"
+    o << "\nRecovery: down ${state.downSince ? ((downMs() / 60000L) as long) + ' min' : 'no'} | Searches ${state.searches ?: 0}" +
+        "${state.searchStopped ? ' (stopped)' : ''} | Last IP change ${state.lastIpChange ?: 'none'}${inGrace() ? ' | Hub startup grace' : ''}"
     o << "\nState: ${device.currentValue('printState')} | Stage: ${device.currentValue('stage')} | Pause: ${device.currentValue('pauseType')} | Errors: ${device.currentValue('errorCodes') ?: 'none'}"
     o << "\nModules: ${mods ? J(mods) : 'not reported yet, tap Diagnostics again'}"
     DIAG_KEYS.each { k -> if (r.containsKey(k)) o << "\n${k}: ${J(r[k])}" }
@@ -281,7 +305,8 @@ def uninstalled() {
 void configure(Map printer, Map opts) {
     Map p = (printer ?: [:]).findAll { k, v -> v != null && v != "" }   // no empty serial copy
     if (state.printer != p) {
-        if (p.ip != state.printer?.ip) state.remove("serial")   // different printer, learn again
+        // New IP: learn the serial again, unless it's this printer at a new address (same serial).
+        if (p.ip != state.printer?.ip && (!p.serial || p.serial != state.serial)) state.remove("serial")
         state.printer = p
     }
     if (state.opts != opts) state.opts = opts
@@ -317,6 +342,7 @@ def watchdog() {
     }
     if (!state.connected) {
         if (!m.reconnectPending && now() - ((m.connectAt ?: 0L) as long) > 60000L) scheduleReconnect()
+        if (state.downSince != null) downCheck()   // keeps the search timer going after a driver save or Done
         return
     }
     if (!m.sampling && (m.nextSampleAt == null || now() > (m.nextSampleAt as long) + 60000L)) startSample()
@@ -341,7 +367,7 @@ def connect() {
     }
     m.closingAt = now()
     try { interfaces.mqtt.disconnect() } catch (e) { }
-    setStatus(state.downSince != null ? "Reconnecting" : "Connecting")
+    setStatus(state.downSince != null ? downStatus() : device.currentValue("connectionStatus") == "Reconnecting" ? "Reconnecting" : "Connecting")
     String broker = "ssl://${p.ip}:8883"
     logF "connecting to ${broker}"
     try {
@@ -366,6 +392,10 @@ private void onConnected() {
     m.remove("authFailed")
     state.connected = true
     setStatus("Connected")
+    unschedule("downCheck")
+    unschedule("searchGiveUp")
+    m.searching = false
+    resetSearch()
     if (state.downSince != null) {
         int mins = ((now() - (state.downSince as long)) / 60000) as int
         if (state.downWarned) slog("info", "printer back online after ${mins} min")
@@ -496,21 +526,119 @@ def mqttClientStatus(String s) {
 
 private void markDown(String why) {
     if (state.connected) state.connected = false
-    String st = device.currentValue("connectionStatus")
-    if (st != "Access code rejected") setStatus("Reconnecting")
-    if (state.downSince == null) {
+    if (state.downSince == null && !inGrace()) {
         state.downSince = now()
         logN "printer connection dropped (${why}). Reconnecting."
+        runIn(Math.max(10, (recovery().afterMs / 1000L) as int), "downCheck")
     } else {
-        logF "still offline: ${why}"
+        logF "still offline${inGrace() ? ' (hub just started)' : ''}: ${why}"
     }
+    setStatus(downStatus())
+}
+
+// ============================================================
+// Recovery: Reconnecting > Searching > Offline > Offline, search stopped
+// ============================================================
+
+private Map recovery() {
+    Map r = null
+    try { r = parent?.recoveryOpts() } catch (e) { }
+    int after = ((r?.afterMin ?: 5) as int)
+    int stop = (r?.stopHours != null ? r.stopHours : 24) as int
+    return [afterMs: after * 60000L, stopMs: stop * 3600000L]
+}
+
+private long downMs() { state.downSince ? now() - (state.downSince as long) : 0L }
+
+private String downStatus() {
+    if (mem().authFailed) return "Access code rejected"
+    if (state.downSince == null) return "Reconnecting"
+    if (state.searchStopped) return "Offline, search stopped"
+    if (mem().searching) return "Searching"
+    if (downMs() < recovery().afterMs) return "Reconnecting"
+    return ((state.searches ?: 0) as int) >= SEARCHES_TO_OFFLINE ? "Offline" : "Searching"
+}
+
+private void resetSearch() {
+    ["searches", "nextSearchAt", "searchStopped"].each { state.remove(it) }
+}
+
+def downCheck() {
+    Map m = mem()
+    if (state.connected || state.downSince == null || m.authFailed) return
+    Map r = recovery()
+    long d = downMs()
+    if (!state.searchStopped && r.stopMs > 0 && d >= r.stopMs) {
+        state.searchStopped = true
+        logE "can't find the printer after ${(r.stopMs / 3600000L) as long} hours. Stopped searching; trying its last address " +
+            "(${state.printer?.ip}) every hour. Tap Search now on the printer's card in the app to look again."
+        setStatus(downStatus())
+        return
+    }
+    if (state.searchStopped) { setStatus(downStatus()); return }
+    if (d < r.afterMs) { runIn(Math.max(10, ((r.afterMs - d) / 1000L) as int), "downCheck"); return }
+    long next = (state.nextSearchAt ?: 0L) as long
+    if (!m.searching && now() >= next) requestSearch()
+    else runIn(Math.max(10, ((Math.max(next, now() + 60000L) - now()) / 1000L) as int), "downCheck")
+    setStatus(downStatus())
+}
+
+private void requestSearch() {
+    Map m = mem()
+    int n = ((state.searches ?: 0) as int) + 1
+    state.searches = n
+    int gap = SEARCH_GAPS[Math.min(n - 1, SEARCH_GAPS.size() - 1)] as int
+    state.nextSearchAt = now() + gap * 60000L
+    m.searching = true
+    setStatus("Searching")
+    logN "can't reach ${state.printer?.ip}, searching the network for this printer (search ${n})"
+    runIn(90, "searchGiveUp")   // the app answers within its search time
+    runIn(gap * 60, "downCheck")
+    try { parent.findLostPrinter(device.deviceNetworkId) } catch (e) { logE "could not ask the app to search: ${e.message}"; searchGiveUp() }
+}
+
+def searchGiveUp() {
+    if (!mem().searching) return
+    mem().searching = false
+    setStatus(state.connected ? "Connected" : downStatus())
+}
+
+// From the app when its search ends: the IP this serial answered from, or null.
+void searchResult(String ip) {
+    unschedule("searchGiveUp")
+    mem().searching = false
+    if (state.connected) return
+    if (!ip) logN "search didn't find the printer. Still trying ${state.printer?.ip}."
+    else if (ip == state.printer?.ip) logN "printer answered the search at ${ip}. Still reconnecting."
+    setStatus(downStatus())
+}
+
+// From the app: the search found this printer at a new address. configure() already has the new IP.
+void ipMoved(String oldIp, String newIp) {
+    state.lastIpChange = "${oldIp} to ${newIp}, ${new Date().format('MMM d HH:mm', location.timeZone)}"
+    slog("info", "found the printer at a new address, ${oldIp} to ${newIp}. Reconnecting.")
+    Map m = mem()
+    m.attempt = 0
+    m.reconnectPending = false
+    m.searching = false
+    unschedule("searchGiveUp")
+    unschedule("connect")
+    connect()
+}
+
+// From the app's Search now button.
+void searchNow() {
+    resetSearch()
+    if (state.connected) { logN "Search now: already connected"; setStatus("Connected"); return }
+    if (state.downSince == null) state.downSince = now() - recovery().afterMs   // straight to searching
+    requestSearch()
 }
 
 private void scheduleReconnect() {
     Map m = mem()
     if (m.reconnectPending) return
     int a = (m.attempt ?: 0) as int
-    int secs = BACKOFF[Math.min(a, BACKOFF.size() - 1)] as int
+    int secs = state.searchStopped ? 3600 : BACKOFF[Math.min(a, BACKOFF.size() - 1)] as int
     m.attempt = a + 1
     if (a == 3 && !state.downWarned) {
         state.downWarned = true
@@ -1355,6 +1483,7 @@ Long statusAge() { state.statusAt ? now() - (state.statusAt as long) : null }
 private void markAlive() {
     if (!state.connected) state.connected = true
     if (state.downSince != null) { state.remove("downSince"); state.remove("downWarned") }
+    if (state.searches || state.searchStopped) { resetSearch(); unschedule("downCheck") }
     setStatus("Connected")
 }
 

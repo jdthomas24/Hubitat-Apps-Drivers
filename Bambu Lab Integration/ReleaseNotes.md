@@ -1,3 +1,24 @@
+**Release: Bambu Lab Integration v0.2.20 (beta)**
+Find printers on your network, and reconnect on their own when their IP changes.
+
+**Problem:**
+- Adding a printer meant reading its IP address off the printer screen.
+- If the router gave a printer a new IP (after a power outage or router restart), it stayed offline until someone updated the IP by hand.
+- After a hub reboot or firmware update, the time the hub was down could count as the printer being offline.
+
+**The Fix:**
+- New **Find printers** button. It searches your network for about 10 seconds and lists each printer with its model, name, serial and IP. Tap **Add** to fill in the name, IP and serial, then enter the access code. Printers you've already added are marked "Already added."
+- A printer that stays unreachable is found again by its serial number. After 5 minutes the integration searches the network, and if the printer answers from a new IP, the app updates it and reconnects. The log says "moved from .50 to .73."
+- connectionStatus shows each stage: **Reconnecting**, **Searching**, **Offline** (after 3 searches, still checked in the background) and **Offline, search stopped** (after 24 hours, the last address is still tried every hour). **Search now** on the printer card looks again.
+- After a hub reboot, failures in the first 5 minutes don't count as offline time, and the search starts over.
+- New Quick Settings: **Find printers searches for** (10 s), **Search for a lost printer after** (5 min) and **Stop searching after** (24 hours, or Never).
+- New Tips topic: Finding printers. Diagnostics shows the search count and the last IP change.
+
+**Action needed:**
+Update through HPM, then open the app and tap **Done** once. GitHub can take several minutes to serve new files, so check that all three files show 0.2.20 after updating.
+
+---
+
 **Release: Bambu Lab Integration v0.2.19 (beta)**
 Diagnostics shortens every serial in the report.
 

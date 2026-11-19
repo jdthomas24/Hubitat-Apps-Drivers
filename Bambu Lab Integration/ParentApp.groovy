@@ -13,6 +13,10 @@
      -Equipment page as IntelliCenter, one section per printer; state.pushedExcluded is per printer.
      -One log level for everything; children log through childLog(). Full turns off after 30 minutes.
      -UI per HubitatAppUiTemplate (Reolink, gopher.ny). legacyLightThemeCss() covers pre-2.5.3 firmware.
+     -Find printers (0.2.20): M-SEARCH for urn:bambulab-com:device:3dprinter:1 over UDP to 1990 (multicast and
+      broadcast) and 1900, plus the hub's SSDP discovery. Replies carry the IP (Location) and serial (USN).
+      Any search moves a printer whose serial answers from a new IP. Printers ask for a search when lost
+      (findLostPrinter); timing lives in the Printer driver, the limits in recoveryOpts().
 */
 
 definition(
@@ -30,10 +34,13 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.2.19"
+@Field static final String APP_VERSION   = "0.2.20"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
+@Field static final String SSDP_ST       = "urn:bambulab-com:device:3dprinter:1"
+@Field static final Map MODEL_NAMES      = ["3DPrinter-X1-Carbon": "X1 Carbon", "3DPrinter-X1": "X1", "BL-P001": "X1 Carbon", "BL-P002": "X1",
+                                            "C11": "P1P", "C12": "P1S", "C13": "X1E", "N1": "A1 mini", "N2S": "A1", "O1D": "H2D", "O1S": "H2S"]
 @Field static final Map MODES            = [monitor: "Monitor only (works with Bambu Cloud and the Bambu apps)",
                                             control: "Monitor and control (needs Developer Mode, no Bambu Cloud)"]
 
@@ -87,11 +94,12 @@ def mainPage() {
             List sl = slots()
             if (!sl) paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;'>No printers yet. Tap <b>Add printer</b>.</div>"
             sl.eachWithIndex { int i, int n -> printerCard(i, n + 1) }
+            input "findPrinters", "button", title: "Find printers", width: 4, inputClass: "app-ui-button"
             input "addPrinter", "button", title: "Add printer", width: 4, inputClass: "app-ui-button"
+            findResults()
             if (!printerDevices() || printerDevices().any { d -> String sn = null; try { sn = d.getSerial() } catch (e) { }; !sn }) {
-                paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;'>On the printer, <b>Settings, Network</b> (<b>WLAN</b> on some models) " +
-                    "shows the IP address and access code. Just read them there: Monitor only doesn't need LAN Only or Developer Mode. " +
-                    "A DHCP reservation in your router keeps the IP from changing.</div>"
+                paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;'>The access code is on the printer under <b>Settings, Network</b> " +
+                    "(<b>WLAN</b> on some models), with the IP address if you add a printer by hand. Monitor only doesn't need LAN Only or Developer Mode.</div>"
             }
             if (printerDevices()) {
                 Map eq = equipmentCounts()
@@ -107,6 +115,12 @@ def mainPage() {
                 defaultValue: "Errors Only", submitOnChange: true, width: 12,
                 style: "margin-left: 0.5em; margin-right: 0.5em; margin-top: 0; padding-right:0;"
             paragraph rawHtml: true, loggingDetailsPopupHtml()
+            input "findSecs", "enum", title: "Find printers searches for", options: ["5": "5 seconds", "10": "10 seconds", "20": "20 seconds", "30": "30 seconds"],
+                defaultValue: "10", width: 12
+            input "searchAfter", "enum", title: "Search for a lost printer after", options: ["2": "2 minutes", "5": "5 minutes", "10": "10 minutes", "15": "15 minutes"],
+                defaultValue: "5", width: 12
+            input "stopAfter", "enum", title: "Stop searching after", options: ["6": "6 hours", "24": "24 hours", "72": "3 days", "0": "Never"],
+                defaultValue: "24", width: 12
             label title: "App name", required: false
         }
         section(title: "<b>Help & Support</b>", sectionClass: "app-ui-links app-main-support") {
@@ -126,6 +140,9 @@ private void printerCard(int i, int pos) {
         href name: "editP_${i}", title: "Edit Printer", description: "", page: "printerPage", params: [slot: i], width: 3
         input "refreshP_${i}", "button", title: "Refresh", width: 3, inputClass: "app-ui-button"
         input "remove_${i}", "button", title: state.confirmRemove == i ? "Tap again to remove" : "Remove Printer", width: 3, inputClass: "app-ui-button"
+        if ((dev.currentValue("connectionStatus") ?: "").toString().startsWith("Offline")) {
+            input "searchP_${i}", "button", title: "Search now", width: 3, inputClass: "app-ui-button"
+        }
         paragraph rawHtml: true, "<div class='bb-card-end'></div>"
         return
     }
@@ -193,7 +210,9 @@ private String printerCardHtml(int i, dev) {
     boolean ok = conn == "Connected"
     boolean busy = reconnecting(dev)
     String line
-    if (busy) line = "Reconnecting&hellip;"
+    if (busy) line = conn == "Searching" ? "Searching the network for this printer&hellip;" : conn == "Connecting" ? "Connecting&hellip;" : "Reconnecting&hellip;"
+    else if (conn == "Offline") line = "Offline &middot; not found on the network, still checking"
+    else if (conn == "Offline, search stopped") line = "Offline &middot; search stopped. Tap Search now to look again"
     else if (!ok) line = conn == "Waiting for printer" ? "Connected, waiting for the printer's first status" : conn
     else if (ps in ["Printing", "Paused", "Preparing"]) {
         def pct = dev.currentValue("progress"), left = dev.currentValue("timeRemaining (min)")
@@ -278,6 +297,16 @@ private String shortName(k, dev) {
 private String hm(int mins) { mins >= 60 ? "${(mins / 60) as int}h ${mins % 60}m" : "${mins}m" }
 
 def appButtonHandler(String btn) {
+    if (btn in ["findPrinters", "searchAgain"]) { state.remove("confirmRemove"); state.showFind = true; startSearch("button"); return }
+    if (btn == "clearFind") { ["showFind", "findResults"].each { state.remove(it) }; return }
+    def af = btn =~ /^addFound_([A-Z0-9]+)$/
+    if (af.find()) { addFound(af.group(1)); return }
+    def sp = btn =~ /^searchP_(\d+)$/
+    if (sp.find()) {
+        def d = getChildDevice(printerDni(sp.group(1).toInteger()))
+        if (d) try { d.searchNow() } catch (e) { logErr "could not start a search for ${d.displayName}: ${e.message}" }
+        return
+    }
     def pm = btn =~ /^refreshP_(\d+)$/
     if (pm.find()) {
         state.remove("confirmRemove")
@@ -285,14 +314,7 @@ def appButtonHandler(String btn) {
         if (d) try { d.refresh() } catch (e) { }
         return
     }
-    if (btn == "addPrinter") {
-        List sl = slots()
-        int next = Math.max(((state.maxSlot ?: 0) as int), (sl ? sl.max() : 0)) + 1
-        state.maxSlot = next
-        state.slots = sl + next
-        state.remove("confirmRemove")
-        return
-    }
+    if (btn == "addPrinter") { newSlot(); return }
     def mt = btn =~ /^remove_(\d+)$/
     if (!mt.find()) return
     int i = mt.group(1).toInteger()
@@ -306,6 +328,248 @@ def appButtonHandler(String btn) {
     }
     ["name", "ip", "code", "serial", "mode", "allowStop"].each { app.removeSetting("p${i}_${it}") }
     state.slots = slots() - i
+}
+
+// ============================================================================
+// Find printers
+// ============================================================================
+
+// Search results collect here while a search runs, then go to state once at the end.
+@Field static final java.util.concurrent.ConcurrentHashMap APPMEM = new java.util.concurrent.ConcurrentHashMap()
+
+private Map appMem() {
+    String k = app.id.toString()
+    Map m = APPMEM.get(k) as Map
+    if (m == null) { m = new java.util.concurrent.ConcurrentHashMap(); APPMEM.put(k, m) }
+    return m
+}
+
+private int findSecs() { ((settings.findSecs ?: "10") as String).toInteger() }
+
+// For the Printers: when to search for a lost printer and when to stop (0 = never).
+Map recoveryOpts() {
+    [afterMin: ((settings.searchAfter ?: "5") as String).toInteger(), stopHours: ((settings.stopAfter ?: "24") as String).toInteger()]
+}
+
+// For the Printers: this one is lost, search and answer it with searchResult().
+void findLostPrinter(String dni) {
+    List req = (state.searchReq ?: []) as List
+    if (!req.contains(dni)) state.searchReq = req + dni
+    startSearch("auto")
+}
+
+private boolean searching() {
+    Map s = (state.search ?: [:]) as Map
+    return s.running && now() < ((s.until ?: 0L) as long) + 5000L
+}
+
+private void startSearch(String reason) {
+    if (searching()) {
+        if (reason == "button" && state.search.reason != "button") { Map s = state.search; s.reason = "button"; state.search = s }
+        return
+    }
+    int secs = findSecs()
+    Map m = appMem()
+    m.found = new java.util.concurrent.ConcurrentHashMap()
+    m.via = java.util.Collections.synchronizedSet(new LinkedHashSet())
+    m.remove("sample")
+    state.search = [running: true, reason: reason, startedAt: now(), until: now() + secs * 1000L]
+    logInfo "searching the network for printers for ${secs} s${reason == 'auto' ? ' (a printer is offline)' : ''}"
+    sendDiscovery()
+    if (secs >= 7) runIn(3, "searchBurst", [data: [n: 2]])
+    runIn(secs, "searchDone")
+}
+
+def searchBurst(Map data) {
+    if (!searching()) return
+    sendDiscovery()
+    int n = ((data?.n ?: 2) as int)
+    if (n < 3 && now() + 3500L < (state.search.until as long)) runIn(3, "searchBurst", [data: [n: n + 1]])
+}
+
+// Bambu printers answer SSDP on 1990 (2021 for broadcasts), not the standard 1900, so ask every way the hub can.
+private void sendDiscovery() {
+    [["239.255.255.250:1990", "udpReplyMulticast"], ["255.255.255.255:1990", "udpReplyBroadcast"],
+     ["255.255.255.255:2021", "udpReply2021"], ["239.255.255.250:1900", "udpReply1900"]].each { d ->
+        String msg = "M-SEARCH * HTTP/1.1\r\nHOST: ${d[0]}\r\nMAN: \"ssdp:discover\"\r\nMX: 3\r\nST: ${SSDP_ST}\r\n\r\n"
+        try {
+            sendHubCommand(new hubitat.device.HubAction(msg, hubitat.device.Protocol.LAN,
+                [type: hubitat.device.HubAction.Type.LAN_TYPE_UDPCLIENT, destinationAddress: d[0], callback: d[1], timeout: findSecs()]))
+        } catch (e) { logDbg "search to ${d[0]} not sent: ${e.message}" }
+    }
+    try { sendHubCommand(new hubitat.device.HubAction("lan discovery ${SSDP_ST}", hubitat.device.Protocol.LAN)) }
+    catch (e) { logDbg "hub SSDP search not sent: ${e.message}" }
+}
+
+def udpReplyMulticast(resp) { gotReply(resp, "UDP 1990 multicast") }
+def udpReplyBroadcast(resp) { gotReply(resp, "UDP 1990 broadcast") }
+def udpReply2021(resp)      { gotReply(resp, "UDP 2021 broadcast") }
+def udpReply1900(resp)      { gotReply(resp, "UDP 1900") }
+def ssdpEvent(evt)          { gotReply(evt?.description, "hub SSDP") }
+
+private void gotReply(resp, String via) {
+    String desc = null
+    try { desc = resp instanceof String ? resp : resp?.description } catch (e) { }
+    if (!desc) desc = resp?.toString()
+    if (!desc) return
+    Map lan = [:]
+    try { lan = parseLanMessage(desc) ?: [:] } catch (e) { }
+    Map r = parseBambuReply(desc, lan)
+    Map m = appMem()
+    if (m.sample == null) m.sample = "${via}: ${desc.take(300)}"
+    if (!r) { logDbg "search reply via ${via} wasn't a Bambu printer: ${desc.take(200)}"; return }
+    Map found = m.found as Map
+    if (found == null) return   // late reply after the search ended
+    if (!found.containsKey(r.serial)) logDbg "search found ${r.serial} at ${r.ip} via ${via}"
+    found[r.serial] = r + [via: via]
+    try { (m.via as Set) << via } catch (e) { }
+}
+
+// Reply text (or the hub's parsed SSDP fields) -> [serial, ip, name, model], or null if it isn't a Bambu printer.
+private Map parseBambuReply(String desc, Map lan) {
+    String text = ""
+    if (lan?.payload) text = hexText(lan.payload.toString())
+    else if (lan?.body) text = lan.body.toString()
+    if (!text && desc.toLowerCase().contains("bambulab")) text = desc
+    Map h = [:]
+    text.split(/\r?\n/).each { line ->
+        int c = line.indexOf(":")
+        if (c > 0) h[line.substring(0, c).trim().toLowerCase()] = line.substring(c + 1).trim()
+    }
+    String term = (h.st ?: h.nt ?: lan?.ssdpTerm ?: "").toString()
+    if (!term.toLowerCase().contains("bambulab")) return null
+    String usn = (h.usn ?: lan?.ssdpUSN ?: "").toString().replaceFirst(/(?i)^uuid:/, "").replaceFirst(/::.*$/, "").trim().toUpperCase()
+    String ip = firstIp(h.location) ?: firstIp(lan?.ssdpPath) ?: hexIp(lan?.networkAddress) ?: firstIp(lan?.ip)
+    if (!validSerial(usn) || !ip) return null
+    String code = h["devmodel.bambu.com"]
+    return [serial: usn, ip: ip, name: h["devname.bambu.com"] ?: null, model: code ? (MODEL_NAMES[code] ?: code) : null]
+}
+
+private String firstIp(v) {
+    def mt = (v ?: "").toString() =~ /(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/
+    return mt.find() ? mt.group(1) : null
+}
+
+private String hexIp(v) {
+    String h = (v ?: "").toString()
+    if (!(h ==~ /[0-9A-Fa-f]{8}/)) return null
+    return (0..3).collect { Integer.parseInt(h.substring(it * 2, it * 2 + 2), 16) }.join(".")
+}
+
+private String hexText(String hex) {
+    if (!(hex ==~ /([0-9A-Fa-f]{2})+/)) return hex
+    byte[] b = new byte[hex.length() / 2]
+    for (int i = 0; i < b.length; i++) b[i] = (byte) Integer.parseInt(hex.substring(i * 2, i * 2 + 2), 16)
+    return new String(b, "UTF-8")
+}
+
+def searchDone() {
+    Map s = (state.search ?: [:]) as Map
+    Map m = appMem()
+    Map found = new LinkedHashMap((m.found ?: [:]) as Map)
+    List via = ((m.via ?: []) as List).collect { it.toString() }
+    m.remove("found")
+    s.running = false
+    s.count = found.size()
+    s.via = via
+    state.search = s
+    // Any search moves a printer that's not connected and answered from a new IP.
+    Set moved = [] as Set
+    slots().each { int i ->
+        def dev = getChildDevice(printerDni(i))
+        String sn = dev ? serialFor(i, dev) : null
+        Map f = sn ? found[sn] as Map : null
+        if (!f) return
+        String cur = settings["p${i}_ip"]?.toString()?.trim()
+        boolean up = dev.currentValue("connectionStatus") in ["Connected", "Waiting for printer"]
+        if (f.ip != cur && !up) { movePrinter(i, dev, sn, f.ip as String); moved << sn }
+    }
+    ((state.searchReq ?: []) as List).each { dni ->
+        def dev = getChildDevice(dni as String)
+        String sn = null
+        try { sn = dev?.getSerial() } catch (e) { }
+        if (dev && !(sn in moved)) try { dev.searchResult(sn ? found[sn]?.ip : null) } catch (e) { }
+    }
+    state.remove("searchReq")
+    if (s.reason == "button") {
+        state.findResults = [at: now(), found: found.collectEntries { k, v -> [(k): (v as Map) + [moved: moved.contains(k)]] }]
+    }
+    if (found) logInfo "search found ${countText(found.size(), 'printer')} (${via.join(', ')})"
+    else logInfo "no printers answered the search${m.sample ? '. First reply: ' + m.sample : ''}"
+}
+
+private String serialFor(int i, dev) {
+    String sn = null
+    try { sn = dev?.getSerial() } catch (e) { }
+    if (!sn) sn = settings["p${i}_serial"]?.toString()?.trim()?.toUpperCase()
+    return sn && validSerial(sn) ? sn : null
+}
+
+private Integer slotForSerial(String sn) {
+    slots().find { int i -> serialFor(i, getChildDevice(printerDni(i))) == sn }
+}
+
+// The search found a known printer at a new address: update the app and reconnect it there.
+private void movePrinter(int i, dev, String sn, String newIp) {
+    String old = settings["p${i}_ip"]?.toString()?.trim()
+    app.updateSetting("p${i}_ip", [value: newIp, type: "text"])
+    if (!validSerial(settings["p${i}_serial"]?.toString()?.trim()?.toUpperCase() ?: "")) app.updateSetting("p${i}_serial", [value: sn, type: "text"])
+    boolean ctl = settings["p${i}_mode"] == "control"
+    dev.configure([slot: i, serial: sn, name: settings["p${i}_name"]?.toString()?.trim() ?: "Bambu Printer ${i}", ip: newIp],
+        [control: ctl, allowStop: ctl && settings["p${i}_allowStop"] == true])
+    log.info "${APP_NAME}: ${dev.displayName} moved from ${old} to ${newIp}. Updated and reconnecting."
+    try { dev.ipMoved(old, newIp) } catch (e) { logErr "could not reconnect ${dev.displayName}: ${e.message}" }
+}
+
+private int newSlot() {
+    List sl = slots()
+    int next = Math.max(((state.maxSlot ?: 0) as int), (sl ? sl.max() : 0)) + 1
+    state.maxSlot = next
+    state.slots = sl + next
+    state.remove("confirmRemove")
+    return next
+}
+
+private void addFound(String sn) {
+    Map f = ((state.findResults?.found ?: [:]) as Map)[sn] as Map
+    if (!f || slotForSerial(sn)) return
+    int i = newSlot()
+    app.updateSetting("p${i}_name", [value: f.name ?: "Bambu ${f.model ?: 'Printer'}", type: "text"])
+    app.updateSetting("p${i}_ip", [value: f.ip, type: "text"])
+    app.updateSetting("p${i}_serial", [value: sn, type: "text"])
+}
+
+// Under the Find printers button: searching, what was found, or help when nothing answered.
+private void findResults() {
+    if (!state.showFind) return
+    if (searching()) {
+        long left = Math.max(1L, (((state.search.until as long) - now()) / 1000L) as long)
+        paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;margin:6px 0'><i class='pi pi-spin pi-spinner mr-2' aria-hidden='true'></i>" +
+            "Searching your network&hellip; about ${left} s</div><script>setTimeout(function(){location.reload()},${(left + 2) * 1000});</script>"
+        input "checkFind", "button", title: "Show results", width: 4, inputClass: "app-ui-button"
+        return
+    }
+    Map found = ((state.findResults?.found ?: [:]) as Map)
+    if (!found) {
+        paragraph rawHtml: true, warningMessageHtml("<b>No printers found.</b> Check that the printer is on and on the same network as your hub " +
+            "(guest and IoT networks often block discovery), then tap <b>Search again</b>. You can also tap <b>Add printer</b> and enter the IP by hand. " +
+            "It's on the printer screen under Settings, Network.")
+    }
+    found.sort { a, b -> (a.value.name ?: a.key) <=> (b.value.name ?: b.key) }.each { sn, f ->
+        Integer slot = slotForSerial(sn as String)
+        boolean made = slot && getChildDevice(printerDni(slot))
+        String tag = !slot ? "" : made ? "<span class='bb-chip' style='margin-left:6px'>Already added</span>" +
+            (f.moved ? " <span class='hub-text-success' style='font-size:0.85em'>IP updated</span>" : "") :
+            "<span class='hub-text-warning' style='font-size:0.85em;margin-left:6px'>Added below. Enter its access code and tap Done.</span>"
+        String chip = f.model ? "<span style='background:#00ae42;color:#fff;border-radius:8px;padding:2px 9px;font-size:0.9em;font-weight:bold;margin-right:6px'>${esc(f.model)}</span>" : ""
+        paragraph rawHtml: true, "<div style='padding:6px 0'>${chip}<span style='font-weight:600'>${esc(f.name ?: 'Bambu printer')}</span> " +
+            "<span class='text-color-secondary' style='font-size:0.8em'>${esc(sn)} &middot; ${esc(f.ip)}</span>${tag}</div>", width: slot ? 12 : 9
+        if (!slot) input "addFound_${sn}", "button", title: "Add", width: 3, inputClass: "app-ui-button"
+    }
+    input "searchAgain", "button", title: "Search again", width: 3, inputClass: "app-ui-button"
+    input "clearFind", "button", title: "Close", width: 3, inputClass: "app-ui-button"
+    href name: "findHelp", title: "How finding printers works", description: "", page: "tipsPage", params: [topic: "find"], width: 6, style: "margin:8px 0;"
+    paragraph rawHtml: true, "<div class='bb-card-end'></div>"
 }
 
 def equipmentPage() {
@@ -378,7 +642,7 @@ private Map bannerState() {
     String counts = countText(devs.size(), "printer")
     List busy = devs.findAll { reconnecting(it) }
     if (!bad && busy) return [ok: true, title: busy.size() == 1 ? "${esc(busy[0].displayName)} reconnecting" : "${busy.size()} printers reconnecting",
-                              summary: "${counts} &middot; this takes a few seconds after an update"]
+                              summary: "${counts} &middot; reconnecting on its own"]
     if (!bad) {
         List printing = devs.findAll { it.currentValue("printState") == "Printing" }
         return [ok: true, title: "Integration ready", summary: "${counts}${printing ? ' &middot; ' + printing.size() + ' printing' : ''}"]
@@ -387,16 +651,12 @@ private Map bannerState() {
         return [ok: false, title: "Access code rejected", summary: "Check the LAN access code on the printer, update it below and tap <b>Done</b>."]
     }
     return [ok: false, title: bad.size() == 1 ? "${esc(bad[0].displayName)} offline" : "${bad.size()} printers offline",
-            summary: "${counts} &middot; reconnecting on its own. Check the printer is on and on the network."]
+            summary: "${counts} &middot; still checking on its own. Check the printer is on and on the network, or tap <b>Search now</b>."]
 }
 
-// Connecting or Reconnecting for under 2 minutes is normal (after an update or Done), not an outage.
-private boolean reconnecting(dev) {
-    if (!(dev.currentValue("connectionStatus") in ["Connecting", "Reconnecting"])) return false
-    Long age = null
-    try { age = dev.statusAge() } catch (e) { }
-    return age == null || age < 120000L
-}
+// Connecting, Reconnecting and Searching are the printer recovering on its own, not an outage. The driver
+// moves to Offline when its searches fail.
+private boolean reconnecting(dev) { dev.currentValue("connectionStatus") in ["Connecting", "Reconnecting", "Searching"] }
 
 // ============================================================================
 // Lifecycle
@@ -408,6 +668,9 @@ def updated() { ["editing", "editSlot", "editBefore", "applyEdits", "confirmRemo
 
 def initialize() {
     unschedule()
+    unsubscribe()
+    subscribe(location, "ssdpTerm.${SSDP_ST}", "ssdpEvent")
+    if (state.search?.running) { Map s = state.search; s.running = false; state.search = s }   // its timer was cleared
     state.remove("fullLogArmed")   // unschedule() cleared its timer
     armLogRevert()
     Map cfg = configuredPrinters()
@@ -484,9 +747,22 @@ private List tipsTopics() {
             ],
             warning: "If Developer Mode is off, the printer refuses Printer Control. After each command the log says whether it took, and monitoring and the light keep working."],
         [id: "setup", label: "Setup", title: "Adding a printer", group: "Getting started", icon: "pi-cog",
-            body: "<p>Tap <b>Add printer</b>. Enter a name, the <b>IP address</b> and the <b>LAN access code</b>. Both are on the printer under <b>Settings, Network</b> (<b>WLAN</b> on some models). Just read them: you don't need to turn on LAN Only.</p>" +
-                "<p>Leave the serial blank. The integration reads it from the printer and shows it next to the printer's name once connected.</p>" +
-                "<p>Tap <b>Done</b>. Each printer connects within a few seconds and adds its AMS units. Give the printer a <b>DHCP reservation</b> in your router so its IP doesn't change.</p>"],
+            body: "<p>Tap <b>Find printers</b>, then <b>Add</b> next to your printer. Its name, IP address and serial fill in. Enter the <b>LAN access code</b>: it's on the printer under <b>Settings, Network</b> (<b>WLAN</b> on some models). Just read it: you don't need to turn on LAN Only.</p>" +
+                "<p>Not found? Tap <b>Add printer</b> and enter the name, <b>IP address</b> and access code by hand. Leave the serial blank: the integration reads it from the printer.</p>" +
+                "<p>Tap <b>Done</b>. Each printer connects within a few seconds and adds its AMS units.</p>"],
+        [id: "find", label: "Finding printers", title: "Finding your printer", group: "Getting started", icon: "pi-search",
+            body: "<p>Tap <b>Find printers</b> to search your network for about 10 seconds. Printers you've already added are marked <b>Already added</b>.</p>" +
+                "<p><b>None found?</b> Check that the printer is on and on the same network as your hub (guest and IoT networks often block discovery), then tap <b>Search again</b>. " +
+                "You can also enter the IP by hand. It's on the printer screen under Settings, Network.</p>" +
+                "<p><b>IP changed?</b> No action needed. The integration finds the printer by its serial number and reconnects on its own.</p>",
+            checklist: [
+                [title: "Online", detail: "Working normally."],
+                [title: "Reconnecting", detail: "Retrying, normal after a hub or printer restart."],
+                [title: "Searching", detail: "Looking for the printer on the network."],
+                [title: "Offline", detail: "Not found, still checking in the background."],
+                [title: "Offline, search stopped", detail: "Not found for 24 hours. Tap Search now on the printer's card to try again."]
+            ],
+            warning: "Tip: reserving the printer's IP in your router keeps the address from changing."],
         [id: "updates", label: "Status updates", title: "How status stays up to date", group: "How it works", icon: "pi-refresh",
             body: "<p>X1 and H2 printers send an 8 KB status every second while printing. Over a long print that adds up, so the integration stays connected but only listens for one status per check:</p>",
             checklist: [
@@ -549,7 +825,7 @@ private List tipsTopics() {
                 [title: "Access code rejected", detail: "The code changes when the printer's network settings are reset. Read it again on the printer, update it here and tap Done."],
                 [title: "Waiting for printer", detail: "Connected, but no status yet. Some printers stay quiet while idle; start anything on the printer, or enter its serial (Settings, Device)."],
                 [title: "Serial doesn't match", detail: "The integration uses the serial the printer reports and logs a warning. Clear the serial field."],
-                [title: "Reconnecting", detail: "Check the printer is on and on the same network, and nothing blocks port 8883. It retries on its own."],
+                [title: "Reconnecting or Offline", detail: "Check the printer is on and on the same network, and nothing blocks port 8883. It retries and searches for the printer on its own (see Finding printers)."],
                 [title: "Command refused", detail: "In Monitor only that's on purpose. In Monitor and control, turn on Developer Mode on the printer. The light works either way."],
                 [title: "Light came back on", detail: "The printer turns its light on when a print finishes. That's the printer, not Hubitat."],
                 [title: "Error text", detail: "Looked up from this integration's GitHub folder the first time a code appears (not from Bambu). Plain-English text comes from the ha-bambulab project (MIT license)."],
@@ -755,7 +1031,7 @@ private String statusBannerHtml(boolean ok, String title, String summary) {
     border: 1px solid currentColor; font-size: 0.6em; font-weight: 600; line-height: 1; opacity: 0.65; }
   .bb-slot { white-space: nowrap; flex: none; }
   a.bb-pill { flex-wrap: wrap; row-gap: 6px; }
-  .app-main-content :is([name*='refreshP_'],[name*='remove_'],[id*='refreshP_'],[id*='remove_']) {
+  .app-main-content :is([name*='refreshP_'],[name*='remove_'],[name*='searchP_'],[name*='addFound_'],[id*='refreshP_'],[id*='remove_'],[id*='searchP_'],[id*='addFound_']) {
     font-size: 13px !important; padding: 3px 12px !important; min-height: 0 !important; height: auto !important;
     line-height: 1.5 !important; margin: 2px 0 !important; box-shadow: none !important; border: 1px solid var(--hubitat-control-border, #d0d7de) !important;
     white-space: nowrap; }
