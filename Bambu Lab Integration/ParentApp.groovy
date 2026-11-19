@@ -17,6 +17,12 @@
       broadcast) and 1900, plus the hub's SSDP discovery. Replies carry the IP (Location) and serial (USN).
       Any search moves a printer whose serial answers from a new IP. Printers ask for a search when lost
       (findLostPrinter); timing lives in the Printer driver, the limits in recoveryOpts().
+     -Access codes (0.2.21): Enter by hand (default) or Sign in with Bambu. Sign-in on its own page (a password field
+      on the main page makes browsers autofill the printer fields). Password never saved; token, email and the
+      account's printers (serial, name, model, code) in state. Login posts with Bambu Studio headers, the printer
+      list with the token only (Cloudflare blocks it with Studio headers, tested 0.2.20); each falls back to the
+      other on a Cloudflare page. Codes fill in on Add and sign-in; a saved code is replaced only when the printer
+      rejects it (accessCodeRejected from the driver, at most every 30 min per printer). Turning it off signs out.
 */
 
 definition(
@@ -34,13 +40,23 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.2.20"
+@Field static final String APP_VERSION   = "0.2.21"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
 @Field static final String SSDP_ST       = "urn:bambulab-com:device:3dprinter:1"
 @Field static final Map MODEL_NAMES      = ["3DPrinter-X1-Carbon": "X1 Carbon", "3DPrinter-X1": "X1", "BL-P001": "X1 Carbon", "BL-P002": "X1",
                                             "C11": "P1P", "C12": "P1S", "C13": "X1E", "N1": "A1 mini", "N2S": "A1", "O1D": "H2D", "O1S": "H2S"]
+@Field static final Map CODE_SOURCES      = [hand: "Enter by hand (read from each printer)", cloud: "Sign in with Bambu (fills them in for you)"]
+@Field static final String BBL_LOGIN    = "https://api.bambulab.com/v1/user-service/user/login"
+@Field static final String BBL_EMAIL    = "https://api.bambulab.com/v1/user-service/user/sendemail/code"
+@Field static final String BBL_BIND     = "https://api.bambulab.com/v1/iot-service/api/user/bind"
+@Field static final String BBL_CSRF     = "https://bambulab.com/api/csrf"
+@Field static final String BBL_TFA      = "https://bambulab.com/api/sign-in/tfa"
+@Field static final Map STUDIO_HEADERS  = [
+    "User-Agent": "bambu_network_agent/01.09.05.01", "X-BBL-Client-Name": "OrcaSlicer", "X-BBL-Client-Type": "slicer",
+    "X-BBL-Client-Version": "01.09.05.51", "X-BBL-Language": "en-US", "X-BBL-OS-Type": "linux", "X-BBL-OS-Version": "6.2.0",
+    "X-BBL-Agent-Version": "01.09.05.01", "X-BBL-Executable-info": "{}", "X-BBL-Agent-OS-Type": "linux", "accept": "application/json"]
 @Field static final Map MODES            = [monitor: "Monitor only (works with Bambu Cloud and the Bambu apps)",
                                             control: "Monitor and control (needs Developer Mode, no Bambu Cloud)"]
 
@@ -49,6 +65,7 @@ preferences {
     page(name: "printerPage")
     page(name: "equipmentPage")
     page(name: "tipsPage")
+    page(name: "cloudPage")
 }
 
 private String printerDni(int slot) { "bambu-p${slot}" }
@@ -101,6 +118,7 @@ def mainPage() {
                 paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:14px;'>The access code is on the printer under <b>Settings, Network</b> " +
                     "(<b>WLAN</b> on some models), with the IP address if you add a printer by hand. Monitor only doesn't need LAN Only or Developer Mode.</div>"
             }
+            accessCodesBlock()
             if (printerDevices()) {
                 Map eq = equipmentCounts()
                 href name: "toEquipment", title: "<i class='fa-solid fa-cube mr-2' aria-hidden='true'></i>Equipment",
@@ -297,6 +315,7 @@ private String shortName(k, dev) {
 private String hm(int mins) { mins >= 60 ? "${(mins / 60) as int}h ${mins % 60}m" : "${mins}m" }
 
 def appButtonHandler(String btn) {
+    if (btn.startsWith("cloud")) { cloudButton(btn); return }
     if (btn in ["findPrinters", "searchAgain"]) { state.remove("confirmRemove"); state.showFind = true; startSearch("button"); return }
     if (btn == "clearFind") { ["showFind", "findResults"].each { state.remove(it) }; return }
     def af = btn =~ /^addFound_([A-Z0-9]+)$/
@@ -371,7 +390,7 @@ private void startSearch(String reason) {
     int secs = findSecs()
     Map m = appMem()
     m.found = new java.util.concurrent.ConcurrentHashMap()
-    m.via = java.util.Collections.synchronizedSet(new LinkedHashSet())
+    m.via = new java.util.concurrent.ConcurrentHashMap()   // used as a set
     m.remove("sample")
     state.search = [running: true, reason: reason, startedAt: now(), until: now() + secs * 1000L]
     logInfo "searching the network for printers for ${secs} s${reason == 'auto' ? ' (a printer is offline)' : ''}"
@@ -422,7 +441,7 @@ private void gotReply(resp, String via) {
     if (found == null) return   // late reply after the search ended
     if (!found.containsKey(r.serial)) logDbg "search found ${r.serial} at ${r.ip} via ${via}"
     found[r.serial] = r + [via: via]
-    try { (m.via as Set) << via } catch (e) { }
+    try { (m.via as Map)[via] = true } catch (e) { }
 }
 
 // Reply text (or the hub's parsed SSDP fields) -> [serial, ip, name, model], or null if it isn't a Bambu printer.
@@ -458,7 +477,7 @@ private String hexIp(v) {
 
 private String hexText(String hex) {
     if (!(hex ==~ /([0-9A-Fa-f]{2})+/)) return hex
-    byte[] b = new byte[hex.length() / 2]
+    byte[] b = new byte[hex.length().intdiv(2) as int]
     for (int i = 0; i < b.length; i++) b[i] = (byte) Integer.parseInt(hex.substring(i * 2, i * 2 + 2), 16)
     return new String(b, "UTF-8")
 }
@@ -467,7 +486,7 @@ def searchDone() {
     Map s = (state.search ?: [:]) as Map
     Map m = appMem()
     Map found = new LinkedHashMap((m.found ?: [:]) as Map)
-    List via = ((m.via ?: []) as List).collect { it.toString() }
+    List via = ((m.via ?: [:]) as Map).keySet().collect { it.toString() }
     m.remove("found")
     s.running = false
     s.count = found.size()
@@ -537,6 +556,8 @@ private void addFound(String sn) {
     app.updateSetting("p${i}_name", [value: f.name ?: "Bambu ${f.model ?: 'Printer'}", type: "text"])
     app.updateSetting("p${i}_ip", [value: f.ip, type: "text"])
     app.updateSetting("p${i}_serial", [value: sn, type: "text"])
+    String code = cloudOn() ? cloudCode(sn) : null
+    if (code) app.updateSetting("p${i}_code", [value: code, type: "text"])
 }
 
 // Under the Find printers button: searching, what was found, or help when nothing answered.
@@ -560,16 +581,290 @@ private void findResults() {
         boolean made = slot && getChildDevice(printerDni(slot))
         String tag = !slot ? "" : made ? "<span class='bb-chip' style='margin-left:6px'>Already added</span>" +
             (f.moved ? " <span class='hub-text-success' style='font-size:0.85em'>IP updated</span>" : "") :
-            "<span class='hub-text-warning' style='font-size:0.85em;margin-left:6px'>Added below. Enter its access code and tap Done.</span>"
+            "<span class='hub-text-warning' style='font-size:0.85em;margin-left:6px'>Added below. " +
+            (settings["p${slot}_code"] || (cloudOn() && cloudCode(sn as String)) ? "Its access code is filled in from Bambu. Tap Done." : "Enter its access code and tap Done.") + "</span>"
         String chip = f.model ? "<span style='background:#00ae42;color:#fff;border-radius:8px;padding:2px 9px;font-size:0.9em;font-weight:bold;margin-right:6px'>${esc(f.model)}</span>" : ""
         paragraph rawHtml: true, "<div style='padding:6px 0'>${chip}<span style='font-weight:600'>${esc(f.name ?: 'Bambu printer')}</span> " +
             "<span class='text-color-secondary' style='font-size:0.8em'>${esc(sn)} &middot; ${esc(f.ip)}</span>${tag}</div>", width: slot ? 12 : 9
         if (!slot) input "addFound_${sn}", "button", title: "Add", width: 3, inputClass: "app-ui-button"
     }
+    if (cloudOn() && state.cloudToken) {
+        List missing = cloudPrinters().keySet().findAll { !found.containsKey(it) }.collect { cloudPrinters()[it].name ?: it }
+        if (missing) paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:0.85em;padding:4px 0'>On your Bambu account but not found on this network: " +
+            missing.collect { esc(it) }.join(", ") + "</div>"
+    }
     input "searchAgain", "button", title: "Search again", width: 3, inputClass: "app-ui-button"
     input "clearFind", "button", title: "Close", width: 3, inputClass: "app-ui-button"
     href name: "findHelp", title: "How finding printers works", description: "", page: "tipsPage", params: [topic: "find"], width: 6, style: "margin:8px 0;"
     paragraph rawHtml: true, "<div class='bb-card-end'></div>"
+}
+
+// ============================================================================
+// Access codes: Sign in with Bambu (optional)
+// ============================================================================
+
+private boolean cloudOn() { settings.codeSource == "cloud" }
+private Map cloudPrinters() { (state.cloudPrinters ?: [:]) as Map }
+private String cloudCode(String sn) { sn ? cloudPrinters()[sn]?.code?.toString() : null }
+
+// Main page: the choice, and with Sign in with Bambu, the account line.
+private void accessCodesBlock() {
+    if (!cloudOn() && state.cloudToken) cloudSignOut("turned off")
+    input "codeSource", "enum", title: "Access codes", options: CODE_SOURCES, defaultValue: "hand", submitOnChange: true, width: 12
+    if (!cloudOn()) return
+    String desc
+    if (state.cloudToken) {
+        int n = cloudPrinters().size()
+        desc = "Signed in as ${esc(state.cloudEmail)} &middot; ${countText(n, 'printer')} on the account. Find printers fills in their codes."
+    } else if (state.cloudExpired) {
+        desc = "<span class='hub-text-warning'>The Bambu sign-in expired. Tap to sign in again.</span>"
+    } else {
+        desc = "Not signed in yet. Tap to sign in."
+    }
+    href name: "toCloud", title: "<i class='fa-solid fa-cloud mr-2' aria-hidden='true'></i>Bambu account", description: desc, page: "cloudPage", width: 12, style: "margin:8px;"
+}
+
+def cloudPage() {
+    dynamicPage(name: "cloudPage", title: "Bambu account", install: false, uninstall: false) {
+        section(sectionClass: "app-ui-links app-main-content") {
+            paragraph rawHtml: true, "<style>${appPageSpacingCss()}</style>" +
+                "<div class='text-color-secondary' style='font-size:14px;'>Used only to read your printers' access codes. Your password isn't saved, " +
+                "and the printers are still monitored on your own network.</div>"
+            if (state.cloudToken) {
+                paragraph rawHtml: true, "<div class='hub-text-success' style='margin-top:8px'>Signed in as ${esc(state.cloudEmail)}.</div>"
+                input "cloudRefresh", "button", title: "Refresh from Bambu", width: 4, inputClass: "app-ui-button"
+                input "cloudSignOut", "button", title: "Sign out", width: 4, inputClass: "app-ui-button"
+            } else {
+                input "cloudEmail", "text", title: "Bambu email", required: false, width: 6, submitOnChange: true
+                input "cloudPassword", "password", title: "Bambu password", required: false, width: 6, submitOnChange: true
+                input "cloudSignIn", "button", title: "Sign in", width: 4, inputClass: "app-ui-button"
+                if (state.cloudStep == "code") {
+                    paragraph rawHtml: true, "<div style='margin-top:8px'>Bambu emailed a 6-digit code to ${esc(state.cloudEmail)}. Enter it, tap outside the box, then <b>Submit code</b>.</div>"
+                    input "cloudCode", "text", title: "Email code", required: false, width: 6, submitOnChange: true
+                    input "cloudSendCode", "button", title: "Submit code", width: 4, inputClass: "app-ui-button"
+                }
+                if (state.cloudStep == "tfa") {
+                    paragraph rawHtml: true, "<div style='margin-top:8px'>Two-step login is on. Enter the code from your authenticator app.</div>"
+                    input "cloudTfa", "text", title: "Two-step code", required: false, width: 6, submitOnChange: true
+                    input "cloudSendTfa", "button", title: "Submit code", width: 4, inputClass: "app-ui-button"
+                }
+                paragraph rawHtml: true, "<div class='text-color-secondary' style='font-size:13px;margin-top:8px'>Signed up with Google or Apple? " +
+                    "Set a Bambu password first: in the Bambu Handy app, tap the person icon, then Account Security, Change Password.</div>"
+            }
+            if (state.cloudMsg) paragraph rawHtml: true, "<div class='${state.cloudMsgOk ? 'hub-text-success' : 'hub-text-warning'}' style='margin-top:8px'>${state.cloudMsg}</div>"
+            Map cp = cloudPrinters()
+            if (state.cloudToken && cp) {
+                paragraph rawHtml: true, "<div class='app-heading font-semibold' style='margin-top:12px'>Printers on this account</div>"
+                input "cloudShowCodes", "bool", title: "Show access codes", defaultValue: false, submitOnChange: true, width: 12
+                cp.sort { a, b -> (a.value.name ?: a.key) <=> (b.value.name ?: b.key) }.each { sn, p ->
+                    Integer slot = slotForSerial(sn as String)
+                    String code = p.code ? (settings.cloudShowCodes ? esc(p.code) : "&bull;&bull;&bull;&bull;&bull;&bull;" + esc(last2(p.code.toString()))) : "not given"
+                    paragraph rawHtml: true, "<div style='padding:4px 0'><b>${esc(p.name ?: 'Printer')}</b> " +
+                        "<span class='text-color-secondary' style='font-size:0.85em'>${esc(p.model ?: '')} &middot; ${esc(sn)} &middot; ${p.online ? 'online' : 'offline'}" +
+                        " &middot; code ${code}${slot ? ' &middot; in Hubitat' : ''}</span></div>"
+                }
+            }
+        }
+    }
+}
+
+private String last2(String s) { s.length() > 2 ? s.substring(s.length() - 2) : s }
+
+private void cloudButton(String btn) {
+    state.remove("cloudMsg")
+    switch (btn) {
+        case "cloudSignIn": cloudPasswordLogin(); break
+        case "cloudSendCode": cloudCodeLogin(); break
+        case "cloudSendTfa": cloudTfaLogin(); break
+        case "cloudRefresh": cloudFetch(true); break
+        case "cloudSignOut": cloudSignOut("signed out"); break
+    }
+}
+
+private void cloudMsg(String m, boolean ok = false) { state.cloudMsg = m; state.cloudMsgOk = ok }
+
+private void cloudPasswordLogin() {
+    String em = settings.cloudEmail?.toString()?.trim()
+    String pw = settings.cloudPassword?.toString()
+    app.removeSetting("cloudPassword")
+    if (!em || !pw) { cloudMsg("Enter your Bambu email and password first."); return }
+    state.cloudEmail = em
+    Map r = cloudSend("post", BBL_LOGIN, [account: em, password: pw, apiError: ""], true)
+    if (r.status != 200 || !(r.data instanceof Map)) { cloudMsg(r.error ?: "Bambu didn't accept the sign-in. Check the email and password."); return }
+    Map d = r.data as Map
+    if (d.accessToken) { cloudGotToken(d.accessToken as String); return }
+    if (d.loginType == "verifyCode") {
+        state.cloudStep = "code"
+        Map c = cloudSend("post", BBL_EMAIL, [email: em, type: "codeLogin"], true)
+        cloudMsg(c.status == 200 ? "Code sent. Check your email." : (c.error ?: "Bambu couldn't send the email code."), c.status == 200)
+    } else if (d.loginType == "tfa") {
+        state.cloudStep = "tfa"
+        state.cloudTfaKey = d.tfaKey
+    } else {
+        cloudMsg("Bambu answered in a way this version doesn't know (${esc(d.loginType ?: 'no sign-in type')}). Post it in the community thread.")
+    }
+}
+
+private void cloudCodeLogin() {
+    String c = settings.cloudCode?.toString()?.trim()
+    app.removeSetting("cloudCode")
+    if (!c) { cloudMsg("No code reached the app. Type it, tap outside the box, then Submit code."); return }
+    Map r = cloudSend("post", BBL_LOGIN, [account: state.cloudEmail, code: c], true)
+    if (r.status == 200 && r.data?.accessToken) cloudGotToken(r.data.accessToken as String)
+    else if (r.status == 400 && r.data?.code == 1) cloudMsg("That code expired. Tap Sign in for a new one.")
+    else if (r.status == 400) cloudMsg("That code didn't work. Check it and try again.")
+    else cloudMsg(r.error ?: "Bambu didn't accept the code.")
+}
+
+private void cloudTfaLogin() {
+    String c = settings.cloudTfa?.toString()?.trim()
+    app.removeSetting("cloudTfa")
+    if (!c) { cloudMsg("Enter the two-step code first."); return }
+    String csrf = null, tok = null
+    try { httpGet([uri: BBL_CSRF, headers: STUDIO_HEADERS, timeout: 20]) { resp -> csrf = cookieOf(resp, "bbl_csrf_token") } }
+    catch (e) { logDbg "Bambu CSRF: ${e.message}" }
+    if (!csrf) { cloudMsg("Bambu's two-step sign-in didn't start. Try again in a minute."); return }
+    try {
+        httpPost([uri: BBL_TFA, requestContentType: "application/json", contentType: "text/plain", timeout: 20,
+                  headers: STUDIO_HEADERS + ["x-bbl-csrf-token": csrf, "Cookie": "bbl_csrf_token=" + csrf],
+                  body: [tfaKey: state.cloudTfaKey, tfaCode: c]]) { resp -> tok = cookieOf(resp, "token") }
+    } catch (e) { logDbg "Bambu two-step: ${e.message}" }
+    if (tok) cloudGotToken(tok) else cloudMsg("That two-step code didn't work. Check it and try again.")
+}
+
+private void cloudGotToken(String t) {
+    state.cloudToken = t
+    ["cloudStep", "cloudTfaKey", "cloudExpired"].each { state.remove(it) }
+    logInfo "signed in to Bambu as ${state.cloudEmail}"
+    cloudFetch(true)
+}
+
+private void cloudSignOut(String why) {
+    ["cloudToken", "cloudPrinters", "cloudStep", "cloudTfaKey", "cloudExpired", "cloudFetchedAt"].each { state.remove(it) }
+    logInfo "Bambu sign-in removed (${why}). Access codes already filled in stay."
+    if (why == "signed out") cloudMsg("Signed out. Access codes already filled in stay.", true)
+}
+
+// The account's printers. fill: put codes into printers that have none.
+private boolean cloudFetch(boolean fill) {
+    if (!state.cloudToken) return false
+    Map r = cloudSend("get", BBL_BIND, null, false)
+    if (r.status == 401) {
+        ["cloudToken", "cloudPrinters"].each { state.remove(it) }
+        state.cloudExpired = true
+        cloudMsg("The Bambu sign-in expired. Sign in again.")
+        logErr "the Bambu sign-in expired. Open the app, Bambu account, and sign in again."
+        return false
+    }
+    if (r.status != 200 || !(r.data instanceof Map)) { cloudMsg(r.error ?: "Couldn't read your printers from Bambu."); return false }
+    Map out = [:]
+    ((r.data.devices ?: []) as List).each { d ->
+        String sn = d.dev_id?.toString()?.toUpperCase()
+        if (sn && validSerial(sn)) out[sn] = [name: d.name, model: d.dev_product_name ?: d.dev_model_name, code: d.dev_access_code, online: d.online == true]
+    }
+    state.cloudPrinters = out
+    state.cloudFetchedAt = now()
+    int filled = fill ? cloudFillCodes() : 0
+    cloudMsg("${countText(out.size(), 'printer')} on your Bambu account${filled ? ', access code filled in for ' + countText(filled, 'printer') : ''}.", true)
+    return true
+}
+
+// Printers in the app with a known serial and no access code get the account's code.
+private int cloudFillCodes() {
+    int n = 0
+    slots().each { int i ->
+        String sn = serialFor(i, getChildDevice(printerDni(i)))
+        String code = cloudCode(sn)
+        if (code && !settings["p${i}_code"]) { app.updateSetting("p${i}_code", [value: code, type: "text"]); n++ }
+    }
+    return n
+}
+
+// From a Printer when its access code is rejected: with Sign in with Bambu, fetch the current code.
+void accessCodeRejected(String dni) {
+    if (!cloudOn() || !state.cloudToken) return
+    Map last = (state.codeFetchAt ?: [:]) as Map
+    if (now() - ((last[dni] ?: 0L) as long) < 1800000L) return
+    last[dni] = now()
+    state.codeFetchAt = last
+    runIn(2, "cloudRefreshCode", [data: [dni: dni]])
+}
+
+def cloudRefreshCode(Map data) {
+    def mt = (data?.dni ?: "") =~ /^bambu-p(\d+)$/
+    if (!mt.find()) return
+    int i = mt.group(1).toInteger()
+    def dev = getChildDevice(printerDni(i))
+    if (!dev || !cloudFetch(false)) return
+    String sn = serialFor(i, dev)
+    String code = cloudCode(sn)
+    if (!code) { logErr "${dev.displayName}: the printer rejected its access code and Bambu has none for it. Check the code on the printer."; return }
+    if (code == settings["p${i}_code"]?.toString()?.trim()) {
+        logErr "${dev.displayName}: the printer rejected its access code, and Bambu has the same one. Check the code on the printer."
+        return
+    }
+    app.updateSetting("p${i}_code", [value: code, type: "text"])
+    log.info "${APP_NAME}: ${dev.displayName}'s access code changed on the printer. Updated from your Bambu account and reconnecting."
+    try { dev.codeUpdated() } catch (e) { logErr "could not reconnect ${dev.displayName}: ${e.message}" }
+}
+
+// Sign-in posts work with Bambu Studio headers, the printer list only with the token; each tries the other on a Cloudflare page.
+private Map cloudSend(String method, String url, Map body, boolean studioFirst) {
+    Map r = cloudOnce(method, url, body, studioFirst)
+    if (r.blocked) {
+        logDbg "Bambu ${method} ${url}: Cloudflare page, trying ${studioFirst ? 'plain' : 'Studio'} headers"
+        Map r2 = cloudOnce(method, url, body, !studioFirst)
+        if (r2.blocked) logErr "Bambu's Cloudflare protection blocked the hub (${url.replaceFirst('https://', '')}). Try again later, or enter the access code by hand."
+        return r2
+    }
+    return r
+}
+
+private Map cloudOnce(String method, String url, Map body, boolean studio) {
+    Map h = studio ? new LinkedHashMap(STUDIO_HEADERS) : ["accept": "application/json"]
+    if (state.cloudToken && method == "get") h.Authorization = "Bearer " + state.cloudToken
+    Map p = [uri: url, headers: h, requestContentType: "application/json", contentType: "text/plain", timeout: 20]
+    if (body != null) p.body = body
+    Map out = [status: null, data: null]
+    String raw = null
+    try {
+        Closure c = { resp -> out.status = resp.status; raw = bodyText(resp.data) }
+        if (method == "post") httpPost(p, c) else httpGet(p, c)
+    } catch (e) {
+        try { out.status = e.statusCode as Integer } catch (x) { }
+        try { raw = bodyText(e.response?.data) } catch (x) { }
+        if (out.status == null) { out.error = "Couldn't reach Bambu: " + esc(e.message); return out }
+    }
+    String txt = (raw ?: "").trim()
+    if (txt.startsWith("{") || txt.startsWith("[")) { try { out.data = new groovy.json.JsonSlurper().parseText(txt) } catch (x) { } }
+    out.blocked = txt.startsWith("<") || (out.status in [403, 429] && txt.toLowerCase().contains("cloudflare"))
+    if (out.blocked) out.error = "Bambu's Cloudflare protection blocked the request. Try again later, or enter the access code by hand."
+    logDbg "Bambu ${method} ${url.replaceFirst('https://', '')}: HTTP ${out.status}${studio ? '' : ' (token only)'}"
+    return out
+}
+
+private String bodyText(d) {
+    if (d == null) return null
+    if (d instanceof String) return d
+    if (d instanceof Map || d instanceof List) return groovy.json.JsonOutput.toJson(d)
+    try { return d.text } catch (e) { return d.toString() }
+}
+
+private String cookieOf(resp, String name) {
+    String found = null
+    try {
+        resp.headers.each { h ->
+            if (h.name?.equalsIgnoreCase("Set-Cookie")) {
+                String v = h.value ?: ""
+                int a = v.indexOf(name + "=")
+                if (a == 0 || (a > 0 && v.substring(a - 1, a) in [";", " "])) {
+                    int b = v.indexOf(";", a)
+                    found = v.substring(a + name.length() + 1, b > 0 ? b : v.length())
+                }
+            }
+        }
+    } catch (e) { }
+    return found
 }
 
 def equipmentPage() {
@@ -763,6 +1058,16 @@ private List tipsTopics() {
                 [title: "Offline, search stopped", detail: "Not found for 24 hours. Tap Search now on the printer's card to try again."]
             ],
             warning: "Tip: reserving the printer's IP in your router keeps the address from changing."],
+        [id: "cloud", label: "Sign in with Bambu", title: "Access codes from your Bambu account", group: "Getting started", icon: "pi-cloud",
+            body: "<p>Optional. Set <b>Access codes</b> to <b>Sign in with Bambu</b>, open <b>Bambu account</b> and sign in. Bambu emails a code the first time.</p>" +
+                "<p>After that, <b>Find printers</b> fills in each printer's access code too, so <b>Add</b> then <b>Done</b> is all it takes.</p>",
+            checklist: [
+                [title: "What it's used for", detail: "Only to read your printers' access codes. Monitoring stays on your own network, and Monitor only or control works the same."],
+                [title: "Your password", detail: "Never saved. Only Bambu's sign-in token is kept, and Sign out removes it."],
+                [title: "Code changed on the printer", detail: "If a printer rejects its code, the app gets the current one from Bambu and reconnects on its own."],
+                [title: "Signed up with Google or Apple", detail: "Set a Bambu password first: in Bambu Handy, tap the person icon, then Account Security, Change Password."],
+                [title: "Sign-in expired", detail: "Bambu's sign-in runs out after a while. Codes already filled in keep working; sign in again to fill in new ones or refresh a changed one."]
+            ]],
         [id: "updates", label: "Status updates", title: "How status stays up to date", group: "How it works", icon: "pi-refresh",
             body: "<p>X1 and H2 printers send an 8 KB status every second while printing. Over a long print that adds up, so the integration stays connected but only listens for one status per check:</p>",
             checklist: [
@@ -822,7 +1127,7 @@ private List tipsTopics() {
         [id: "trouble", label: "Troubleshooting", title: "Troubleshooting", group: "Troubleshooting", icon: "pi-wrench",
             body: "<p>The printer's status line on the main page usually says what's wrong.</p>",
             checklist: [
-                [title: "Access code rejected", detail: "The code changes when the printer's network settings are reset. Read it again on the printer, update it here and tap Done."],
+                [title: "Access code rejected", detail: "The code changes when the printer's network settings are reset or the code is refreshed. With Sign in with Bambu, the app updates it on its own. Otherwise read it again on the printer, update it here and tap Done."],
                 [title: "Waiting for printer", detail: "Connected, but no status yet. Some printers stay quiet while idle; start anything on the printer, or enter its serial (Settings, Device)."],
                 [title: "Serial doesn't match", detail: "The integration uses the serial the printer reports and logs a warning. Clear the serial field."],
                 [title: "Reconnecting or Offline", detail: "Check the printer is on and on the same network, and nothing blocks port 8883. It retries and searches for the printer on its own (see Finding printers)."],

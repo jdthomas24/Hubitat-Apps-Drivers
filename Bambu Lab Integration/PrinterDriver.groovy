@@ -51,6 +51,8 @@
       looks for this serial on the network and moves the IP if it changed), Offline after 3 searches (searches keep
       going 15, 30, then 60 min apart), Offline, search stopped after the app's limit (last IP tried hourly).
       Search now, Done and a hub reboot start over. In the first 5 min of hub uptime failures don't start the clock.
+     -Rejected access code (0.2.21): tells the app once per outage (accessCodeRejected); with Sign in with Bambu the
+      app fetches the current code and calls codeUpdated().
 */
 
 metadata {
@@ -126,7 +128,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.20"
+@Field static final String VERSION     = "0.2.21"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -377,8 +379,9 @@ def connect() {
         String why = e.message ?: e.toString()
         if (why.toLowerCase().contains("not authorized") || why.contains("(5)")) {
             setStatus("Access code rejected")
-            logE "the printer rejected the access code. Check it on the printer (Settings, WLAN or LAN Only) and update it in the app."
+            if (!m.rejectReported) logE "the printer rejected the access code. Check it on the printer (Settings, Network) and update it in the app."
             m.authFailed = true
+            if (!m.rejectReported) { m.rejectReported = true; try { parent.accessCodeRejected(device.deviceNetworkId) } catch (x) { } }
         }
         markDown("connect failed: ${why}")
         scheduleReconnect()
@@ -390,6 +393,7 @@ private void onConnected() {
     m.attempt = 0
     m.lastRx = now()
     m.remove("authFailed")
+    m.remove("rejectReported")
     state.connected = true
     setStatus("Connected")
     unschedule("downCheck")
@@ -623,6 +627,17 @@ void ipMoved(String oldIp, String newIp) {
     m.searching = false
     unschedule("searchGiveUp")
     unschedule("connect")
+    connect()
+}
+
+// From the app: a new access code from the Bambu account. Reconnect now.
+void codeUpdated() {
+    Map m = mem()
+    ["authFailed", "rejectReported"].each { m.remove(it) }
+    m.attempt = 0
+    m.reconnectPending = false
+    unschedule("connect")
+    slog("info", "access code updated from the Bambu account, reconnecting")
     connect()
 }
 

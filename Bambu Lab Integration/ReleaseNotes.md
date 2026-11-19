@@ -1,3 +1,24 @@
+**Release: Bambu Lab Integration v0.2.21 (beta)**
+Optional Sign in with Bambu fills in access codes for you.
+
+**Problem:**
+- Every printer needed its access code typed in from the printer's screen, so adding or re-adding one meant being next to it.
+- If a printer's access code changed, it showed Access code rejected until someone typed the new one in.
+
+**The Fix:**
+- New **Access codes** choice on the main page, like Monitor only or control: **Enter by hand** (default, nothing changes) or **Sign in with Bambu**.
+- With Sign in with Bambu, open **Bambu account**, sign in, and enter the code Bambu emails you (two-step login works too). Your password is never saved, only Bambu's sign-in token. Sign out removes it, and so does switching back to Enter by hand.
+- **Find printers** then fills in each printer's access code as well, so Add then Done is all it takes. Printers on your account that weren't found on the network are listed under the results.
+- If a printer rejects its access code, the app gets the current one from your Bambu account and reconnects on its own.
+- Monitoring stays on your own network. Bambu's cloud is only used to read access codes.
+- New Tips topic: Sign in with Bambu. Access code rejected is logged once per outage instead of on every retry.
+- Find printers fixes for Hubitat's Groovy version.
+
+**Action needed:**
+Update through HPM. No Done needed. To use it, set Access codes to Sign in with Bambu and open Bambu account. GitHub can take several minutes to serve new files, so check that all three files show 0.2.21 after updating.
+
+---
+
 **Release: Bambu Lab Integration v0.2.20 (beta)**
 Find printers on your network, and reconnect on their own when their IP changes.
 
