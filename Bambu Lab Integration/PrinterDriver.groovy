@@ -55,6 +55,7 @@ metadata {
 
         attribute "printState",       "string"
         attribute "stage",            "string"
+        attribute "pauseType",        "string"
         attribute "progress",         "number"
         attribute "timeRemaining (min)", "number"
         attribute "elapsedTime (min)", "number"
@@ -115,7 +116,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.15"
+@Field static final String VERSION     = "0.2.16"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -596,6 +597,9 @@ private void render() {
     boolean active = ps in ACTIVE
     Integer stg = toInt(r.stg_cur)
     report("stage", active ? (stg && stg != 255 && stg > 0 ? (STAGES[stg] ?: "Stage ${stg}") : (ps == "Printing" ? "Printing" : ps)) : ps)
+    // pauseType: planned (pause in the print file, stg 5/30), user (app or screen, 16), problem (any other), none.
+    if (ps != "Paused") report("pauseType", "none")
+    else if (stg != null && stg > 0 && stg != 255) report("pauseType", stg in [5, 30] ? "planned" : stg == 16 ? "user" : "problem")
     // The printer keeps the last job's numbers. Progress stays at 100 on Finished; Idle reads 0.
     if (r.containsKey("mc_percent")) {
         int pct = ps == "Idle" ? 0 : (toInt(r.mc_percent) ?: 0)
@@ -992,8 +996,8 @@ private String letter(int n) { n >= 0 && n < 26 ? "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[n
 // Earlier default labels (AMS 1, AMS 129, AMS HT 1). Renamed once; a label the user set is left alone.
 private void renameAms(child, Integer uid) {
     String p = device.displayName
-    List olds = ["${p} AMS ${uid + 1}"]
-    if (isHt(uid)) olds << "${p} AMS HT ${uid - 127}"
+    List<String> olds = ["${p} AMS ${uid + 1}".toString()]
+    if (isHt(uid)) olds << "${p} AMS HT ${uid - 127}".toString()
     String nu = "${p} ${amsName(uid)}"
     try { if (child.label != nu && olds.contains(child.label)) { logN "renamed ${child.label} to ${nu}"; child.setLabel(nu) } } catch (e) { }
 }

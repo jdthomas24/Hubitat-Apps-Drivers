@@ -1,3 +1,21 @@
+**Release: Bambu Lab Integration v0.2.16 (beta)**
+Rules can now tell a planned pause from a problem, and AMS devices get their new names.
+
+**Problem:**
+- A pause added in the slicer (filament swap, magnets, inserts) and a pause from a runout or fault both just showed Paused. A rule couldn't tell them apart without parsing the stage text, and the printer card didn't say why.
+- 0.2.15 didn't rename AMS devices from their old default names (like "H2D #1 AMS 1") to the new ones (AMS A, AMS HT A).
+
+**The Fix:**
+- New **pauseType** attribute on the printer: planned (a pause in the print file), user (paused from an app or the printer screen), problem (runout or fault), or none.
+- While paused, the printer card shows the reason in place of Paused, for example Paused by G-code.
+- AMS devices still on an old default name are renamed at the next check. Names you've set yourself are left alone.
+- New Tips entry under Rules and dashboards: Planned pause.
+
+**Action needed:**
+Update through HPM. No Done needed. Tap Refresh on each printer to rename the AMS devices now.
+
+---
+
 **Release: Bambu Lab Integration v0.2.15 (beta)**
 AMS names now match the printer screen, and each slot on the card shows its number.
 

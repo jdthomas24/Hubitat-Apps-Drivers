@@ -30,7 +30,7 @@ definition(
 import groovy.transform.Field
 
 @Field static final String APP_NAME      = "Bambu Lab Integration"
-@Field static final String APP_VERSION   = "0.2.15"
+@Field static final String APP_VERSION   = "0.2.16"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/"
 @Field static final String COFFEE_URL    = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS      = ["Errors Only", "Normal", "Full"]
@@ -197,7 +197,9 @@ private String printerCardHtml(int i, dev) {
     else if (!ok) line = conn == "Waiting for printer" ? "Connected, waiting for the printer's first status" : conn
     else if (ps in ["Printing", "Paused", "Preparing"]) {
         def pct = dev.currentValue("progress"), left = dev.currentValue("timeRemaining (min)")
-        line = ps + (pct != null ? " &middot; ${pct}%" : "") + (left ? " &middot; ${hm(left as int)} left" : "") +
+        String stg = dev.currentValue("stage")
+        String head = ps == "Paused" && stg && stg != "Paused" ? "<span class='hub-text-warning'>${esc(stg)}</span>" : ps
+        line = head + (pct != null ? " &middot; ${pct}%" : "") + (left ? " &middot; ${hm(left as int)} left" : "") +
             (dev.currentValue("ETA") && dev.currentValue("ETA") != "--" ? " &middot; done at ${dev.currentValue('ETA')}" : "")
     } else line = ps ?: "Connected"
     int errs = (dev.currentValue("errorCount") ?: 0) as int
@@ -530,6 +532,7 @@ private List tipsTopics() {
         [id: "rules", label: "Rules and dashboards", title: "Rules and dashboards", group: "Using it", icon: "pi-bolt",
             body: "<p>Some ideas:</p>",
             checklist: [
+                [title: "Planned pause", detail: "A pause added in the slicer (filament swap, magnets, inserts): pauseType becomes planned. pauseType is user when paused from an app or the screen, and problem for a runout or fault. stage says why, like Paused by G-code."],
                 [title: "Print finished", detail: "printState becomes Finished: notify, or turn off the enclosure fan."],
                 [title: "Print failed or error", detail: "printState becomes Failed, or errorCount above 0. errorText says what's wrong in plain English, and the card links each code to the Bambu Lab Wiki."],
                 [title: "Door opened", detail: "door becomes open (H2D and printers with a door sensor). In Rule Machine it's under Custom Attribute. The printer's own \"front door is open\" notice isn't counted as an error, so errorCount rules don't fire when you check a print."],
