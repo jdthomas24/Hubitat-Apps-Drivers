@@ -122,7 +122,7 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 
-@Field static final String VERSION     = "0.2.18"
+@Field static final String VERSION     = "0.2.19"
 @Field static final String COMM_LINK   = "https://community.hubitat.com/"
 @Field static final String DONATE_LINK = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final List LOG_LEVELS    = ["Errors Only", "Normal", "Full"]
@@ -242,7 +242,7 @@ def diagnostics() {
 def diagReport() {
     Map m = mem()
     Map r = (m.rep ?: [:]) as Map
-    def J = { v -> v == null ? "not reported" : JsonOutput.toJson(v) }
+    def J = { v -> v == null ? "not reported" : JsonOutput.toJson(scrub(v)) }
     long rx = (m.lastRx ?: 0L) as long
     String ago = rx ? "${((now() - rx) / 1000L) as long} s ago" : "never"
     List mods = (m.modules ?: []) as List
@@ -257,6 +257,13 @@ def diagReport() {
     if (other) o << "\nOther keys: ${other.join(', ')}"
     o << "\nEND"
     slog("diag", o.toString())
+}
+
+// Every "sn" at any depth is shortened (upgrade_state and others carry full serials).
+private scrub(v) {
+    if (v instanceof Map) return (v as Map).collectEntries { k, x -> [(k): k?.toString() == "sn" ? mask(x?.toString()) : scrub(x)] }
+    if (v instanceof List) return (v as List).collect { scrub(it) }
+    return v
 }
 
 private String mask(String s) { !s ? "?" : s.length() <= 7 ? "***" : s.substring(0, 4) + "..." + s.substring(s.length() - 3) }

@@ -1,3 +1,17 @@
+**Release: Bambu Lab Integration v0.2.19 (beta)**
+Diagnostics shortens every serial in the report.
+
+**Problem:**
+- The Diagnostics report shortens serials, but the printer's firmware update section (upgrade_state) carries its own copy of the serial, and that one showed in full.
+
+**The Fix:**
+- Every serial anywhere in the report is now shortened, including any a printer model adds in sections the integration doesn't know about yet.
+
+**Action needed:**
+Update through HPM. No Done needed. GitHub can take several minutes to serve new files, so check that all three files show 0.2.19 after updating.
+
+---
+
 **Release: Bambu Lab Integration v0.2.18 (beta)**
 Fixes Diagnostics and firmware info in 0.2.17.
 
