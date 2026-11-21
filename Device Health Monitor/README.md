@@ -1,6 +1,6 @@
 # Device Health Monitor for Hubitat
 
-> **Status: v1.8.0.** Learns how often each device normally checks in and flags the ones that go quiet. Covers Zigbee, Z-Wave, Matter, Hub Mesh, LAN, Virtual and Hub Variable devices. Companion to [Battery Monitor 2.0](../Battery%20Monitor%202.0), which watches batteries.
+> **Status: v1.8.2.** Learns how often each device normally checks in and flags the ones that go quiet. Covers Zigbee, Z-Wave, Matter, Hub Mesh, LAN, Virtual and Hub Variable devices. Companion to [Battery Monitor 2.0](../Battery%20Monitor%202.0), which watches batteries.
 
 ## What it does
 

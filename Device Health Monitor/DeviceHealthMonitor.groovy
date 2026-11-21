@@ -1,12 +1,15 @@
 /**
  * Device Health Monitor
- * Version: 1.8.1
+ * Version: 1.8.2
  *
  * Learns each device's normal check-in pattern and flags devices that go quiet, across
  * Zigbee, Z-Wave, Matter, Hub Mesh, LAN, Virtual and Hub Variable. Verifies Poor/Offline
  * devices by state events, refresh/ping, the hub's Z-Wave and Zigbee radio data, or Hue Bridge /
  * Konnected Panel round-trips. Optional OAuth web portal.
  *
+ * v1.8.2 -- Fixed: hub radio times without a time zone (2026-11-21T05:59:18.088) didn't parse, so every Z-Wave
+ *    radio check read as no answer (3 = Offline). zwParseTime() reads offset or local times, with or without
+ *    fractions; a local time in the future is read as UTC. False misses are cleared once (radioFix182).
  * v1.8.1 -- Main page banner spacing and size match Hubitat's built-in apps, stacks on phones (gopher.ny, Reolink 1.6.17).
  * v1.8.0 -- Radio seen, no events. A Zigbee or Z-Wave device the hub radio still hears, but whose events
  *    stopped for the Offline threshold, is Poor at best. Applies only to regular reporters (event pace learned
@@ -77,7 +80,7 @@ definition(
     oauth: true
 )
 
-@Field static final String APP_VERSION = "1.8.1"
+@Field static final String APP_VERSION = "1.8.2"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com/t/release-device-health-monitor/163229"
 @Field static final String COFFEE_URL = "https://paypal.me/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "best"
@@ -164,6 +167,7 @@ def initialize() {
     state.scanQueue     = []
     state.tempResults   = []
     state.remove("zwPending")
+    clearFalseRadioMisses()
     atomicState.zwQueue    = []
     atomicState.zwPending  = [:]
     atomicState.zwDraining = false
@@ -533,6 +537,7 @@ private String hubCookie() {
 
 /** Caches [deviceId: [h: last heard ms, l: probeable]] from the hub's Z-Wave details. */
 private Map zwRefreshNodeCache() {
+    clearFalseRadioMisses()
     Map out = [:]
     Map params = [uri: "http://127.0.0.1:8080", path: "/hub/zwaveDetails/json",
                   contentType: "application/json", timeout: 20]
@@ -588,10 +593,46 @@ private String radioIssueText() {
     return bad ? bad.join(" and ") : null
 }
 
+// Hub radio times: "2026-11-21T05:59:18.088" (no zone, hub local), "...T05:59:18-0600", "...Z", or epoch.
 private Long zwParseTime(v) {
-    if (!v) return null
-    try { return new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ").parse(v.toString()).time }
-    catch (e) { return null }
+    if (v == null || v == "") return null
+    if (v instanceof Number) { long n = v as long; return n < 100000000000L ? n * 1000L : n }
+    String s = v.toString().trim()
+    if (s ==~ /\d{10,13}/) { long n = s as long; return n < 100000000000L ? n * 1000L : n }
+    def m = s =~ /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:[.,](\d+))?\s*(Z|[+-]\d{2}:?\d{2})?$/
+    if (!m.find()) return null
+    String ms = ((m.group(3) ?: "") + "000").substring(0, 3)
+    String base = "${m.group(1)}T${m.group(2)}.${ms}"
+    String zone = m.group(4)
+    try {
+        if (zone) {
+            zone = zone == "Z" ? "+0000" : zone.replace(":", "")
+            return new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ").parse(base + zone).time
+        }
+        def f = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS")
+        f.setTimeZone(location.timeZone ?: TimeZone.getDefault())
+        long t = f.parse(base).time
+        if (t > now() + 120000L) {   // a local reading in the future means the hub sent UTC
+            f.setTimeZone(TimeZone.getTimeZone("UTC"))
+            t = f.parse(base).time
+        }
+        return t
+    } catch (e) { return null }
+}
+
+// 1.8.2: misses counted while radio times didn't parse were false. Clear them once.
+private void clearFalseRadioMisses() {
+    if (state.radioFix182) return
+    def caps = state.deviceCapabilities ?: [:]
+    int n = 0
+    caps.each { k, c -> if (c instanceof Map && (c.zwMisses ?: 0) > 0) { c.zwMisses = 0; n++ } }
+    state.deviceCapabilities = caps
+    def ver = state.verifying ?: [:]
+    ver.findAll { k, v -> v == "zw_miss" }.keySet().each { ver.remove(it) }
+    state.verifying = ver
+    state.remove("zwLastCheck")
+    state.radioFix182 = true
+    if (n) logInfo("Device Health Monitor: cleared ${n} false hub radio misses from before 1.8.2")
 }
 
 /** Device the hub radio can confirm on demand: mains or FLiRS Z-Wave, or mains Zigbee (no Battery capability). */
