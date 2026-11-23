@@ -1,6 +1,6 @@
 /**
  * Reolink Integration (Parent App)
- * Version: 1.6.17
+ * Version: 1.6.18
  *
  * A "source" is anything answering the Reolink HTTP/JSON API (standalone camera, NVR or Home Hub),
  * each with its own IP and login; NVR/Hub channels are 0..N-1, a standalone camera is channel 0.
@@ -11,6 +11,9 @@
  * device (wired 2-5s, battery loose). Device quirks live in the README and Tips page. TODO markers
  * flag API names still to verify against firmware. Full history is in GitHub commit history.
  *
+ * v1.6.18 -- Hub/NVR doorbells also detected from GetAbility supportDoorbellLight, then a channel name
+ *    containing "doorbell" as a last resort (some NVR firmware sends no typeInfo, doorbellVersion or visitor).
+ *    A failed login no longer skips the later checks.
  * v1.6.17 -- Main page banner spacing and size match Hubitat's built-in apps, stacks on phones (thanks @vurvantsev).
  * v1.6.16 -- Navigation (thanks @vurvantsev): Cancel, Add source and Remove are page links instead of buttons that
  *    re-rendered another page in place, so repeated add/cancel no longer breaks navigation. Stale links show a
@@ -99,7 +102,7 @@ definition(
     oauth: true // required for createAccessToken()/local endpoint access used by the snapshot relay
 )
 
-@Field static final String APP_VERSION = "1.6.17"
+@Field static final String APP_VERSION = "1.6.18"
 
 // v1.6.5: power mode migration key; changing it re-runs migrateBatteryModes().
 @Field static final String POWER_MIGRATION_KEY = "batteryWired"
@@ -2814,21 +2817,29 @@ private String guessDeviceType(info) {
 }
 
 /**
- * v1.6.12: Hub/NVR channel type, never from the channel name (a Hub can report a doorbell as "Hub").
- * Same signals as reolink_aio: GetChannelstatus typeInfo (model, not sent by every device), then
- * GetAbility doorbellVersion, then GetAiState visitor support (3s quiet probe). Otherwise camera.
+ * Hub/NVR channel type. Same signals as reolink_aio: GetChannelstatus typeInfo (model, not sent by every
+ * device), GetAbility doorbellVersion, then GetAiState visitor support (3s quiet probe).
+ * v1.6.18: also GetAbility supportDoorbellLight, then the channel name as a last resort (RLN8-410
+ * fw v3.5.1.368 sends none of the others). The name can only make a channel a doorbell, never a camera,
+ * since a Home Hub can name a doorbell "Hub".
  */
 private String channelDeviceType(sourceId, ch, Map abilityCh) {
     String model = (ch?.typeInfo ?: "").toString()
     if (model) return model.toLowerCase().contains("doorbell") ? "doorbell" : "camera"
     if (abilityCh != null && abilityPermit(abilityCh, "doorbellVersion") > 0) return "doorbell"
+    if (abilityCh != null && abilityPermit(abilityCh, "supportDoorbellLight") > 0) {
+        logFull "Reolink source ${sourceId} ch ${ch.channel}: doorbell from supportDoorbellLight"
+        return "doorbell"
+    }
+    boolean visitor = false
     def token = reolinkLogin(sourceId)
-    if (!token) return "camera"
-    def outcome = doReolinkApiCall(getSource(sourceId), sourceId, "GetAiState", token, [:], ch.channel as Integer, true, 3)
-    def ai = outcome.value
-    boolean visitor = ((ai?.visitor ?: ai?.aiState?.visitor)?.support ?: 0) as Integer == 1
-    logFull "Reolink source ${sourceId} ch ${ch.channel}: no typeInfo, visitor support=${visitor}"
-    return visitor ? "doorbell" : "camera"
+    if (token) {
+        def ai = doReolinkApiCall(getSource(sourceId), sourceId, "GetAiState", token, [:], ch.channel as Integer, true, 3).value
+        visitor = ((ai?.visitor ?: ai?.aiState?.visitor)?.support ?: 0) as Integer == 1
+    }
+    boolean byName = !visitor && (ch?.name ?: "").toString().toLowerCase().contains("doorbell")
+    logFull "Reolink source ${sourceId} ch ${ch.channel}: no typeInfo, visitor support=${visitor}, name match=${byName}"
+    return (visitor || byName) ? "doorbell" : "camera"
 }
 
 /**
