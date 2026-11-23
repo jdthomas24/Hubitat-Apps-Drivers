@@ -16,4 +16,3 @@ Doorbells paired to some NVRs are now detected as doorbells instead of cameras.
 - Built-in users: no action needed, fixes come with a future Hubitat platform update (possibly sooner on beta firmware).
 - If your doorbell was already added as a Reolink Camera, delete that device, then turn its channel back on in the app so it's added again as a Reolink Doorbell. Rules and dashboards that used it will need the new device.
 
-Thanks to @USERNAME for tracking this down and suggesting the fix.
