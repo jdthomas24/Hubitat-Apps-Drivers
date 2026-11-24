@@ -33,13 +33,19 @@
       (this device's and its Activities') go up to the app via childLog, labeled by source.
      -removeAllActivityDevices() must run before the Bridge deletes this device,
       or Hubitat can leave an orphan that blocks re-adding the same DNI.
+     -Hub switch (1.1.8, Harmony style): on while any activity is on, off when all are off.
+      Activities report each change (activitySwitchChanged), tracked in memory (ACT_ON), since
+      another device's currentValue can lag inside the same run and these calls are nested. on() starts
+      the default activity (set in Edit Hub) or the last one used (device data). off() stops what's running.
 */
 
 import groovy.transform.Field
 
 @Field static final java.util.concurrent.ConcurrentHashMap SEEN_AT = new java.util.concurrent.ConcurrentHashMap()
+// Activity on/off by DNI, per hub device. Memory only; after a reboot the Activities' own switch values are used.
+@Field static final java.util.concurrent.ConcurrentHashMap ACT_ON = new java.util.concurrent.ConcurrentHashMap()
 
-def version() { return "1.1.7" }
+def version() { return "1.1.8" }
 
 metadata {
     definition (name: "Sofabaton Remote", namespace: "jdthomas24", author: "Jason Thomas (fork of Derek Osborn/dJOS1475, building on Mike Maxwell/mike.maxwell, Gassgs, SViel)", importUrl: "https://raw.githubusercontent.com/jdthomas24/Hubitat-Apps-Drivers/main/SofaBaton%20Integration/RemoteDriver.groovy") {
@@ -112,6 +118,7 @@ void updated(){
         if (val.length() > 80) device.updateSetting("usrBtn${i}", [value:val.take(80), type:"text"])
     }
     validateUserButtons()
+    updateHubSwitch()
 
     if (hubModel == "X2") {
         if (mac) {
@@ -279,15 +286,67 @@ void push(data) {
     }
 }
 
+// Starts the default activity, or the last one used.
 void on() {
-    if (logNormal()) slog("info", "Switch On")
-    sendEvent(name:"switch", value:"on")
+    def acts = activityChildren()
+    String dni = state.defaultActivityDni ?: device.getDataValue("lastActivity")
+    def target = dni ? acts.find { it.deviceNetworkId == dni } : null
+    if (!target) {
+        slog("warn", "no default or last used activity to start. Pick a default in the app's Edit Hub.")
+        return
+    }
+    if (isActOn(target)) {
+        if (logNormal()) slog("info", "${target.getLabel()} is already on")
+        return
+    }
+    if (logNormal()) slog("info", "hub On, starting ${target.getLabel()}")
+    target.on()
 }
 
+// Stops whatever is running. X2: one off powers off the hub.
 void off() {
-    if (logNormal()) slog("info", "Switch Off")
-    sendEvent(name:"switch", value:"off")
+    def running = activityChildren().findAll { isActOn(it) }
+    if (!running) {
+        if (logNormal()) slog("info", "hub Off, nothing running")
+        sendEvent(name: "switch", value: "off")
+        return
+    }
+    if (logNormal()) slog("info", "hub Off, stopping ${running*.getLabel().join(', ')}")
+    if (hubModel == "X2") running[0].off()
+    else running.each { it.off() }
 }
+
+// Called by each Activity when its switch changes.
+void activitySwitchChanged(String dni, String value) {
+    actOnMap().put(dni, value == "on")
+    if (value == "on" && device.getDataValue("lastActivity") != dni) device.updateDataValue("lastActivity", dni)
+    updateHubSwitch()
+}
+
+private Map actOnMap() {
+    String k = device.id.toString()
+    ACT_ON.putIfAbsent(k, new java.util.concurrent.ConcurrentHashMap())
+    return ACT_ON.get(k) as Map
+}
+
+private boolean isActOn(act) {
+    def v = actOnMap().get(act.deviceNetworkId)
+    return v != null ? (v as boolean) : act.currentValue("switch") == "on"
+}
+
+// Also called by the app's main page, so the switch is right after a driver update.
+void refreshHubSwitch() { updateHubSwitch() }
+
+private void updateHubSwitch() {
+    String v = activityChildren().any { isActOn(it) } ? "on" : "off"
+    if (device.currentValue("switch") != v) sendEvent(name: "switch", value: v, descriptionText: "${device.displayName} is ${v}")
+}
+
+// Set from Edit Hub. null = last used activity.
+void setDefaultActivity(String dni) {
+    if (dni) state.defaultActivityDni = dni else state.remove("defaultActivityDni")
+}
+String getDefaultActivityDni() { return state.defaultActivityDni }
 
 // Hex DNI for an IPv4 address, or null (with an error) if malformed. The app mirrors this.
 String ipToHex(String ipAddress) {
@@ -402,6 +461,9 @@ void applyActivityLabels(String oldHubLabel = null, String hubLabel = null) {
 
 // Activities are grandchildren of the Bridge, so the Bridge asks this device to clear them first.
 void removeAllActivityDevices() {
+    state.remove("defaultActivityDni")
+    device.removeDataValue("lastActivity")
+    ACT_ON.remove(device.id.toString())
     activityChildren().each { act ->
         try {
             deleteChildDevice(act.deviceNetworkId)
@@ -412,14 +474,16 @@ void removeAllActivityDevices() {
 }
 
 void removeActivityDevice(String name) {
-    String dni = "${device.deviceNetworkId}-activity-${name.replaceAll(/[^A-Za-z0-9]/, '')}"
-    def child = getChildDevice(dni)
-    if (child) deleteChildDevice(dni)
+    removeActivityDeviceByDni("${device.deviceNetworkId}-activity-${name.replaceAll(/[^A-Za-z0-9]/, '')}".toString())
 }
 
 void removeActivityDeviceByDni(String dni) {
     def child = getChildDevice(dni)
     if (child) deleteChildDevice(dni)
+    actOnMap().remove(dni)
+    if (device.getDataValue("lastActivity") == dni) device.removeDataValue("lastActivity")
+    if (state.defaultActivityDni == dni) state.remove("defaultActivityDni")
+    updateHubSwitch()
 }
 
 // X1S sync. One activity on at a time per hub. The remote only reports the

@@ -39,12 +39,14 @@
       classes (hub-text-*, app-ui-button*, app-ui-links/navigation, surface-*, p-message/p-tag) and var() tokens
       with fallbacks; legacyLightThemeCss() covers pre-2.5.3 firmware (pattern by vurvantsev, Reolink 1.6.13).
      -Tips page scrolls to the top on open (1.1.7); it could open at the main page's scroll position.
+     -Hub switch (1.1.8): Edit Hub picks the activity the hub device's On starts (default: last used).
+      The hub card shows it. The Remote driver tracks the switch state.
 */
 
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Sofabaton Integration"
-@Field static final String APP_VERSION = "1.1.7"
+@Field static final String APP_VERSION = "1.1.8"
 @Field static final String COMMUNITY_URL = "https://community.hubitat.com"   // TODO: release thread
 @Field static final String COFFEE_URL = "https://www.paypal.com/paypalme/jdthomas24?locale.x=en_US&country.x=US"
 @Field static final String DEFAULT_TIP_TOPIC = "start"
@@ -212,7 +214,7 @@ def mainPage(params = null) {
 
     def bridge = getBridge()
     def hubs = bridge?.getChildDevices() ?: []
-    hubs.each { h -> try { h.applyActivityLabels() } catch (e) { } }   // one-time label migration per hub
+    hubs.each { h -> try { h.applyActivityLabels(); h.refreshHubSwitch() } catch (e) { } }   // one-time label migration, hub switch resync
     subscribeButtons()   // picks up changes made on Button Actions
     def x2Hubs = hubs.findAll { it.currentValue("hubModel") == "X2" }
     def x1sHubs = hubs.findAll { it.currentValue("hubModel") != "X2" }
@@ -338,9 +340,20 @@ private String hubCardHtml(hub, List activities) {
         activities.each { act -> card << activityPillHtml(act, x2, hubLabel) }
         card << "</div>"
     }
+    if (activities) card << hubSwitchHtml(hub, activities, hubLabel)
     if (x2) card << buttonMapHtml(hub)
     card << "</div>"
     return card.toString()
+}
+
+// What the hub device's On starts.
+private String hubSwitchHtml(hub, List activities, String hubLabel) {
+    String dni = null
+    try { dni = hub.getDefaultActivityDni() } catch (e) { }
+    def act = dni ? activities.find { it.deviceNetworkId == dni } : null
+    String target = act ? "<b>${shortName(act, hubLabel)}</b>" : "the last activity used"
+    return "<div class='text-color-secondary' style='margin-top:10px;font-size:0.85em'>Hub switch: " +
+        "<b>${hub.currentValue('switch') ?: 'off'}</b> &middot; On starts ${target}</div>"
 }
 
 // Opens the device in a new tab. Green dot = on. X2 shows its ID, pending state, and a flag if deleted on the hub.
@@ -526,6 +539,9 @@ def addHubPage(params = [:]) {
     if (editingHub && !state.editHubPrefilled) {
         app.updateSetting("newHubName", [value: editingHub.getLabel(), type: "text"])
         app.updateSetting("newHubModel", [value: editingHub.currentValue("hubModel"), type: "enum"])
+        String defAct = null
+        try { defAct = editingHub.getDefaultActivityDni() } catch (e) { }
+        app.updateSetting("newHubDefaultAct", [value: defAct ?: "last", type: "enum"])
         if (editingHub.currentValue("hubModel") == "X2") {
             app.updateSetting("newHubBuiltIn", [value: editingHub.currentValue("mqttBroker") != "external", type: "bool"])
             app.updateSetting("newHubMqttHost", [value: editingHub.currentValue("mqttHost") ?: "", type: "text"])
@@ -608,6 +624,17 @@ def addHubPage(params = [:]) {
                 }
             }
         }
+        if (editingHub) {
+            section("Hub switch") {
+                Map opts = [last: "Last activity used"]
+                (editingHub.getChildDevices() ?: []).findAll { it.currentValue("onHub") != "false" }.each { act ->
+                    opts[act.deviceNetworkId] = shortName(act, editingHub.getLabel())
+                }
+                input name: "newHubDefaultAct", type: "enum", title: "Hub device On starts", options: opts, submitOnChange: true
+                paragraph "<span class='text-color-secondary' style='font-size:14px;'>The hub device is a switch: on while any activity runs, off when none do. " +
+                    "Turning it off stops the running activity, like Harmony's hub switch.</span>"
+            }
+        }
         section {
             if (missing) paragraph "<span class='text-color-secondary' style='font-size:14px;'>Still needed: ${missing.join(', ')}</span>"
             formButtons("Hub", editingHub ? "Save Changes" : "Add This Hub", !missing)
@@ -637,7 +664,7 @@ private String saveHubForm() {
     boolean builtIn = newHubBuiltIn != false
     if (editingHub) {
         logInfo "updating hub '${editingDni}'"
-        updateExistingHub(editingHub, newHubName, builtIn, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass, newHubButtonDev)
+        updateExistingHub(editingHub, newHubName, builtIn, newHubMqttHost, newHubMqttPort ?: "1883", newHubMqttUser, newHubMqttPass, newHubButtonDev, newHubDefaultAct)
     } else if (newHubModel == "X1S") {
         logInfo "adding X1S hub '${newHubName}'"
         createHttpHub(newHubName, newHubIp)
@@ -650,14 +677,17 @@ private String saveHubForm() {
 
 private void clearHubSettings() {
     ["newHubName", "newHubModel", "newHubIp", "newHubMac", "newHubMacPick", "newHubBuiltIn",
-     "newHubMqttHost", "newHubMqttPort", "newHubMqttUser", "newHubMqttPass", "newHubButtonDev"].each {
+     "newHubMqttHost", "newHubMqttPort", "newHubMqttUser", "newHubMqttPass", "newHubButtonDev", "newHubDefaultAct"].each {
         app.removeSetting(it)
     }
 }
 
 // Password only overwritten when a new one is typed. A rename relabels default-named activities.
-private void updateExistingHub(def hub, String name, boolean builtIn, String mqttHost, String mqttPort, String mqttUser, String mqttPass, String buttonDev = null) {
+private void updateExistingHub(def hub, String name, boolean builtIn, String mqttHost, String mqttPort, String mqttUser, String mqttPass, String buttonDev = null, String defaultAct = null) {
     String oldLabel = hub.getLabel()
+    if (defaultAct) {
+        try { hub.setDefaultActivity(defaultAct == "last" ? null : defaultAct) } catch (e) { logErr "failed to set the hub's default activity: ${e.message}" }
+    }
     hub.setLabel(name)
     if (oldLabel && oldLabel != name) {
         try { hub.applyActivityLabels(oldLabel, name) } catch (e) { logErr "failed to relabel activities after renaming '${oldLabel}': ${e.message}" }
@@ -1049,7 +1079,10 @@ private List tipsTopics() {
                 "<p><b>Can I rename an activity?</b><br>Yes, on its device page. New activities are named <b>Hub-Activity</b> so they group together in pickers; " +
                 "a name you set yourself is never overwritten. The Sofabaton name is kept in the sofabatonName attribute. Renaming a hub in Edit Hub updates its default-named activities.</p>" +
                 "<p><b>Where does an X1S webhook URL go?</b><br>The activity's Start and Stop Webhook URL fields, when adding it or later through Edit.</p>" +
-                "<p><b>Can I change a hub's model, MAC, or IP?</b><br>No, those set the device ID. Remove the hub and add it again.</p>"],
+                "<p><b>Can I change a hub's model, MAC, or IP?</b><br>No, those set the device ID. Remove the hub and add it again.</p>" +
+                "<p><b>What does the hub device's switch do?</b><br>It's on while any activity on that hub runs, and off when none do, so rules can check one device. " +
+                "Turning it off stops the running activity. Turning it on starts the activity picked under <b>Hub switch</b> in Edit Hub, or the last one used. " +
+                "Starting needs X2 or an X1S webhook.</p>"],
 
         [id: "removal", label: "Removing hubs", title: "Remove hubs and activities safely", group: "Devices", icon: "pi-trash",
             body: "<p>Use the Remove buttons on the main page, not Hubitat's Devices page. Removing a hub also removes its activities.</p>" +

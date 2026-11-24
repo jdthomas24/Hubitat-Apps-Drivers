@@ -25,13 +25,13 @@
      -syncOn()/syncOff() are local state only, called by the Remote. Not declared as
       commands on purpose: as buttons they'd change Hubitat's state without the hub.
      -Log level comes from the app via the Remote. Log lines go up the chain (childLog) and
-      appear under the app, labeled with this device's name. Falls back to local logging. Log lines go up the chain (childLog) and
       appear under the app, labeled with this device's name. Falls back to local logging.
+     -Every switch change is reported to the Remote (activitySwitchChanged) for the hub switch (1.1.8).
 */
 
 import groovy.transform.Field
 
-def version() { return "1.1.7" }
+def version() { return "1.1.8" }
 
 @Field static final Integer CONFIRM_TIMEOUT = 20
 
@@ -196,6 +196,7 @@ void handleWebhookResponse(resp, data) {
         if (logNormal()) slog("info", "Sofabaton webhook call succeeded (${status})")
         sendEvent(name: "switch", value: data.intendedState)
         sendEvent(name: "activityStatus", value: data.intendedState)
+        notifyParent(data.intendedState)
         sendEvent(name: "lastCallStatus", value: "success (${status})")
     } else if ((data.attempt as Integer) < 2) {
         slog("warn", "Sofabaton webhook call failed (status=${status}, error=${errMsg}, data=${bodyText}), retrying once")
@@ -222,6 +223,7 @@ void syncOn() {
     sendEvent(name: "switch", value: "on")
     sendEvent(name: "activityStatus", value: "on")
     if (wasPending) sendEvent(name: "lastCallStatus", value: "confirmed by hub")
+    notifyParent("on")
 }
 
 void syncOff() {
@@ -231,5 +233,11 @@ void syncOff() {
     sendEvent(name: "switch", value: "off")
     sendEvent(name: "activityStatus", value: "off")
     if (wasPending) sendEvent(name: "lastCallStatus", value: "confirmed by hub")
+    notifyParent("off")
+}
+
+// Keeps the hub device's switch in step.
+private void notifyParent(String value) {
+    try { parent?.activitySwitchChanged(device.deviceNetworkId, value) } catch (e) { if (logFull()) slog("debug", "hub switch update failed: ${e.message}") }
 }
 
